@@ -61,8 +61,8 @@ records.
   tracer: immutable mock-only flow admission, append-only optimistic control/
   flow/attempt revisions, sticky cancellation, fenced multi-resource claim
   library APIs, an internal local completion outbox with receipts, and
-  append-only non-enforcing ABAC shadow observations at flow admission and
-  attempt claim;
+  append-only non-enforcing ABAC shadow observations at flow admission,
+  attempt claim, operator control transitions, and sticky cancellation;
 - read-only supervisor status/audit, including independent shadow-digest,
   parity, coverage, ordering, schema, and migration-ledger verification;
   digest-bound reconciliation preview/apply; explicit control commands; and a
@@ -170,6 +170,10 @@ subprocess, network action, repository worker, or Class 2/3 action because
 runtime ABAC enforcement remains a prerequisite. `reconcile` is a read-only
 preview unless `--apply` is supplied with the exact digest from a current
 preview.
+Sticky cancellation remains an operator safety path, but its truthful shadow
+is irreversible on the original flow and therefore derives disabled Class 3.
+`supervisor audit` reports that legacy-parity mismatch; the non-enforcing
+observation neither blocks cancellation nor enables Class 2/3 authority.
 
 ## Live subscription runs
 
@@ -261,8 +265,9 @@ claims about commands available today.
 - no automatic outcome-to-router learning or retry/failover controller yet;
 - no enforcing general runtime ABAC or action receipts yet; non-authoritative
   Chief-of-Staff observations cover admission, dispatch intent, and local-
-  candidate publication only, while current Class 0/1 and deterministic
-  eligibility gates remain authoritative;
+  candidate publication, and separate supervisor shadows cover admission,
+  claim, control-transition, and cancellation bookkeeping, while current
+  Class 0/1 and deterministic eligibility gates remain authoritative;
 - no standing-envelope evaluator, worker-cell shell/egress backend,
   consequential-action outbox/executor, trusted-memory promotion, or adaptive
   unattended scheduler yet;

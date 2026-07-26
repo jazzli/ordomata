@@ -213,6 +213,13 @@ class SupervisorCLITests(unittest.TestCase):
                     self.assertEqual(status["control_revision"], revision)
                     self.assertFalse(status["dispatch_enabled"])
 
+            audit = self._invoke_json(root, "supervisor", "audit", "--now", "1000")
+            self.assertTrue(audit["authorization"]["clean"])
+            self.assertEqual(audit["authorization"]["observation_count"], 4)
+            self.assertEqual(
+                audit["authorization"]["expected_observation_count"], 4
+            )
+
     def test_cancellation_is_sticky_across_replay(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = self._project(temporary)
@@ -263,6 +270,30 @@ class SupervisorCLITests(unittest.TestCase):
             status = self._invoke_json(root, "supervisor", "status")
             self.assertEqual(status["flow_counts"], {"cancelled": 1})
             self.assertEqual(status["pending_completion_count"], 1)
+            audit_status, audit_output, audit_errors = self._invoke(
+                "--project-root",
+                str(root),
+                "supervisor",
+                "audit",
+                "--now",
+                "1000",
+                "--json",
+            )
+            self.assertEqual(audit_status, 1)
+            self.assertEqual(audit_errors, "")
+            audit = json.loads(audit_output)
+            self.assertFalse(audit["authorization"]["clean"])
+            self.assertEqual(audit["authorization"]["observation_count"], 2)
+            self.assertEqual(
+                audit["authorization"]["expected_observation_count"], 2
+            )
+            self.assertIn(
+                "legacy_authorization_parity_mismatch",
+                {
+                    finding["code"]
+                    for finding in audit["authorization"]["findings"]
+                },
+            )
 
     def test_reconcile_requires_and_applies_exact_preview_digest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

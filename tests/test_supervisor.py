@@ -3,12 +3,17 @@ from __future__ import annotations
 from contextlib import closing
 from dataclasses import replace
 import itertools
+import json
 from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
 
+from ordomata.authorization import (
+    AuthorizationEffect,
+    ShadowAuthorizationEvaluator,
+)
 from ordomata.errors import ConfigurationError
 from ordomata.models import PermissionClass
 from ordomata.supervisor import (
@@ -51,6 +56,29 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
     def _reopen_store(self) -> None:
         self.store.close()
         self.store = self._open_store()
+
+    @staticmethod
+    def _remove_v4_schema(connection: sqlite3.Connection) -> None:
+        connection.executescript(
+            """
+            DROP TRIGGER supervisor_bookkeeping_authorization_observations_no_update;
+            DROP TRIGGER supervisor_bookkeeping_authorization_observations_no_delete;
+            DROP TRIGGER supervisor_bookkeeping_authorization_sources_no_update;
+            DROP TRIGGER supervisor_bookkeeping_authorization_sources_no_delete;
+            DROP TRIGGER supervisor_bookkeeping_authorization_baseline_no_update;
+            DROP TRIGGER supervisor_bookkeeping_authorization_baseline_no_delete;
+            DROP TRIGGER supervisor_bookkeeping_authorization_baseline_no_insert;
+            DROP TABLE supervisor_bookkeeping_authorization_observations;
+            DROP TABLE supervisor_bookkeeping_authorization_sources;
+            DROP TABLE supervisor_bookkeeping_authorization_baseline;
+            DROP TRIGGER state_schema_migrations_no_delete;
+            DELETE FROM state_schema_migrations WHERE version = 4;
+            CREATE TRIGGER state_schema_migrations_no_delete
+            BEFORE DELETE ON state_schema_migrations BEGIN
+                SELECT RAISE(ABORT, 'schema migrations are append-only');
+            END;
+            """
+        )
 
     def _flow(self, flow_id: str = "flow-one", **changes: object) -> FlowSpec:
         values: dict[str, object] = {
@@ -129,6 +157,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
                 (1, "baseline_state"),
                 (2, "supervisor_control_plane"),
                 (3, "supervisor_authorization_shadow"),
+                (4, "supervisor_bookkeeping_authorization_shadow"),
             ],
         )
         self.assertEqual(
@@ -173,6 +202,72 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
             ).fetchall()
         self.assertEqual(baseline, [("flow", spec.flow_id)])
 
+    def test_v4_migration_baselines_preexisting_bookkeeping_history(self) -> None:
+        spec = self._flow()
+        self.store.admit_flow(spec)
+        control = self.store.update_control(
+            expected_revision=0,
+            mode=SupervisorMode.RUNNING,
+            actor_id="operator/session-000000000001",
+            reason_code="operator_started",
+            occurred_at=100.0,
+        )
+        self.store.request_cancellation(
+            spec.flow_id,
+            requested_by="operator/session-000000000001",
+            reason_code="operator_cancelled",
+            now=101.0,
+        )
+        observations = self.store.list_bookkeeping_authorization_observations()
+        cancellation_request_id = observations[-1].cancellation_request_id
+        assert cancellation_request_id is not None
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.executescript(
+                """
+                DROP TRIGGER supervisor_bookkeeping_authorization_observations_no_update;
+                DROP TRIGGER supervisor_bookkeeping_authorization_observations_no_delete;
+                DROP TRIGGER supervisor_bookkeeping_authorization_sources_no_update;
+                DROP TRIGGER supervisor_bookkeeping_authorization_sources_no_delete;
+                DROP TRIGGER supervisor_bookkeeping_authorization_baseline_no_update;
+                DROP TRIGGER supervisor_bookkeeping_authorization_baseline_no_delete;
+                DROP TRIGGER supervisor_bookkeeping_authorization_baseline_no_insert;
+                DROP TABLE supervisor_bookkeeping_authorization_observations;
+                DROP TABLE supervisor_bookkeeping_authorization_sources;
+                DROP TABLE supervisor_bookkeeping_authorization_baseline;
+                DROP TRIGGER state_schema_migrations_no_delete;
+                DELETE FROM state_schema_migrations WHERE version = 4;
+                CREATE TRIGGER state_schema_migrations_no_delete
+                BEFORE DELETE ON state_schema_migrations BEGIN
+                    SELECT RAISE(ABORT, 'schema migrations are append-only');
+                END;
+                """
+            )
+
+        self.store = self._open_store()
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean)
+        self.assertEqual(audit.observation_count, 1)
+        self.assertEqual(audit.expected_observation_count, 1)
+        self.assertEqual(
+            self.store.list_bookkeeping_authorization_observations(), ()
+        )
+        with closing(sqlite3.connect(self.database)) as connection:
+            baseline = connection.execute(
+                """
+                SELECT entity_type, entity_id
+                FROM supervisor_bookkeeping_authorization_baseline
+                ORDER BY entity_type, entity_id
+                """
+            ).fetchall()
+        self.assertEqual(
+            baseline,
+            [
+                ("cancellation_request", cancellation_request_id),
+                ("control_event", control.event_id),
+            ],
+        )
+
     def test_missing_v3_schema_is_a_finding_even_without_flows(self) -> None:
         self.store.close()
         with closing(sqlite3.connect(self.database)) as connection:
@@ -198,6 +293,49 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         self.assertFalse(audit.clean)
         self.assertEqual(audit.expected_observation_count, 0)
         self.assertEqual(audit.findings[0].code, "authorization_schema_missing")
+
+    def test_missing_v4_schema_is_a_finding_without_bookkeeping_events(self) -> None:
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.executescript(
+                """
+                DROP TRIGGER supervisor_bookkeeping_authorization_observations_no_update;
+                DROP TRIGGER supervisor_bookkeeping_authorization_observations_no_delete;
+                DROP TRIGGER supervisor_bookkeeping_authorization_sources_no_update;
+                DROP TRIGGER supervisor_bookkeeping_authorization_sources_no_delete;
+                DROP TRIGGER supervisor_bookkeeping_authorization_baseline_no_update;
+                DROP TRIGGER supervisor_bookkeeping_authorization_baseline_no_delete;
+                DROP TRIGGER supervisor_bookkeeping_authorization_baseline_no_insert;
+                DROP TABLE supervisor_bookkeeping_authorization_observations;
+                DROP TABLE supervisor_bookkeeping_authorization_sources;
+                DROP TABLE supervisor_bookkeeping_authorization_baseline;
+                DROP TRIGGER state_schema_migrations_no_delete;
+                DELETE FROM state_schema_migrations WHERE version = 4;
+                CREATE TRIGGER state_schema_migrations_no_delete
+                BEFORE DELETE ON state_schema_migrations BEGIN
+                    SELECT RAISE(ABORT, 'schema migrations are append-only');
+                END;
+                """
+            )
+
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertEqual(audit.expected_observation_count, 0)
+        self.assertEqual(
+            audit.findings[0].code,
+            "bookkeeping_authorization_schema_missing",
+        )
+
+    def test_missing_core_supervisor_schema_cannot_audit_clean(self) -> None:
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute("DROP TABLE supervisor_flows")
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertFalse(audit.schema_present)
+        self.assertEqual(audit.findings[0].code, "supervisor_schema_missing")
 
     def test_combined_audit_holds_one_read_transaction(self) -> None:
         self.store.admit_flow(self._flow())
@@ -373,6 +511,474 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM supervisor_control_events"
             ).fetchone()[0]
         self.assertEqual(count, 2)
+        observations = self.store.list_bookkeeping_authorization_observations()
+        self.assertEqual(
+            [observation.boundary for observation in observations],
+            ["control_transition", "control_transition"],
+        )
+        self.assertEqual(
+            [observation.control_event_id for observation in observations],
+            [running.event_id, paused.event_id],
+        )
+        self.assertTrue(all(item.effect == "permit" for item in observations))
+        self.assertTrue(all(item.execution_parity for item in observations))
+        self.assertTrue(
+            all(
+                item.derived_permission_class is PermissionClass.LOCAL_DRAFT
+                for item in observations
+            )
+        )
+        payloads = json.dumps(
+            [observation.payload for observation in observations], sort_keys=True
+        )
+        self.assertNotIn("operator/session-000000000001", payloads)
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean)
+        self.assertEqual(audit.observation_count, 2)
+        self.assertEqual(audit.expected_observation_count, 2)
+        with closing(sqlite3.connect(self.database)) as connection:
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "append-only"):
+                connection.execute(
+                    """
+                    UPDATE supervisor_bookkeeping_authorization_observations
+                    SET effect = 'deny'
+                    """
+                )
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "frozen"):
+                connection.execute(
+                    """
+                    INSERT INTO supervisor_bookkeeping_authorization_baseline (
+                        entity_type, entity_id
+                    ) VALUES ('control_event', 'forged-exemption')
+                    """
+                )
+
+    def test_bookkeeping_shadow_failure_cannot_block_control_or_cancellation(self) -> None:
+        with patch(
+            "ordomata.supervisor.ShadowAuthorizationEvaluator.evaluate",
+            side_effect=RuntimeError("sensitive diagnostic"),
+        ):
+            control = self.store.update_control(
+                expected_revision=0,
+                mode=SupervisorMode.RUNNING,
+                actor_id="operator/session-000000000001",
+                reason_code="operator_started",
+                occurred_at=100.0,
+            )
+
+        spec = self._flow()
+        self.store.admit_flow(spec)
+        with patch(
+            "ordomata.supervisor.ShadowAuthorizationEvaluator.evaluate",
+            side_effect=RuntimeError("sensitive diagnostic"),
+        ):
+            cancelled = self.store.request_cancellation(
+                spec.flow_id,
+                requested_by="operator/session-000000000001",
+                reason_code="operator_cancelled",
+                now=101.0,
+            )
+
+        self.assertEqual(control.revision, 1)
+        self.assertEqual(cancelled.state, FlowState.CANCELLED)
+        self.assertEqual(
+            self.store.list_bookkeeping_authorization_observations(), ()
+        )
+        with closing(sqlite3.connect(self.database)) as connection:
+            cancellation_count = connection.execute(
+                "SELECT COUNT(*) FROM supervisor_cancellation_requests"
+            ).fetchone()[0]
+        self.assertEqual(cancellation_count, 1)
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertEqual(audit.observation_count, 1)
+        self.assertEqual(audit.expected_observation_count, 3)
+        self.assertEqual(
+            sum(
+                finding.code == "bookkeeping_observation_missing"
+                for finding in audit.findings
+            ),
+            2,
+        )
+
+    def test_bookkeeping_authorization_inspector_detects_tampering(self) -> None:
+        self.store.update_control(
+            expected_revision=0,
+            mode=SupervisorMode.RUNNING,
+            actor_id="operator/session-000000000001",
+            reason_code="operator_started",
+            occurred_at=100.0,
+        )
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                """
+                DROP TRIGGER
+                supervisor_bookkeeping_authorization_observations_no_update
+                """
+            )
+            connection.execute(
+                """
+                UPDATE supervisor_bookkeeping_authorization_observations
+                SET request_digest = ?
+                """,
+                ("sha256:" + "0" * 64,),
+            )
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+        codes = {finding.code for finding in audit.findings}
+        self.assertIn("authorization_schema_mismatch", codes)
+        self.assertIn("request_digest_mismatch", codes)
+        self.assertFalse(audit.clean)
+
+    def test_authorization_audit_verifies_source_append_only_guards(self) -> None:
+        self.store.update_control(
+            expected_revision=0,
+            mode=SupervisorMode.RUNNING,
+            actor_id="operator/session-000000000001",
+            reason_code="operator_started",
+            occurred_at=100.0,
+        )
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute("DROP TRIGGER supervisor_control_events_no_update")
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertFalse(audit.schema_present)
+        self.assertIn(
+            "authorization_schema_mismatch",
+            {finding.code for finding in audit.findings},
+        )
+
+    def test_authorization_audit_verifies_migration_ledger_guards(self) -> None:
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute("DROP TRIGGER state_schema_migrations_no_update")
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertFalse(audit.schema_present)
+        self.assertIn(
+            "migration_schema_mismatch",
+            {finding.code for finding in audit.findings},
+        )
+
+    def test_authorization_audit_rejects_future_migration_versions(self) -> None:
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                """
+                INSERT INTO state_schema_migrations (
+                    version, name, script_sha256, applied_at
+                ) VALUES (5, 'future_unknown', ?, 100.0)
+                """,
+                ("0" * 64,),
+            )
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertIn(
+            "migration_version_set_mismatch",
+            {finding.code for finding in audit.findings},
+        )
+
+    def test_bookkeeping_audit_detects_duplicate_and_misordered_controls(self) -> None:
+        running = self.store.update_control(
+            expected_revision=0,
+            mode=SupervisorMode.RUNNING,
+            actor_id="operator/session-000000000001",
+            reason_code="operator_started",
+            occurred_at=100.0,
+        )
+        self.store.update_control(
+            expected_revision=running.revision,
+            mode=SupervisorMode.PAUSED,
+            actor_id="operator/session-000000000001",
+            reason_code="operator_paused",
+            occurred_at=101.0,
+        )
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            first_payload = connection.execute(
+                """
+                SELECT payload_json
+                FROM supervisor_bookkeeping_authorization_observations
+                ORDER BY sequence LIMIT 1
+                """
+            ).fetchone()[0]
+            connection.execute(
+                """
+                DROP TRIGGER
+                supervisor_bookkeeping_authorization_observations_no_update
+                """
+            )
+            connection.execute(
+                """
+                UPDATE supervisor_bookkeeping_authorization_observations
+                SET payload_json = ? WHERE sequence = 2
+                """,
+                (first_payload,),
+            )
+            connection.commit()
+
+        codes = {
+            finding.code
+            for finding in inspect_supervisor_authorization(self.database).findings
+        }
+        self.assertIn("bookkeeping_boundary_coverage_or_order_mismatch", codes)
+        self.assertIn("bookkeeping_observation_duplicated", codes)
+        self.assertIn("bookkeeping_observation_missing", codes)
+
+    def test_higher_class_shadow_denial_is_retained_without_enabling_it(self) -> None:
+        original_evaluate = ShadowAuthorizationEvaluator.evaluate
+
+        def elevated_decision(request, policy):
+            decision = original_evaluate(
+                ShadowAuthorizationEvaluator(), request, policy
+            )
+            return replace(
+                decision,
+                effect=AuthorizationEffect.DENY,
+                derived_permission_class=PermissionClass.EXTERNAL_CONSEQUENTIAL,
+            )
+
+        with patch(
+            "ordomata.supervisor.ShadowAuthorizationEvaluator.evaluate",
+            side_effect=elevated_decision,
+        ):
+            control = self.store.update_control(
+                expected_revision=0,
+                mode=SupervisorMode.RUNNING,
+                actor_id="operator/session-000000000001",
+                reason_code="operator_started",
+                occurred_at=100.0,
+            )
+            audit = inspect_supervisor_authorization(self.database)
+
+        self.assertEqual(control.revision, 1)
+        observations = self.store.list_bookkeeping_authorization_observations()
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0].effect, "deny")
+        self.assertEqual(
+            observations[0].derived_permission_class,
+            PermissionClass.EXTERNAL_CONSEQUENTIAL,
+        )
+        self.assertFalse(observations[0].execution_parity)
+        self.assertFalse(inspect_supervisor_status(self.database).dispatch_enabled)
+        self.assertFalse(audit.clean)
+        self.assertIn(
+            "legacy_authorization_parity_mismatch",
+            {finding.code for finding in audit.findings},
+        )
+
+    def test_malformed_pre_v4_history_is_rejected_before_baseline(self) -> None:
+        spec = self._flow()
+        self.store.admit_flow(spec)
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.executescript(
+                """
+                DROP TRIGGER supervisor_bookkeeping_authorization_observations_no_update;
+                DROP TRIGGER supervisor_bookkeeping_authorization_observations_no_delete;
+                DROP TRIGGER supervisor_bookkeeping_authorization_sources_no_update;
+                DROP TRIGGER supervisor_bookkeeping_authorization_sources_no_delete;
+                DROP TRIGGER supervisor_bookkeeping_authorization_baseline_no_update;
+                DROP TRIGGER supervisor_bookkeeping_authorization_baseline_no_delete;
+                DROP TRIGGER supervisor_bookkeeping_authorization_baseline_no_insert;
+                DROP TABLE supervisor_bookkeeping_authorization_observations;
+                DROP TABLE supervisor_bookkeeping_authorization_sources;
+                DROP TABLE supervisor_bookkeeping_authorization_baseline;
+                DROP TRIGGER state_schema_migrations_no_delete;
+                DELETE FROM state_schema_migrations WHERE version = 4;
+                CREATE TRIGGER state_schema_migrations_no_delete
+                BEFORE DELETE ON state_schema_migrations BEGIN
+                    SELECT RAISE(ABORT, 'schema migrations are append-only');
+                END;
+                DROP TRIGGER supervisor_flows_no_delete;
+                DELETE FROM supervisor_flows WHERE flow_id = 'flow-one';
+                CREATE TRIGGER supervisor_flows_no_delete
+                BEFORE DELETE ON supervisor_flows BEGIN
+                    SELECT RAISE(ABORT, 'supervisor flows are append-only');
+                END;
+                """
+            )
+
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "pre-v4 supervisor bookkeeping history has invalid references",
+        ):
+            self._open_store()
+
+    def test_pre_v4_cancellation_without_revision_history_is_rejected(self) -> None:
+        spec = self._flow()
+        self.store.admit_flow(spec)
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v4_schema(connection)
+            connection.executescript(
+                """
+                INSERT INTO supervisor_cancellation_requests (
+                    request_id, flow_id, reason_code, requested_by, requested_at
+                ) VALUES (
+                    'pre-v4-cancellation', 'flow-one', 'operator_cancelled',
+                    'operator', 101.0
+                );
+                DROP TRIGGER supervisor_flow_revisions_no_delete;
+                DELETE FROM supervisor_flow_revisions WHERE flow_id = 'flow-one';
+                CREATE TRIGGER supervisor_flow_revisions_no_delete
+                BEFORE DELETE ON supervisor_flow_revisions BEGIN
+                    SELECT RAISE(ABORT, 'supervisor flow revisions are append-only');
+                END;
+                """
+            )
+
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "pre-v4 supervisor bookkeeping history is invalid",
+        ):
+            self._open_store()
+
+    def test_failed_pre_v4_schema_check_commits_no_v4_objects(self) -> None:
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v4_schema(connection)
+            connection.execute("DROP TRIGGER supervisor_control_events_no_update")
+            connection.commit()
+
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "pre-v4 supervisor schema is invalid",
+        ):
+            self._open_store()
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            version = connection.execute(
+                "SELECT 1 FROM state_schema_migrations WHERE version = 4"
+            ).fetchone()
+            table = connection.execute(
+                """
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table'
+                AND name = 'supervisor_bookkeeping_authorization_observations'
+                """
+            ).fetchone()
+        self.assertIsNone(version)
+        self.assertIsNone(table)
+
+    def test_pre_v4_cancellation_flag_cannot_ride_a_claim_transition(self) -> None:
+        self._start_and_claim()
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v4_schema(connection)
+            connection.executescript(
+                """
+                DROP TRIGGER supervisor_flow_revisions_no_update;
+                UPDATE supervisor_flow_revisions
+                SET cancellation_requested = 1
+                WHERE flow_id = 'flow-one' AND revision = 2;
+                CREATE TRIGGER supervisor_flow_revisions_no_update
+                BEFORE UPDATE ON supervisor_flow_revisions BEGIN
+                    SELECT RAISE(ABORT, 'supervisor flow revisions are append-only');
+                END;
+                INSERT INTO supervisor_cancellation_requests (
+                    request_id, flow_id, reason_code, requested_by, requested_at
+                ) VALUES (
+                    'pre-v4-cancellation', 'flow-one', 'operator_cancelled',
+                    'operator', 101.0
+                );
+                """
+            )
+
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "pre-v4 supervisor bookkeeping history is invalid",
+        ):
+            self._open_store()
+
+    def test_malformed_sensitive_flow_reference_is_not_emitted_by_audit(self) -> None:
+        sensitive_flow_id = "sk-secretmaterial123456789"
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                """
+                INSERT INTO supervisor_cancellation_requests (
+                    request_id, flow_id, reason_code, requested_by, requested_at
+                ) VALUES (?, ?, 'operator_cancelled', 'operator', 100.0)
+                """,
+                ("malformed-cancellation", sensitive_flow_id),
+            )
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+        serialized = json.dumps(audit.to_mapping(), sort_keys=True)
+        self.assertFalse(audit.clean)
+        self.assertNotIn(sensitive_flow_id, serialized)
+        self.assertIn("bookkeeping_target_missing", serialized)
+
+    def test_sensitive_existing_flow_reference_is_hashed_in_missing_findings(self) -> None:
+        self.store.admit_flow(self._flow())
+        sensitive_flow_id = "sk-secretmaterial987654321"
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                """
+                INSERT INTO supervisor_flows (
+                    flow_id, admission_key, request_digest, task_id, task_version,
+                    task_definition_digest, context_digest, runner_id, profile_id,
+                    permission_class, resource_keys_json, available_at, deadline_at,
+                    attempt_timeout_seconds, mandatory_priority, blocker_priority,
+                    value_priority, evidence_priority, capacity_fit_priority,
+                    max_attempts, created_at
+                )
+                SELECT ?, 'malformed-sensitive-admission', request_digest,
+                    task_id, task_version, task_definition_digest, context_digest,
+                    runner_id, profile_id, permission_class, resource_keys_json,
+                    available_at, deadline_at, attempt_timeout_seconds,
+                    mandatory_priority, blocker_priority, value_priority,
+                    evidence_priority, capacity_fit_priority, max_attempts, created_at
+                FROM supervisor_flows WHERE flow_id = 'flow-one'
+                """,
+                (sensitive_flow_id,),
+            )
+            connection.execute(
+                """
+                INSERT INTO supervisor_flow_revisions (
+                    event_id, flow_id, revision, state, cancellation_requested,
+                    active_attempt_id, reason_code, occurred_at
+                ) VALUES ('malformed-flow-event', ?, 1, 'queued', 0, NULL,
+                    'admitted', 100.0)
+                """,
+                (sensitive_flow_id,),
+            )
+            connection.execute(
+                """
+                INSERT INTO supervisor_cancellation_requests (
+                    request_id, flow_id, reason_code, requested_by, requested_at
+                ) VALUES ('malformed-cancellation', ?, 'operator_cancelled',
+                    'operator', 101.0)
+                """,
+                (sensitive_flow_id,),
+            )
+            connection.execute(
+                """
+                INSERT INTO supervisor_bookkeeping_authorization_sources (
+                    cancellation_request_id, flow_id, source_flow_revision
+                ) VALUES ('malformed-cancellation', ?, 1)
+                """,
+                (sensitive_flow_id,),
+            )
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+        serialized = json.dumps(audit.to_mapping(), sort_keys=True)
+        self.assertFalse(audit.clean)
+        self.assertNotIn(sensitive_flow_id, serialized)
+        self.assertIn("bookkeeping_observation_missing", serialized)
 
     def test_claim_cancellation_completion_and_outbox_are_sticky(self) -> None:
         claim = self._start_and_claim()
@@ -513,6 +1119,156 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         pending = self.store.list_pending_completions()
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0].envelope["state"], "cancelled")
+        observations = self.store.list_bookkeeping_authorization_observations()
+        self.assertEqual(len(observations), 1)
+        observation = observations[0]
+        self.assertEqual(observation.boundary, "flow_cancellation")
+        self.assertEqual(observation.flow_id, spec.flow_id)
+        self.assertIsNotNone(observation.cancellation_request_id)
+        self.assertEqual(observation.effect, "deny")
+        self.assertEqual(
+            observation.derived_permission_class,
+            PermissionClass.EXTERNAL_CONSEQUENTIAL,
+        )
+        self.assertFalse(observation.execution_parity)
+        self.assertNotIn(
+            "operator/session-000000000001",
+            json.dumps(observation.payload, sort_keys=True),
+        )
+        request = observation.payload["request"]
+        self.assertEqual(request["environment"]["flow_state"], "queued")
+        self.assertEqual(
+            request["action"]["intended_effect"],
+            "record_and_apply_local_flow_cancellation",
+        )
+        self.assertNotEqual(request["resource"]["version"], spec.request_digest)
+        with closing(sqlite3.connect(self.database)) as connection:
+            source = connection.execute(
+                """
+                SELECT cancellation_request_id, flow_id, source_flow_revision
+                FROM supervisor_bookkeeping_authorization_sources
+                """
+            ).fetchone()
+        self.assertEqual(
+            source,
+            (observation.cancellation_request_id, spec.flow_id, 1),
+        )
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertIn(
+            "legacy_authorization_parity_mismatch",
+            {finding.code for finding in audit.findings},
+        )
+        self.assertEqual(audit.observation_count, 2)
+        self.assertEqual(audit.expected_observation_count, 2)
+
+    def test_cancellation_replay_after_later_revision_returns_current_head(self) -> None:
+        claim = self._start_and_claim()
+        cancellation = self.store.request_cancellation(
+            claim.flow.flow_id,
+            requested_by="operator/session-000000000001",
+            reason_code="operator_cancelled",
+            now=101.0,
+        )
+        completed, _ = self.store.complete_attempt(
+            claim,
+            expected_flow_revision=cancellation.revision,
+            outcome=FlowState.SUCCEEDED,
+            reason_code="worker_finished_after_cancel",
+            now=102.0,
+        )
+
+        replayed = self.store.request_cancellation(
+            claim.flow.flow_id,
+            requested_by="operator/session-000000000001",
+            reason_code="operator_cancelled",
+            now=101.0,
+        )
+
+        self.assertEqual(completed.state, FlowState.CANCELLED)
+        self.assertEqual(replayed, completed)
+        observations = [
+            observation
+            for observation in self.store.list_bookkeeping_authorization_observations()
+            if observation.boundary == "flow_cancellation"
+        ]
+        self.assertEqual(len(observations), 1)
+
+    def test_running_and_final_cancellations_bind_exact_source_revisions(self) -> None:
+        running_claim = self._start_and_claim(self._flow("flow-running"))
+        running_cancelled = self.store.request_cancellation(
+            running_claim.flow.flow_id,
+            requested_by="operator/session-000000000001",
+            reason_code="operator_cancelled",
+            now=101.0,
+        )
+        self.store.complete_attempt(
+            running_claim,
+            expected_flow_revision=running_cancelled.revision,
+            outcome=FlowState.SUCCEEDED,
+            reason_code="worker_finished_after_cancel",
+            now=102.0,
+        )
+
+        final_spec = self._flow(
+            "flow-final", resource_keys=("repo:final-project",)
+        )
+        self.store.admit_flow(final_spec)
+        owner = "supervisor/instance-000000000001"
+        final_claim = self.store.try_claim_next(
+            instance_owner=owner,
+            expected_control_revision=1,
+            ttl_seconds=20.0,
+            now=103.0,
+        )
+        self.assertIsNotNone(final_claim)
+        assert final_claim is not None
+        final_revision, _ = self.store.complete_attempt(
+            final_claim,
+            expected_flow_revision=final_claim.flow_revision.revision,
+            outcome=FlowState.SUCCEEDED,
+            reason_code="checks_passed",
+            now=104.0,
+        )
+        after_cancellation = self.store.request_cancellation(
+            final_spec.flow_id,
+            requested_by="operator/session-000000000001",
+            reason_code="operator_cancelled",
+            now=105.0,
+        )
+
+        self.assertEqual(after_cancellation, final_revision)
+        cancellations = [
+            observation
+            for observation in self.store.list_bookkeeping_authorization_observations()
+            if observation.boundary == "flow_cancellation"
+        ]
+        self.assertEqual(len(cancellations), 2)
+        self.assertEqual(
+            [
+                item.payload["request"]["environment"]["flow_state"]
+                for item in cancellations
+            ],
+            ["running", "succeeded"],
+        )
+        with closing(sqlite3.connect(self.database)) as connection:
+            sources = connection.execute(
+                """
+                SELECT flow_id, source_flow_revision
+                FROM supervisor_bookkeeping_authorization_sources
+                ORDER BY flow_id
+                """
+            ).fetchall()
+        self.assertEqual(sources, [("flow-final", 3), ("flow-running", 2)])
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertEqual(
+            sum(
+                finding.code == "legacy_authorization_parity_mismatch"
+                for finding in audit.findings
+            ),
+            2,
+        )
 
     def test_expired_pre_dispatch_claim_requires_digest_bound_reconciliation(self) -> None:
         claim = self._start_and_claim()

@@ -320,6 +320,22 @@ absent state without creating it.
 Reconciliation is preview-first and its apply step must present the exact
 current plan digest.
 
+Flow admission, library-only attempt claims, operator control transitions, and
+sticky cancellation append separate, non-enforcing ABAC shadow observations.
+The read-only supervisor audit holds one SQLite snapshot while independently
+recomputing their requests and decisions and checking coverage, order, parity,
+append-only guards, and migration provenance. Frozen migration baselines
+exclude history created before each shadow schema. These observations do not
+authorize a worker or replace the deterministic control path.
+Control observations bind the exact previous control revision. Cancellation
+observations bind the exact source flow revision and resulting local state/
+outbox writes. The original flow remains irreversibly sticky-cancelled;
+explicitly re-admitting equivalent work is a compensating action, not a
+reversal. Cancellation therefore derives Class 3, remains denied by the
+current Class 0/1 policy, and is reported as a legacy parity mismatch while the
+non-enforcing operator safety path remains unchanged. Observation storage
+retains that denied evidence; it does not enable Class 2/3 execution.
+
 `ordomata supervisor` exposes enqueue, start, pause, resume, drain, stop,
 status, cancel, audit, reconcile, completion inspection, and local receipt
 commands. `ordomata supervise` holds a fenced foreground lease and processes

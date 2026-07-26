@@ -30,6 +30,7 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from .errors import OrdomataError, ConfigurationError, ValidationError
+from .environment import is_sensitive_environment_value
 from .authorization import (
     ActionAttributes,
     ActionVerb,
@@ -176,7 +177,7 @@ _REASON_CODE = re.compile(r"[a-z0-9_]{1,100}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _RESOURCE_KEY = re.compile(r"[a-z0-9][a-z0-9._:/-]{0,199}")
 _MAX_JSON_BYTES = 262_144
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 _FOREGROUND_LEASE_KEY = "supervisor:foreground"
 
 
@@ -259,11 +260,30 @@ class SupervisorAuthorizationObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class SupervisorBookkeepingAuthorizationObservation:
+    sequence: int
+    observation_id: str
+    boundary: str
+    flow_id: str | None
+    control_event_id: str | None
+    cancellation_request_id: str | None
+    request_digest: str
+    decision_digest: str
+    effect: str
+    derived_permission_class: PermissionClass
+    legacy_executable: bool
+    execution_parity: bool
+    payload: Mapping[str, Any]
+    observed_at: float
+
+
+@dataclass(frozen=True, slots=True)
 class SupervisorAuthorizationFinding:
     code: str
     flow_id: str | None
     boundary: str | None
     observation_sequence: int | None
+    target_reference: str | None = None
 
     def to_mapping(self) -> dict[str, Any]:
         return {
@@ -271,6 +291,7 @@ class SupervisorAuthorizationFinding:
             "flow_id": self.flow_id,
             "boundary": self.boundary,
             "observation_sequence": self.observation_sequence,
+            "target_reference": self.target_reference,
         }
 
 
@@ -831,6 +852,97 @@ END;
 """
 
 
+_SCHEMA_V4 = """
+CREATE TABLE supervisor_bookkeeping_authorization_baseline (
+    entity_type TEXT NOT NULL CHECK (
+        entity_type IN ('control_event', 'cancellation_request')
+    ),
+    entity_id TEXT NOT NULL,
+    PRIMARY KEY(entity_type, entity_id)
+);
+INSERT INTO supervisor_bookkeeping_authorization_baseline (entity_type, entity_id)
+    SELECT 'control_event', event_id FROM supervisor_control_events;
+INSERT INTO supervisor_bookkeeping_authorization_baseline (entity_type, entity_id)
+    SELECT 'cancellation_request', request_id
+    FROM supervisor_cancellation_requests requests
+    JOIN supervisor_flows flows ON flows.flow_id = requests.flow_id;
+
+CREATE TABLE supervisor_bookkeeping_authorization_sources (
+    cancellation_request_id TEXT PRIMARY KEY
+        REFERENCES supervisor_cancellation_requests(request_id),
+    flow_id TEXT NOT NULL REFERENCES supervisor_flows(flow_id),
+    source_flow_revision INTEGER NOT NULL CHECK (source_flow_revision > 0),
+    FOREIGN KEY(flow_id, source_flow_revision)
+        REFERENCES supervisor_flow_revisions(flow_id, revision)
+);
+
+CREATE TABLE supervisor_bookkeeping_authorization_observations (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    observation_id TEXT NOT NULL UNIQUE,
+    boundary TEXT NOT NULL CHECK (
+        boundary IN ('control_transition', 'flow_cancellation')
+    ),
+    flow_id TEXT NULL REFERENCES supervisor_flows(flow_id),
+    control_event_id TEXT NULL REFERENCES supervisor_control_events(event_id),
+    cancellation_request_id TEXT NULL
+        REFERENCES supervisor_cancellation_requests(request_id),
+    request_digest TEXT NOT NULL CHECK (length(request_digest) = 71),
+    decision_digest TEXT NOT NULL CHECK (length(decision_digest) = 71),
+    effect TEXT NOT NULL CHECK (effect IN ('permit', 'defer', 'deny', 'indeterminate')),
+    derived_permission_class INTEGER NOT NULL CHECK (
+        derived_permission_class IN (0, 1, 2, 3)
+    ),
+    legacy_executable INTEGER NOT NULL CHECK (legacy_executable IN (0, 1)),
+    execution_parity INTEGER NOT NULL CHECK (execution_parity IN (0, 1)),
+    payload_json TEXT NOT NULL CHECK (length(payload_json) <= 262144),
+    observed_at REAL NOT NULL CHECK (observed_at >= 0),
+    CHECK (
+        (boundary = 'control_transition' AND flow_id IS NULL
+            AND control_event_id IS NOT NULL
+            AND cancellation_request_id IS NULL)
+        OR
+        (boundary = 'flow_cancellation' AND flow_id IS NOT NULL
+            AND control_event_id IS NULL
+            AND cancellation_request_id IS NOT NULL)
+    )
+);
+CREATE INDEX supervisor_bookkeeping_authorization_control
+    ON supervisor_bookkeeping_authorization_observations(control_event_id, sequence);
+CREATE INDEX supervisor_bookkeeping_authorization_cancellation
+    ON supervisor_bookkeeping_authorization_observations(
+        cancellation_request_id, sequence
+    );
+CREATE TRIGGER supervisor_bookkeeping_authorization_observations_no_update
+BEFORE UPDATE ON supervisor_bookkeeping_authorization_observations BEGIN
+    SELECT RAISE(ABORT, 'supervisor bookkeeping authorization observations are append-only');
+END;
+CREATE TRIGGER supervisor_bookkeeping_authorization_observations_no_delete
+BEFORE DELETE ON supervisor_bookkeeping_authorization_observations BEGIN
+    SELECT RAISE(ABORT, 'supervisor bookkeeping authorization observations are append-only');
+END;
+CREATE TRIGGER supervisor_bookkeeping_authorization_sources_no_update
+BEFORE UPDATE ON supervisor_bookkeeping_authorization_sources BEGIN
+    SELECT RAISE(ABORT, 'supervisor bookkeeping authorization sources are append-only');
+END;
+CREATE TRIGGER supervisor_bookkeeping_authorization_sources_no_delete
+BEFORE DELETE ON supervisor_bookkeeping_authorization_sources BEGIN
+    SELECT RAISE(ABORT, 'supervisor bookkeeping authorization sources are append-only');
+END;
+CREATE TRIGGER supervisor_bookkeeping_authorization_baseline_no_update
+BEFORE UPDATE ON supervisor_bookkeeping_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor bookkeeping authorization baseline is append-only');
+END;
+CREATE TRIGGER supervisor_bookkeeping_authorization_baseline_no_delete
+BEFORE DELETE ON supervisor_bookkeeping_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor bookkeeping authorization baseline is append-only');
+END;
+CREATE TRIGGER supervisor_bookkeeping_authorization_baseline_no_insert
+BEFORE INSERT ON supervisor_bookkeeping_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor bookkeeping authorization baseline is frozen');
+END;
+"""
+
+
 class SQLiteSupervisorStore:
     """Supervisor-specific event store sharing the existing local SQLite file."""
 
@@ -1011,6 +1123,36 @@ class SQLiteSupervisorStore:
                 raise ConfigurationError(
                     "supervisor authorization schema migration digest mismatch"
                 )
+            migration_v4_digest = _sha256_text(_SCHEMA_V4)
+            if 4 not in versions:
+                self._connection.execute("BEGIN IMMEDIATE")
+                try:
+                    _verify_pre_v4_supervisor_schema(self._connection)
+                    _verify_pre_v4_bookkeeping_history(self._connection)
+                    _execute_schema_script(self._connection, _SCHEMA_V4)
+                    self._connection.execute(
+                        """
+                        INSERT INTO state_schema_migrations (
+                            version, name, script_sha256, applied_at
+                        ) VALUES (
+                            4, 'supervisor_bookkeeping_authorization_shadow', ?, ?
+                        )
+                        """,
+                        (migration_v4_digest, now),
+                    )
+                except BaseException:
+                    self._connection.rollback()
+                    raise
+                else:
+                    self._connection.commit()
+            elif (
+                versions[4]["name"]
+                != "supervisor_bookkeeping_authorization_shadow"
+                or versions[4]["script_sha256"] != migration_v4_digest
+            ):
+                raise ConfigurationError(
+                    "supervisor bookkeeping authorization migration digest mismatch"
+                )
             _verify_supervisor_schema(self._connection)
 
     def current_control(self) -> SupervisorControlRevision:
@@ -1019,15 +1161,7 @@ class SQLiteSupervisorStore:
                 "SELECT * FROM supervisor_control_events ORDER BY revision DESC LIMIT 1"
             ).fetchone()
         if row is None:
-            return SupervisorControlRevision(
-                sequence=0,
-                event_id="synthetic:stopped:0",
-                revision=0,
-                mode=SupervisorMode.STOPPED,
-                actor_id="system",
-                reason_code="initial_state",
-                occurred_at=0.0,
-            )
+            return _initial_control_revision()
         return _control_from_row(row)
 
     def update_control(
@@ -1050,10 +1184,7 @@ class SQLiteSupervisorStore:
                 "SELECT * FROM supervisor_control_events ORDER BY revision DESC LIMIT 1"
             ).fetchone()
             current = (
-                SupervisorControlRevision(
-                    0, "synthetic:stopped:0", 0, SupervisorMode.STOPPED,
-                    "system", "initial_state", 0.0
-                )
+                _initial_control_revision()
                 if row is None
                 else _control_from_row(row)
             )
@@ -1076,9 +1207,22 @@ class SQLiteSupervisorStore:
                 (event_id, revision, mode.value, actor_id, reason_code, timestamp),
             )
             sequence = int(cursor.lastrowid)
-        return SupervisorControlRevision(
-            sequence, event_id, revision, mode, actor_id, reason_code, timestamp
-        )
+            updated = SupervisorControlRevision(
+                sequence, event_id, revision, mode, actor_id, reason_code, timestamp
+            )
+            try:
+                self._append_bookkeeping_authorization_observation(
+                    connection,
+                    boundary="control_transition",
+                    observed_at=timestamp,
+                    legacy_executable=True,
+                    control=updated,
+                    previous_control=current,
+                )
+            except Exception:
+                # Shadow evidence cannot change a valid legacy control transition.
+                pass
+        return updated
 
     def admit_flow(self, spec: FlowSpec) -> tuple[FlowSpec, bool]:
         _validate_flow_spec(spec)
@@ -1194,6 +1338,20 @@ class SQLiteSupervisorStore:
                 (flow_id,),
             ).fetchall()
         return tuple(_authorization_observation_from_row(row) for row in rows)
+
+    def list_bookkeeping_authorization_observations(
+        self,
+    ) -> tuple[SupervisorBookkeepingAuthorizationObservation, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT * FROM supervisor_bookkeeping_authorization_observations
+                ORDER BY sequence
+                """
+            ).fetchall()
+        return tuple(
+            _bookkeeping_authorization_observation_from_row(row) for row in rows
+        )
 
     def flow_state_counts(self) -> dict[str, int]:
         """Return the current event-sourced flow projection on this connection."""
@@ -1489,6 +1647,91 @@ class SQLiteSupervisorStore:
             ),
         )
 
+    def _append_bookkeeping_authorization_observation(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        boundary: str,
+        observed_at: float,
+        legacy_executable: bool,
+        control: SupervisorControlRevision | None = None,
+        previous_control: SupervisorControlRevision | None = None,
+        spec: FlowSpec | None = None,
+        flow_revision: FlowRevision | None = None,
+        cancellation_request_id: str | None = None,
+        requested_by: str | None = None,
+        reason_code: str | None = None,
+    ) -> None:
+        request, policy = _supervisor_bookkeeping_authorization_request(
+            boundary=boundary,
+            observed_at=observed_at,
+            control=control,
+            previous_control=previous_control,
+            spec=spec,
+            flow_revision=flow_revision,
+            cancellation_request_id=cancellation_request_id,
+            requested_by=requested_by,
+            reason_code=reason_code,
+        )
+        if boundary == "flow_cancellation":
+            if (
+                spec is None
+                or flow_revision is None
+                or cancellation_request_id is None
+            ):
+                raise ValidationError(
+                    "cancellation authorization source is incomplete"
+                )
+            connection.execute(
+                """
+                INSERT INTO supervisor_bookkeeping_authorization_sources (
+                    cancellation_request_id, flow_id, source_flow_revision
+                ) VALUES (?, ?, ?)
+                """,
+                (
+                    cancellation_request_id,
+                    spec.flow_id,
+                    flow_revision.revision,
+                ),
+            )
+        decision = ShadowAuthorizationEvaluator().evaluate(request, policy)
+        parity = (decision.effect.value == "permit") == legacy_executable
+        payload = {
+            "mode": "shadow",
+            "boundary": boundary,
+            "request": request.to_canonical(),
+            "request_digest": request.digest,
+            "decision": decision.to_canonical(),
+            "decision_digest": decision.digest,
+            "legacy_executable": legacy_executable,
+            "execution_parity": parity,
+        }
+        connection.execute(
+            """
+            INSERT INTO supervisor_bookkeeping_authorization_observations (
+                observation_id, boundary, flow_id, control_event_id,
+                cancellation_request_id, request_digest, decision_digest,
+                effect, derived_permission_class, legacy_executable,
+                execution_parity, payload_json, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                self._new_id("bookkeeping_authorization"),
+                boundary,
+                None if spec is None else spec.flow_id,
+                None if control is None else control.event_id,
+                cancellation_request_id,
+                request.digest,
+                decision.digest,
+                decision.effect.value,
+                int(decision.derived_permission_class),
+                int(legacy_executable),
+                int(parity),
+                _bounded_json(payload, "bookkeeping authorization payload"),
+                observed_at,
+            ),
+        )
+
     def mark_attempt_dispatching(
         self,
         claim: AttemptClaim,
@@ -1573,6 +1816,17 @@ class SQLiteSupervisorStore:
             ).fetchone()
             if existing is not None:
                 return current
+            if timestamp < current.occurred_at:
+                raise ValidationError(
+                    "cancellation timestamp predates the current flow revision"
+                )
+            flow_row = connection.execute(
+                "SELECT * FROM supervisor_flows WHERE flow_id = ?", (flow_id,)
+            ).fetchone()
+            if flow_row is None:
+                raise SupervisorError("flow was not found")
+            spec = _flow_from_row(flow_row)
+            request_id = self._new_id("cancellation")
             connection.execute(
                 """
                 INSERT INTO supervisor_cancellation_requests (
@@ -1580,10 +1834,25 @@ class SQLiteSupervisorStore:
                 ) VALUES (?, ?, ?, ?, ?)
                 """,
                 (
-                    self._new_id("cancellation"), flow_id, reason_code,
+                    request_id, flow_id, reason_code,
                     requested_by, timestamp,
                 ),
             )
+            try:
+                self._append_bookkeeping_authorization_observation(
+                    connection,
+                    boundary="flow_cancellation",
+                    observed_at=timestamp,
+                    legacy_executable=True,
+                    spec=spec,
+                    flow_revision=current,
+                    cancellation_request_id=request_id,
+                    requested_by=requested_by,
+                    reason_code=reason_code,
+                )
+            except Exception:
+                # Cancellation remains fail-safe when shadow evidence fails.
+                pass
             if current.state in _FINAL_FLOW_STATES:
                 return current
             target = (
@@ -2037,10 +2306,7 @@ class SQLiteSupervisorStore:
             "SELECT * FROM supervisor_control_events ORDER BY revision DESC LIMIT 1"
         ).fetchone()
         if row is None:
-            return SupervisorControlRevision(
-                0, "synthetic:stopped:0", 0, SupervisorMode.STOPPED,
-                "system", "initial_state", 0.0,
-            )
+            return _initial_control_revision()
         return _control_from_row(row)
 
     @staticmethod
@@ -2344,6 +2610,82 @@ def _inspect_supervisor_authorization_connection(
 ) -> SupervisorAuthorizationAudit:
     tables = _table_names(connection)
     if "supervisor_flows" not in tables:
+        supervisor_state_present = any(
+            name.startswith("supervisor_") for name in tables
+        )
+        if "state_schema_migrations" in tables:
+            supervisor_state_present = supervisor_state_present or (
+                connection.execute(
+                    "SELECT 1 FROM state_schema_migrations WHERE version >= 2 LIMIT 1"
+                ).fetchone()
+                is not None
+            )
+        findings = (
+            (
+                SupervisorAuthorizationFinding(
+                    "supervisor_schema_missing", None, None, None
+                ),
+                *_authorization_guard_findings(connection),
+            )
+            if supervisor_state_present
+            else ()
+        )
+        return SupervisorAuthorizationAudit(True, False, 0, 0, findings)
+    guard_findings = _authorization_guard_findings(connection)
+    required_sources = {
+        "supervisor_attempts",
+        "supervisor_cancellation_requests",
+        "supervisor_control_events",
+        "supervisor_flow_revisions",
+        "supervisor_flows",
+    }
+    if not required_sources.issubset(tables):
+        return SupervisorAuthorizationAudit(
+            True,
+            False,
+            0,
+            0,
+            (
+                SupervisorAuthorizationFinding(
+                    "supervisor_schema_missing", None, None, None
+                ),
+                *guard_findings,
+            ),
+        )
+    flow = _inspect_flow_authorization_connection(connection)
+    bookkeeping = _inspect_bookkeeping_authorization_connection(connection)
+    findings = (
+        *flow.findings,
+        *bookkeeping.findings,
+        *guard_findings,
+    )
+    return SupervisorAuthorizationAudit(
+        database_present=True,
+        schema_present=(
+            flow.schema_present
+            and bookkeeping.schema_present
+            and not any(
+                finding.code in {
+                    "authorization_schema_mismatch",
+                    "migration_schema_mismatch",
+                }
+                for finding in guard_findings
+            )
+        ),
+        observation_count=flow.observation_count + bookkeeping.observation_count,
+        expected_observation_count=(
+            flow.expected_observation_count
+            + bookkeeping.expected_observation_count
+        ),
+        findings=findings,
+    )
+
+
+def _inspect_flow_authorization_connection(
+    connection: sqlite3.Connection,
+) -> SupervisorAuthorizationAudit:
+    tables = _table_names(connection)
+    if "supervisor_flows" not in tables:
         return SupervisorAuthorizationAudit(True, False, 0, 0, ())
     flow_rows = connection.execute(
         "SELECT * FROM supervisor_flows ORDER BY created_at, flow_id"
@@ -2383,7 +2725,7 @@ def _inspect_supervisor_authorization_connection(
         ORDER BY sequence
         """
     ).fetchall()
-    findings = list(_authorization_guard_findings(connection))
+    findings: list[SupervisorAuthorizationFinding] = []
     attempts_by_flow: dict[str, list[sqlite3.Row]] = {}
     for row in attempt_rows:
         attempts_by_flow.setdefault(row["flow_id"], []).append(row)
@@ -2399,7 +2741,10 @@ def _inspect_supervisor_authorization_connection(
         if flow_row["request_digest"] != spec.request_digest:
             findings.append(
                 SupervisorAuthorizationFinding(
-                    "flow_request_digest_mismatch", spec.flow_id, None, None
+                    "flow_request_digest_mismatch",
+                    _audit_flow_reference(spec.flow_id),
+                    None,
+                    None,
                 )
             )
         expected = [
@@ -2434,7 +2779,10 @@ def _inspect_supervisor_authorization_connection(
         if actual_ids != expected_ids:
             findings.append(
                 SupervisorAuthorizationFinding(
-                    "boundary_coverage_or_order_mismatch", spec.flow_id, None, None
+                    "boundary_coverage_or_order_mismatch",
+                    _audit_flow_reference(spec.flow_id),
+                    None,
+                    None,
                 )
             )
         used: set[int] = set()
@@ -2454,7 +2802,7 @@ def _inspect_supervisor_authorization_connection(
                             if not matches
                             else "observation_duplicated"
                         ),
-                        spec.flow_id,
+                        _audit_flow_reference(spec.flow_id),
                         boundary,
                         None,
                     )
@@ -2478,6 +2826,288 @@ def _inspect_supervisor_authorization_connection(
                 )
     return SupervisorAuthorizationAudit(
         True, True, len(observation_rows), expected_count, tuple(findings)
+    )
+
+
+def _inspect_bookkeeping_authorization_connection(
+    connection: sqlite3.Connection,
+) -> SupervisorAuthorizationAudit:
+    tables = _table_names(connection)
+    control_rows = connection.execute(
+        "SELECT * FROM supervisor_control_events ORDER BY revision"
+    ).fetchall()
+    cancellation_rows = connection.execute(
+        """
+        SELECT * FROM supervisor_cancellation_requests
+        ORDER BY requested_at, request_id
+        """
+    ).fetchall()
+    baseline_table = "supervisor_bookkeeping_authorization_baseline"
+    source_table = "supervisor_bookkeeping_authorization_sources"
+    observation_table = "supervisor_bookkeeping_authorization_observations"
+    baseline = (
+        {
+            (row["entity_type"], row["entity_id"])
+            for row in connection.execute(
+                f"SELECT entity_type, entity_id FROM {baseline_table}"
+            ).fetchall()
+        }
+        if baseline_table in tables
+        else set()
+    )
+    expected_control_rows = [
+        row
+        for row in control_rows
+        if ("control_event", row["event_id"]) not in baseline
+    ]
+    expected_cancellation_rows = [
+        row
+        for row in cancellation_rows
+        if ("cancellation_request", row["request_id"]) not in baseline
+    ]
+    expected_count = len(expected_control_rows) + len(expected_cancellation_rows)
+    if (
+        observation_table not in tables
+        or baseline_table not in tables
+        or source_table not in tables
+    ):
+        return SupervisorAuthorizationAudit(
+            True,
+            False,
+            0,
+            expected_count,
+            (
+                SupervisorAuthorizationFinding(
+                    "bookkeeping_authorization_schema_missing",
+                    None,
+                    None,
+                    None,
+                ),
+            ),
+        )
+    observation_rows = connection.execute(
+        f"SELECT * FROM {observation_table} ORDER BY sequence"
+    ).fetchall()
+    flow_rows = {
+        row["flow_id"]: row
+        for row in connection.execute("SELECT * FROM supervisor_flows").fetchall()
+    }
+    flow_revision_rows = {
+        (row["flow_id"], row["revision"]): row
+        for row in connection.execute(
+            "SELECT * FROM supervisor_flow_revisions"
+        ).fetchall()
+    }
+    source_rows = {
+        row["cancellation_request_id"]: row
+        for row in connection.execute(f"SELECT * FROM {source_table}").fetchall()
+    }
+    expected: list[
+        tuple[
+            str,
+            str | None,
+            str | None,
+            str | None,
+            float,
+            AuthorizationRequest,
+            PolicyBundle,
+            str,
+        ]
+    ] = []
+    findings: list[SupervisorAuthorizationFinding] = []
+    previous_control = _initial_control_revision()
+    for row in control_rows:
+        control = _control_from_row(row)
+        if ("control_event", control.event_id) not in baseline:
+            request, policy = _supervisor_bookkeeping_authorization_request(
+                boundary="control_transition",
+                observed_at=control.occurred_at,
+                control=control,
+                previous_control=previous_control,
+            )
+            expected.append(
+                (
+                    "control_transition",
+                    None,
+                    control.event_id,
+                    None,
+                    control.occurred_at,
+                    request,
+                    policy,
+                    f"control_revision:{control.revision}",
+                )
+            )
+        previous_control = control
+    for row in expected_cancellation_rows:
+        flow_row = flow_rows.get(row["flow_id"])
+        if flow_row is None:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "bookkeeping_target_missing",
+                    _audit_flow_reference(row["flow_id"]),
+                    "flow_cancellation",
+                    None,
+                )
+            )
+            continue
+        source_row = source_rows.get(row["request_id"])
+        if source_row is None:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "bookkeeping_source_missing",
+                    _audit_flow_reference(row["flow_id"]),
+                    "flow_cancellation",
+                    None,
+                )
+            )
+            continue
+        if source_row["flow_id"] != row["flow_id"]:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "bookkeeping_source_lineage_mismatch",
+                    _audit_flow_reference(row["flow_id"]),
+                    "flow_cancellation",
+                    None,
+                )
+            )
+            continue
+        flow_revision_row = flow_revision_rows.get(
+            (row["flow_id"], source_row["source_flow_revision"])
+        )
+        if flow_revision_row is None:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "bookkeeping_source_revision_missing",
+                    _audit_flow_reference(row["flow_id"]),
+                    "flow_cancellation",
+                    None,
+                )
+            )
+            continue
+        spec = _flow_from_row(flow_row)
+        flow_revision = _flow_revision_from_row(flow_revision_row)
+        request, policy = _supervisor_bookkeeping_authorization_request(
+            boundary="flow_cancellation",
+            observed_at=row["requested_at"],
+            spec=spec,
+            flow_revision=flow_revision,
+            cancellation_request_id=row["request_id"],
+            requested_by=row["requested_by"],
+            reason_code=row["reason_code"],
+        )
+        expected.append(
+            (
+                "flow_cancellation",
+                spec.flow_id,
+                None,
+                row["request_id"],
+                row["requested_at"],
+                request,
+                policy,
+                f"flow:{_audit_flow_reference(spec.flow_id)}",
+            )
+        )
+    expected_source_ids = {row["request_id"] for row in expected_cancellation_rows}
+    for request_id, row in source_rows.items():
+        if request_id not in expected_source_ids:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "bookkeeping_source_unexpected",
+                    _audit_flow_reference(row["flow_id"]),
+                    "flow_cancellation",
+                    None,
+                )
+            )
+    actual_ids = [_observation_request_id(row) for row in observation_rows]
+    expected_control_ids = [
+        item[5].request_id for item in expected if item[0] == "control_transition"
+    ]
+    actual_control_ids = [
+        actual_ids[index]
+        for index, row in enumerate(observation_rows)
+        if row["boundary"] == "control_transition"
+    ]
+    if actual_control_ids != expected_control_ids:
+        findings.append(
+            SupervisorAuthorizationFinding(
+                "bookkeeping_boundary_coverage_or_order_mismatch",
+                None,
+                "control_transition",
+                None,
+            )
+        )
+    used: set[int] = set()
+    for (
+        boundary,
+        flow_id,
+        control_event_id,
+        cancellation_request_id,
+        observed_at,
+        request,
+        policy,
+        target_reference,
+    ) in expected:
+        matches = [
+            index
+            for index, row in enumerate(observation_rows)
+            if index not in used
+            and row["boundary"] == boundary
+            and actual_ids[index] == request.request_id
+        ]
+        if len(matches) != 1:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    (
+                        "bookkeeping_observation_missing"
+                        if not matches
+                        else "bookkeeping_observation_duplicated"
+                    ),
+                    (
+                        None
+                        if flow_id is None
+                        else _audit_flow_reference(flow_id)
+                    ),
+                    boundary,
+                    None,
+                    target_reference,
+                )
+            )
+            continue
+        index = matches[0]
+        used.add(index)
+        row = observation_rows[index]
+        if (
+            row["flow_id"] != flow_id
+            or row["control_event_id"] != control_event_id
+            or row["cancellation_request_id"] != cancellation_request_id
+        ):
+            findings.append(
+                _authorization_finding(
+                    "bookkeeping_target_lineage_mismatch", row=row
+                )
+            )
+        findings.extend(
+            _verify_expected_authorization_observation(
+                row,
+                boundary=boundary,
+                observed_at=observed_at,
+                expected_request=request,
+                expected_policy=policy,
+            )
+        )
+    for index, row in enumerate(observation_rows):
+        if index not in used:
+            findings.append(
+                _authorization_finding(
+                    "bookkeeping_observation_unexpected", row=row
+                )
+            )
+    return SupervisorAuthorizationAudit(
+        True,
+        True,
+        len(observation_rows),
+        expected_count,
+        tuple(findings),
     )
 
 
@@ -2509,18 +3139,12 @@ def _authorization_guard_findings(
     connection: sqlite3.Connection,
 ) -> tuple[SupervisorAuthorizationFinding, ...]:
     findings: list[SupervisorAuthorizationFinding] = []
-    expected = {
-        name: value
-        for name, value in _expected_supervisor_schema().items()
-        if name.startswith("supervisor_authorization_")
-        or value[1].startswith("supervisor_authorization_")
-    }
+    expected = _expected_supervisor_schema()
     objects = _schema_objects(connection)
     actual = {
         name: value
         for name, value in objects.items()
-        if name.startswith("supervisor_authorization_")
-        or value[1].startswith("supervisor_authorization_")
+        if name.startswith("supervisor_") or value[1].startswith("supervisor_")
     }
     if actual != expected:
         findings.append(
@@ -2528,9 +3152,66 @@ def _authorization_guard_findings(
                 "authorization_schema_mismatch", None, None, None
             )
         )
-    migration = connection.execute(
-        "SELECT name, script_sha256 FROM state_schema_migrations WHERE version = 3"
-    ).fetchone()
+    expected_migration = _expected_migration_schema()
+    actual_migration = {
+        name: value
+        for name, value in objects.items()
+        if name.startswith("state_schema_migrations")
+        or value[1] == "state_schema_migrations"
+    }
+    if actual_migration != expected_migration:
+        findings.append(
+            SupervisorAuthorizationFinding(
+                "migration_schema_mismatch", None, None, None
+            )
+        )
+    tables = _table_names(connection)
+    if "state_schema_migrations" not in tables:
+        for code in (
+            "supervisor_migration_ledger_mismatch",
+            "authorization_migration_ledger_mismatch",
+            "bookkeeping_authorization_migration_ledger_mismatch",
+        ):
+            findings.append(
+                SupervisorAuthorizationFinding(code, None, None, None)
+            )
+        return tuple(findings)
+    ledger = {
+        int(row["version"]): row
+        for row in connection.execute(
+            "SELECT version, name, script_sha256 FROM state_schema_migrations"
+        ).fetchall()
+    }
+    if tuple(sorted(ledger)) != tuple(range(1, _SCHEMA_VERSION + 1)):
+        findings.append(
+            SupervisorAuthorizationFinding(
+                "migration_version_set_mismatch", None, None, None
+            )
+        )
+    baseline_migration = ledger.get(1)
+    if (
+        baseline_migration is None
+        or baseline_migration["name"] != "baseline_state"
+        or baseline_migration["script_sha256"]
+        != _sha256_text("agentops-baseline-schema-v1")
+    ):
+        findings.append(
+            SupervisorAuthorizationFinding(
+                "baseline_migration_ledger_mismatch", None, None, None
+            )
+        )
+    supervisor_migration = ledger.get(2)
+    if (
+        supervisor_migration is None
+        or supervisor_migration["name"] != "supervisor_control_plane"
+        or supervisor_migration["script_sha256"] != _sha256_text(_SCHEMA_V2)
+    ):
+        findings.append(
+            SupervisorAuthorizationFinding(
+                "supervisor_migration_ledger_mismatch", None, None, None
+            )
+        )
+    migration = ledger.get(3)
     if (
         migration is None
         or migration["name"] != "supervisor_authorization_shadow"
@@ -2539,6 +3220,21 @@ def _authorization_guard_findings(
         findings.append(
             SupervisorAuthorizationFinding(
                 "authorization_migration_ledger_mismatch", None, None, None
+            )
+        )
+    bookkeeping_migration = ledger.get(4)
+    if (
+        bookkeeping_migration is None
+        or bookkeeping_migration["name"]
+        != "supervisor_bookkeeping_authorization_shadow"
+        or bookkeeping_migration["script_sha256"] != _sha256_text(_SCHEMA_V4)
+    ):
+        findings.append(
+            SupervisorAuthorizationFinding(
+                "bookkeeping_authorization_migration_ledger_mismatch",
+                None,
+                None,
+                None,
             )
         )
     return tuple(findings)
@@ -2551,6 +3247,29 @@ def _verify_authorization_observation(
     boundary: str,
     observed_at: float,
     attempt_id: str | None,
+) -> tuple[SupervisorAuthorizationFinding, ...]:
+    expected_request, expected_policy = _supervisor_authorization_request(
+        boundary=boundary,
+        spec=spec,
+        observed_at=observed_at,
+        attempt_id=attempt_id,
+    )
+    return _verify_expected_authorization_observation(
+        row,
+        boundary=boundary,
+        observed_at=observed_at,
+        expected_request=expected_request,
+        expected_policy=expected_policy,
+    )
+
+
+def _verify_expected_authorization_observation(
+    row: sqlite3.Row,
+    *,
+    boundary: str,
+    observed_at: float,
+    expected_request: AuthorizationRequest,
+    expected_policy: PolicyBundle,
 ) -> tuple[SupervisorAuthorizationFinding, ...]:
     findings: list[SupervisorAuthorizationFinding] = []
 
@@ -2571,12 +3290,6 @@ def _verify_authorization_observation(
     if not isinstance(payload, dict):
         add("payload_invalid")
         return tuple(findings)
-    expected_request, expected_policy = _supervisor_authorization_request(
-        boundary=boundary,
-        spec=spec,
-        observed_at=observed_at,
-        attempt_id=attempt_id,
-    )
     expected_decision = ShadowAuthorizationEvaluator().evaluate(
         expected_request, expected_policy
     )
@@ -2629,6 +3342,8 @@ def _verify_authorization_observation(
         add("decision_projection_mismatch")
     if not bool(row["legacy_executable"]):
         add("legacy_executability_mismatch")
+    if not expected_permit:
+        add("legacy_authorization_parity_mismatch")
     if bool(row["execution_parity"]) != expected_permit:
         add("execution_parity_mismatch")
     if row["observed_at"] != observed_at:
@@ -2663,10 +3378,41 @@ def _authorization_finding(
 ) -> SupervisorAuthorizationFinding:
     return SupervisorAuthorizationFinding(
         code=code,
-        flow_id=row["flow_id"],
-        boundary=row["boundary"],
+        flow_id=(
+            None
+            if row["flow_id"] is None
+            else _audit_flow_reference(row["flow_id"])
+        ),
+        boundary=_audit_boundary_reference(row["boundary"]),
         observation_sequence=int(row["sequence"]),
     )
+
+
+def _audit_flow_reference(value: Any) -> str:
+    if (
+        isinstance(value, str)
+        and 0 < len(value) <= 256
+        and not is_sensitive_environment_value(value)
+    ):
+        return value
+    if isinstance(value, str):
+        return canonical_digest({"flow_id": value})
+    if isinstance(value, bytes):
+        return f"sha256:{hashlib.sha256(value).hexdigest()}"
+    return canonical_digest({"flow_id_type": type(value).__name__})
+
+
+def _audit_boundary_reference(value: Any) -> str | None:
+    if value in {
+        "flow_admission",
+        "attempt_claim",
+        "control_transition",
+        "flow_cancellation",
+    }:
+        return value
+    if isinstance(value, str):
+        return "invalid:" + canonical_digest({"boundary": value})
+    return None
 
 
 @contextmanager
@@ -2941,6 +3687,152 @@ def _schema_objects(
     }
 
 
+def _execute_schema_script(connection: sqlite3.Connection, script: str) -> None:
+    statement = ""
+    for line in script.splitlines(keepends=True):
+        statement += line
+        if sqlite3.complete_statement(statement):
+            sql = statement.strip()
+            if sql:
+                connection.execute(sql)
+            statement = ""
+    if statement.strip():
+        raise ConfigurationError("schema migration script is incomplete")
+
+
+def _verify_pre_v4_bookkeeping_history(connection: sqlite3.Connection) -> None:
+    foreign_key_errors = connection.execute("PRAGMA foreign_key_check").fetchall()
+    if any(str(row["table"]).startswith("supervisor_") for row in foreign_key_errors):
+        raise ConfigurationError(
+            "pre-v4 supervisor bookkeeping history has invalid references"
+        )
+    previous = _initial_control_revision()
+    try:
+        control_rows = connection.execute(
+            "SELECT * FROM supervisor_control_events ORDER BY revision"
+        ).fetchall()
+        for expected_revision, row in enumerate(control_rows, start=1):
+            control = _control_from_row(row)
+            _validate_text(control.event_id, "control event identifier", maximum=256)
+            _validate_text(control.actor_id, "control actor identifier", maximum=256)
+            _validate_reason(control.reason_code)
+            _timestamp(control.occurred_at, "control event timestamp")
+            if (
+                control.revision != expected_revision
+                or control.mode not in _CONTROL_TRANSITIONS[previous.mode]
+            ):
+                raise ValidationError("control history is not contiguous and valid")
+            previous = control
+        cancellation_rows = connection.execute(
+            "SELECT * FROM supervisor_cancellation_requests"
+        ).fetchall()
+        revision_rows_by_flow: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_flow_revisions ORDER BY flow_id, revision"
+        ).fetchall():
+            revision_rows_by_flow.setdefault(row["flow_id"], []).append(row)
+        attempt_flow_ids = {
+            row["attempt_id"]: row["flow_id"]
+            for row in connection.execute(
+                "SELECT attempt_id, flow_id FROM supervisor_attempts"
+            ).fetchall()
+        }
+        for row in cancellation_rows:
+            _validate_text(row["request_id"], "cancellation request identifier")
+            _validate_text(row["flow_id"], "flow identifier", maximum=256)
+            _validate_reason(row["reason_code"])
+            _validate_text(row["requested_by"], "requested_by", maximum=256)
+            _timestamp(row["requested_at"], "cancellation request timestamp")
+            head = _verify_flow_revision_lineage(
+                row["flow_id"],
+                revision_rows_by_flow.get(row["flow_id"], []),
+                attempt_flow_ids,
+            )
+            if head.cancellation_requested:
+                if head.state not in {FlowState.RUNNING, FlowState.CANCELLED}:
+                    raise ValidationError(
+                        "cancelled flow has an invalid current state"
+                    )
+            elif (
+                head.state not in _FINAL_FLOW_STATES
+                or row["requested_at"] < head.occurred_at
+            ):
+                raise ValidationError(
+                    "cancellation request is not reflected in flow state"
+                )
+    except (KeyError, TypeError, ValueError, ValidationError) as error:
+        raise ConfigurationError(
+            "pre-v4 supervisor bookkeeping history is invalid"
+        ) from error
+
+
+def _verify_flow_revision_lineage(
+    flow_id: str,
+    rows: Sequence[sqlite3.Row],
+    attempt_flow_ids: Mapping[str, str],
+) -> FlowRevision:
+    if not rows:
+        raise ValidationError("flow revision history is missing")
+    previous: FlowRevision | None = None
+    for expected_revision, row in enumerate(rows, start=1):
+        revision = _flow_revision_from_row(row)
+        _validate_text(revision.event_id, "flow event identifier", maximum=256)
+        _validate_reason(revision.reason_code)
+        _timestamp(revision.occurred_at, "flow event timestamp")
+        if revision.flow_id != flow_id or revision.revision != expected_revision:
+            raise ValidationError("flow revision history is not contiguous")
+        if revision.active_attempt_id is not None:
+            _validate_text(
+                revision.active_attempt_id,
+                "active attempt identifier",
+                maximum=256,
+            )
+            if attempt_flow_ids.get(revision.active_attempt_id) != flow_id:
+                raise ValidationError("active attempt does not belong to the flow")
+        if previous is None:
+            if (
+                revision.state is not FlowState.QUEUED
+                or revision.cancellation_requested
+                or revision.active_attempt_id is not None
+            ):
+                raise ValidationError("initial flow revision is invalid")
+        else:
+            regular_transition = revision.state in _FLOW_TRANSITIONS[previous.state]
+            running_cancellation = (
+                previous.state is FlowState.RUNNING
+                and revision.state is FlowState.RUNNING
+                and not previous.cancellation_requested
+                and revision.cancellation_requested
+                and revision.active_attempt_id == previous.active_attempt_id
+            )
+            if not regular_transition and not running_cancellation:
+                raise ValidationError("flow revision transition is invalid")
+            if previous.cancellation_requested and not revision.cancellation_requested:
+                raise ValidationError("flow cancellation is not sticky")
+            cancellation_became_requested = (
+                not previous.cancellation_requested
+                and revision.cancellation_requested
+            )
+            valid_terminal_cancellation = (
+                revision.state is FlowState.CANCELLED
+                and previous.state is not FlowState.RUNNING
+            )
+            if (
+                cancellation_became_requested
+                and not running_cancellation
+                and not valid_terminal_cancellation
+            ):
+                raise ValidationError("flow cancellation transition is invalid")
+        if (revision.state is FlowState.RUNNING) != (
+            revision.active_attempt_id is not None
+        ):
+            raise ValidationError("flow active-attempt shape is invalid")
+        previous = revision
+    if previous is None:
+        raise ValidationError("flow revision history is missing")
+    return previous
+
+
 @cache
 def _expected_baseline_schema() -> dict[str, tuple[str, str, str]]:
     with SQLiteStateStore(":memory:") as store:
@@ -2949,6 +3841,25 @@ def _expected_baseline_schema() -> dict[str, tuple[str, str, str]]:
 
 @cache
 def _expected_supervisor_schema() -> dict[str, tuple[str, str, str]]:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.executescript(
+            _SCHEMA_V2 + "\n" + _SCHEMA_V3 + "\n" + _SCHEMA_V4
+        )
+        objects = _schema_objects(connection)
+        return {
+            name: value
+            for name, value in objects.items()
+            if name.startswith("supervisor_")
+            or value[1].startswith("supervisor_")
+        }
+    finally:
+        connection.close()
+
+
+@cache
+def _expected_pre_v4_supervisor_schema() -> dict[str, tuple[str, str, str]]:
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
     try:
@@ -2962,6 +3873,18 @@ def _expected_supervisor_schema() -> dict[str, tuple[str, str, str]]:
         }
     finally:
         connection.close()
+
+
+def _verify_pre_v4_supervisor_schema(connection: sqlite3.Connection) -> None:
+    objects = _schema_objects(connection)
+    actual = {
+        name: value
+        for name, value in objects.items()
+        if name.startswith("supervisor_")
+        or value[1].startswith("supervisor_")
+    }
+    if actual != _expected_pre_v4_supervisor_schema():
+        raise ConfigurationError("pre-v4 supervisor schema is invalid")
 
 
 def _verify_baseline_schema(connection: sqlite3.Connection) -> None:
@@ -3304,6 +4227,245 @@ def _supervisor_authorization_request(
     return request, policy
 
 
+def _control_authorization_mapping(
+    control: SupervisorControlRevision,
+) -> dict[str, Any]:
+    return {
+        "event_id": control.event_id,
+        "revision": control.revision,
+        "mode": control.mode.value,
+        "actor_ref": canonical_digest({"actor_id": control.actor_id}),
+        "reason_code": control.reason_code,
+        "occurred_at": control.occurred_at,
+    }
+
+
+def _flow_revision_authorization_mapping(
+    revision: FlowRevision,
+) -> dict[str, Any]:
+    return {
+        "event_id": revision.event_id,
+        "flow_id_ref": canonical_digest({"flow_id": revision.flow_id}),
+        "revision": revision.revision,
+        "state": revision.state.value,
+        "cancellation_requested": revision.cancellation_requested,
+        "active_attempt_ref": (
+            None
+            if revision.active_attempt_id is None
+            else canonical_digest({"attempt_id": revision.active_attempt_id})
+        ),
+        "reason_code": revision.reason_code,
+        "occurred_at": revision.occurred_at,
+    }
+
+
+def _cancellation_effect_mapping(revision: FlowRevision) -> dict[str, Any]:
+    is_final = revision.state in _FINAL_FLOW_STATES
+    target_state = (
+        revision.state
+        if is_final or revision.state is FlowState.RUNNING
+        else FlowState.CANCELLED
+    )
+    return {
+        "cancellation_request_appended": True,
+        "flow_revision_appended": not is_final,
+        "target_revision": revision.revision if is_final else revision.revision + 1,
+        "target_state": target_state.value,
+        "target_cancellation_requested": (
+            revision.cancellation_requested if is_final else True
+        ),
+        "completion_intent_appended": (
+            not is_final and revision.state is not FlowState.RUNNING
+        ),
+    }
+
+
+def _supervisor_bookkeeping_authorization_request(
+    *,
+    boundary: str,
+    observed_at: float,
+    control: SupervisorControlRevision | None = None,
+    previous_control: SupervisorControlRevision | None = None,
+    spec: FlowSpec | None = None,
+    flow_revision: FlowRevision | None = None,
+    cancellation_request_id: str | None = None,
+    requested_by: str | None = None,
+    reason_code: str | None = None,
+) -> tuple[AuthorizationRequest, PolicyBundle]:
+    if boundary == "control_transition":
+        if (
+            control is None
+            or previous_control is None
+            or spec is not None
+            or flow_revision is not None
+            or cancellation_request_id is not None
+            or requested_by is not None
+            or reason_code is not None
+            or control.revision != previous_control.revision + 1
+            or control.mode not in _CONTROL_TRANSITIONS[previous_control.mode]
+        ):
+            raise ValidationError("control authorization inputs are invalid")
+        operation = "supervisor.control_transition"
+        request_id = f"supervisor:control_transition:{control.event_id}"
+        resource_type = "supervisor_control_state"
+        identifier = canonical_digest({"resource": "supervisor_control_state"})
+        version = canonical_digest(
+            {
+                "event_id": previous_control.event_id,
+                "revision": previous_control.revision,
+            }
+        )
+        parameters = {
+            "source": _control_authorization_mapping(previous_control),
+            "target": _control_authorization_mapping(control),
+        }
+        content = _control_authorization_mapping(previous_control)
+        flow_state = f"control_{previous_control.mode.value}"
+        intended_effect = "apply_local_supervisor_control_transition"
+        reversible = True
+    elif boundary == "flow_cancellation":
+        if (
+            control is not None
+            or previous_control is not None
+            or spec is None
+            or flow_revision is None
+            or cancellation_request_id is None
+            or requested_by is None
+            or reason_code is None
+            or flow_revision.flow_id != spec.flow_id
+        ):
+            raise ValidationError("cancellation authorization inputs are invalid")
+        operation = "supervisor.flow_cancel"
+        request_id = f"supervisor:flow_cancellation:{cancellation_request_id}"
+        resource_type = "supervisor_flow"
+        identifier = canonical_digest({"flow_id": spec.flow_id})
+        version = canonical_digest(
+            {
+                "event_id": flow_revision.event_id,
+                "revision": flow_revision.revision,
+            }
+        )
+        source = _flow_revision_authorization_mapping(flow_revision)
+        parameters = {
+            "flow_request_digest": spec.request_digest,
+            "reason_code": reason_code,
+            "requested_by_ref": canonical_digest({"requested_by": requested_by}),
+            "source": source,
+            "effect": _cancellation_effect_mapping(flow_revision),
+        }
+        content = {
+            "flow_request_digest": spec.request_digest,
+            "source": source,
+        }
+        flow_state = flow_revision.state.value
+        intended_effect = "record_and_apply_local_flow_cancellation"
+        reversible = False
+    else:
+        raise ValidationError("unsupported bookkeeping authorization boundary")
+    request = AuthorizationRequest(
+        request_id=request_id,
+        subject=SubjectAttributes(
+            principal_id="controller:local",
+            controller_id="agentops:local-controller",
+            role=Role.CONTROLLER,
+            role_version="1",
+            profile_id=canonical_digest({"profile_id": "controller_bookkeeping"}),
+            runner_id="local_non_ai",
+            session_id=None,
+        ),
+        action=ActionAttributes(
+            verb=ActionVerb.MODIFY,
+            operation=operation,
+            parameters_digest=canonical_digest(parameters),
+            intended_effect=intended_effect,
+        ),
+        resource=ResourceAttributes(
+            resource_type=resource_type,
+            identifier=identifier,
+            version=version,
+            owner="operator:local",
+            trust_boundary="local_control_plane",
+            protected=False,
+            sensitivity=ImpactLevel.LOW,
+            content_digest=canonical_digest(content),
+        ),
+        environment=EnvironmentAttributes(
+            evaluated_at=observed_at,
+            isolation_state=IsolationState.VERIFIED,
+            network_state=NetworkState.DISABLED,
+            billing_route=BillingRoute.LOCAL_NON_AI,
+            capacity_state=CapacityState.NOT_APPLICABLE,
+            paid_continuation_protection=PaidContinuationProtection.NOT_APPLICABLE,
+            circuit_state=CircuitState.CLOSED,
+            flow_state=flow_state,
+        ),
+        consequences=ConsequenceVector(
+            confidentiality=ImpactLevel.LOW,
+            integrity=ImpactLevel.LOW,
+            availability=ImpactLevel.LOW,
+            reach=Reach.LOCAL,
+            destructive=False,
+            reversible=reversible,
+            sensitivity=ImpactLevel.LOW,
+            blast_radius=BlastRadius.SINGLE_RESOURCE,
+        ),
+    )
+    sources = {
+        "subject": EvidenceSource.CONTROLLER,
+        "action": EvidenceSource.CONTROLLER,
+        "resource": EvidenceSource.CONTROLLER,
+        "environment": EvidenceSource.CONTROLLER,
+        "consequences": EvidenceSource.CONTROLLER,
+    }
+    evidence = tuple(
+        AttributeEvidence.bind(
+            evidence_id=f"supervisor:{boundary}:{attribute}",
+            attribute=attribute,
+            value=request.attribute_value(attribute),
+            source=source,
+            source_id="agentops:controller",
+            observed_at=observed_at,
+            expires_at=observed_at + 60.0,
+            authenticated=True,
+        )
+        for attribute, source in sources.items()
+    )
+    request = AuthorizationRequest(
+        request.request_id,
+        request.subject,
+        request.action,
+        request.resource,
+        request.environment,
+        request.consequences,
+        evidence,
+    )
+    base = PolicyBundle.current_stage(issued_at=observed_at)
+    policy = PolicyBundle(
+        bundle_id=base.bundle_id,
+        version=base.version,
+        issued_at=base.issued_at,
+        evidence_requirements=base.evidence_requirements,
+        enabled_classes=base.enabled_classes,
+        allowed_verbs=base.allowed_verbs,
+        allowed_roles=tuple(dict.fromkeys((*base.allowed_roles, Role.CONTROLLER))),
+        allowed_operations=tuple(dict.fromkeys((*base.allowed_operations, operation))),
+        allowed_resource_types=tuple(
+            dict.fromkeys((*base.allowed_resource_types, resource_type))
+        ),
+        allowed_trust_boundaries=tuple(
+            dict.fromkeys((*base.allowed_trust_boundaries, "local_control_plane"))
+        ),
+        allowed_flow_states=tuple(
+            dict.fromkeys((*base.allowed_flow_states, flow_state))
+        ),
+        allowed_network_states=base.allowed_network_states,
+        allowed_billing_routes=base.allowed_billing_routes,
+        approval_requirements=base.approval_requirements,
+        decision_ttl_seconds=base.decision_ttl_seconds,
+    )
+    return request, policy
+
+
 def _authorization_observation_from_row(
     row: sqlite3.Row,
 ) -> SupervisorAuthorizationObservation:
@@ -3320,6 +4482,39 @@ def _authorization_observation_from_row(
         execution_parity=bool(row["execution_parity"]),
         payload=json.loads(row["payload_json"]),
         observed_at=row["observed_at"],
+    )
+
+
+def _bookkeeping_authorization_observation_from_row(
+    row: sqlite3.Row,
+) -> SupervisorBookkeepingAuthorizationObservation:
+    return SupervisorBookkeepingAuthorizationObservation(
+        sequence=row["sequence"],
+        observation_id=row["observation_id"],
+        boundary=row["boundary"],
+        flow_id=row["flow_id"],
+        control_event_id=row["control_event_id"],
+        cancellation_request_id=row["cancellation_request_id"],
+        request_digest=row["request_digest"],
+        decision_digest=row["decision_digest"],
+        effect=row["effect"],
+        derived_permission_class=PermissionClass(row["derived_permission_class"]),
+        legacy_executable=bool(row["legacy_executable"]),
+        execution_parity=bool(row["execution_parity"]),
+        payload=json.loads(row["payload_json"]),
+        observed_at=row["observed_at"],
+    )
+
+
+def _initial_control_revision() -> SupervisorControlRevision:
+    return SupervisorControlRevision(
+        sequence=0,
+        event_id="synthetic:stopped:0",
+        revision=0,
+        mode=SupervisorMode.STOPPED,
+        actor_id="system",
+        reason_code="initial_state",
+        occurred_at=0.0,
     )
 
 
@@ -3405,6 +4600,7 @@ __all__ = [
     "StaleReconciliationPlanError",
     "StaleRevisionError",
     "SupervisorControlRevision",
+    "SupervisorBookkeepingAuthorizationObservation",
     "SupervisorAuthorizationObservation",
     "SupervisorAuthorizationAudit",
     "SupervisorAuthorizationFinding",
