@@ -10,11 +10,12 @@ The control plane is deterministic. Coding harnesses are bounded workers used on
 
 ## Identity and compatibility boundary
 
-`Ordomata` is the product name; the repository, distribution, import package,
-and CLI use `ordomata`. New runtime state uses `.ordomata/`. A sole legacy
-`.agentops/` root is selected in place without mutation; the presence of both
-roots is an integrity conflict and fails closed. This preserves append-only
-records and their original absolute-path provenance.
+`Ordomata` is the product name, pronounced **or-doh-MAH-tuh** (four syllables,
+primary stress on “MAH”; IPA: `/ˌɔːr.doʊˈmɑː.tə/`). The repository,
+distribution, import package, and CLI use `ordomata`. New runtime state uses
+`.ordomata/`. A sole legacy `.agentops/` root is selected in place without
+mutation; the presence of both roots is an integrity conflict and fails closed.
+This preserves append-only records and their original absolute-path provenance.
 
 The canonical live gate is `ORDOMATA_ALLOW_SUBSCRIPTION_RUNS=1`. The legacy
 `AGENTOPS_ALLOW_SUBSCRIPTION_RUNS` spelling is accepted only as an exact,
