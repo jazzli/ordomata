@@ -7,7 +7,12 @@ Pronounced **or-doh-MAH-tuh**: four syllables, with the primary stress on
 
 Ordomata is a local, single-operator control plane for running neutral tasks through first-party AI coding-harness subscriptions without using purchased product credits, subscription overage, separately billed model APIs, or cloud inference routes. The current tracer bullet is **Chief of Staff Lite**: sanitized local sources become an immutable context snapshot, a structured local draft, and transparent deterministic evaluation.
 
-Source, tests, plans, and sanitized configuration are intended to be tracked at the private GitHub slug `jazzli/ordomata` for provenance and portability. Local state, attestations, logs, workspaces, and artifacts remain ignored and are not pushed automatically.
+Source, tests, plans, fixtures, and deliberately sanitized configuration are
+published at [`jazzli/ordomata`](https://github.com/jazzli/ordomata) for
+provenance and portability. This public repository must never contain private
+inputs, credentials, account or billing attestations, local databases, logs,
+workspaces, run artifacts, or other sensitive operator data. Those remain local
+and ignored, and Ordomata does not push them automatically.
 
 The repository is intentionally conservative about execution while remaining extensible. Codex and Claude Code adapters exist, but normal development and tests use the deterministic mock. Cursor and repository-maintenance workflows are planned next.
 

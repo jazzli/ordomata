@@ -12,7 +12,13 @@ Evolve the current Ordomata into a durable local "subscription worker OS": a det
 
 The target is not a continuously thinking chatbot. The controller may remain available continuously, but model workers start only for eligible work and only while verified included subscription capacity is available.
 
-The runtime remains local and single-operator. Source, tests, plans, and sanitized configuration may be tracked in a private GitHub repository under the operator's `jazzli` account for provenance and portability, but GitHub is not the runtime queue or source of live state. Credentials, account attestations containing sensitive evidence, local databases, logs, worktrees, and run artifacts stay local and ignored. The system does not push or mutate the remote automatically.
+The runtime remains local and single-operator. Source, tests, plans, fixtures,
+and deliberately sanitized configuration may be published in the public
+[`jazzli/ordomata`](https://github.com/jazzli/ordomata) repository for provenance
+and portability, but GitHub is not the runtime queue or source of live state.
+Private inputs, credentials, account attestations containing sensitive evidence,
+local databases, logs, worktrees, and run artifacts stay local and ignored. The
+system does not push or mutate the remote automatically.
 
 ```text
 operator / future constrained ingress

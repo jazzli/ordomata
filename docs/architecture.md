@@ -4,7 +4,12 @@
 
 Ordomata is a local, single-operator control plane for governed autonomous work. It runs neutral tasks through first-party subscription-backed coding harnesses and is intended to support both repository maintenance and information-synthesis workflows without purchased product credits, subscription overage, separately billed model APIs, or cloud inference routes.
 
-The source and sanitized configuration are intended to be tracked at the private GitHub slug `jazzli/ordomata`. GitHub is not the runtime queue or state store: attestations, databases, logs, workspaces, and artifacts remain local and ignored, and the orchestrator does not push automatically.
+Source, tests, plans, fixtures, and deliberately sanitized configuration may be
+published in the public [`jazzli/ordomata`](https://github.com/jazzli/ordomata)
+repository. GitHub is not the runtime queue or state store: private inputs,
+credentials, account or billing attestations, databases, logs, workspaces, and
+run artifacts remain local and ignored, and the orchestrator does not push
+automatically.
 
 The control plane is deterministic. Coding harnesses are bounded workers used only for stages where model judgment materially improves the result.
 
