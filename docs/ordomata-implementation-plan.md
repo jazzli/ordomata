@@ -384,10 +384,11 @@ admission, append-only optimistic control/flow/attempt state, sticky
 cancellation, fenced multi-resource claim library APIs, internal local
 completion outbox and receipts, read-only status/audit, digest-bound
 reconciliation, operator control commands, and foreground `ordomata supervise`
-loop are implemented. Admission and library-only claim now emit append-only
-authorization shadows, and the read-only audit independently verifies their
-digests, parity, coverage/order, schema guards, and migration provenance. The
-loop deliberately does not call the claim API or any
+loop are implemented. Admission, library-only claim, operator control
+transitions, and sticky cancellation now emit append-only authorization
+shadows, and the read-only audit independently verifies their digests, parity,
+coverage/order, schema guards, and migration provenance. The loop deliberately
+does not call the claim API or any
 runner. Runtime ABAC enforcement remains a prerequisite for dispatch. No live
 model, worker subprocess, network action, repository worker, Class 2/3 effect,
 or OS schedule is enabled, and the Phase 2 acceptance criteria are not yet

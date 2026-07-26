@@ -120,6 +120,21 @@ Policy activation, Git/remote publication, deployment, and other shared effects
 remain separate unimplemented typed actions whose exact resource version and
 digest must receive fresh authorization and any required approval.
 
+The durable supervisor now also records non-enforcing controller-bookkeeping
+shadows for mock-flow admission and claim, operator control transitions, and
+sticky cancellation. Control requests bind the exact previous control revision;
+cancellation requests bind the exact source flow revision and the deterministic
+local writes that follow, including whether a completion intent is appended.
+These bookkeeping projections grant no worker, network, repository, or
+external authority. Control transitions are reversible local changes and
+currently derive Class 1. Cancellation is irreversible on the original flow;
+explicitly admitting a replacement is compensation, not reversal, so it
+conservatively derives Class 3. Current policy denies it and the audit reports
+the resulting legacy-execution parity mismatch. The existing operator safety
+path remains unchanged because these shadows are non-authoritative. Storage
+can retain the denied Class 3 evidence, but current policy still enables only
+Classes 0/1.
+
 ## Canonical request
 
 The canonical request contract is JSON with a stable digest and these typed
@@ -371,12 +386,13 @@ violation, not an instruction to follow.
    and action receipts. Retain legacy Class 0/1 checks as defense in depth
    through the migration.
 4. **Partly implemented; continuous mediation planned — typed contracts.** The
-   first task effect is typed independently of `PermissionClass`; profile,
-   flow, repository, controller-bookkeeping, command, and tool attributes
-   remain planned. Shadow mismatches are recorded rather than rejected because
-   the legacy class is still authoritative. Once enforcement migrates, derive
-   the compatibility class from the request and mediate exact commands and
-   tools at their point of use.
+   first task effect is typed independently of `PermissionClass`, and the
+   supervisor has focused flow and controller-bookkeeping shadow attributes.
+   Profile, repository, command, and tool coverage remains planned. Shadow
+   mismatches are recorded rather than rejected because the legacy class is
+   still authoritative. Once enforcement migrates, derive the compatibility
+   class from the request and mediate exact commands and tools at their point
+   of use.
 5. **Planned with multi-agent flows.** Enforce versioned RBAC assignments,
    least-privilege delegation, and separation of duties. Children inherit only
    a strict subset of the parent's effective authority.

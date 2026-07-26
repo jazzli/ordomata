@@ -117,15 +117,22 @@ compliance claims.
 SQLite migration extends the existing state database with immutable mock-only
 flow admission; append-only optimistic control, flow, and attempt revisions;
 sticky cancellation; fenced multi-resource claim library APIs; and an internal
-local completion outbox with idempotency keys and append-only receipts. A
-subsequent additive migration records canonical, non-enforcing supervisor ABAC
-shadow observations at flow admission and attempt claim, including exact
-request/decision digests, derived Class 0/1, legacy executability, and parity.
-The read-only supervisor audit verifies those records from one consistent
-SQLite snapshot, independently recomputing requests and decisions while
-checking coverage/order, exact append-only schema, and migration provenance.
-Pre-v3 flow and attempt identifiers are captured in an immutable migration
-baseline so historical records are not falsely treated as missing evidence.
+local completion outbox with idempotency keys and append-only receipts.
+Subsequent additive migrations record canonical, non-enforcing supervisor ABAC
+shadow observations at flow admission, attempt claim, operator control
+transition, and sticky cancellation, including exact request/decision digests,
+conservatively derived class, legacy executability, and parity. The read-only
+supervisor audit verifies those records from one consistent SQLite snapshot,
+independently recomputing requests and decisions while checking coverage/order,
+exact append-only schema, and migration provenance. Frozen migration baselines
+exclude pre-shadow flow, attempt, control-event, and cancellation-request
+identifiers so historical records are not falsely treated as missing evidence.
+Control shadows bind the previous control revision; cancellation shadows bind
+the exact source flow revision and deterministic local state/outbox effect.
+Sticky cancellation is conservatively irreversible, derives Class 3, and is
+retained as a denied legacy-parity mismatch without blocking the existing
+operator safety path. This does not enable Class 2/3; current policy remains
+Class 0/1 only.
 Startup verifies canonical baseline, migration-ledger, and supervisor schema
 objects, including non-prefixed triggers targeting owned tables, before use.
 Read-only status and audit do not create absent state. Reconciliation is
