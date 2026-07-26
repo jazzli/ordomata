@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "agentops://schemas/task-definition/1",
-  "title": "AgentOps neutral task definition",
+  "title": "Ordomata neutral task definition",
   "type": "object",
   "additionalProperties": false,
   "required": [

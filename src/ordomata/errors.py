@@ -1,25 +1,25 @@
 """Domain-specific failures for the orchestrator."""
 
 
-class AgentOpsError(Exception):
+class OrdomataError(Exception):
     """Base class for expected orchestrator failures."""
 
 
-class ConfigurationError(AgentOpsError):
+class ConfigurationError(OrdomataError):
     """Configuration is invalid or incomplete."""
 
 
-class BillingRouteBlocked(AgentOpsError):
+class BillingRouteBlocked(OrdomataError):
     """Execution was blocked because billing was not subscription-safe."""
 
 
-class LiveRunDisabled(AgentOpsError):
+class LiveRunDisabled(OrdomataError):
     """A live harness run was attempted without the explicit live gate."""
 
 
-class ValidationError(AgentOpsError):
+class ValidationError(OrdomataError):
     """Structured data failed deterministic validation."""
 
 
-class RunnerUnavailable(AgentOpsError):
+class RunnerUnavailable(OrdomataError):
     """A requested runner or capability is unavailable."""

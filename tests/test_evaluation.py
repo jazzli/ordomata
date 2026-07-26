@@ -5,9 +5,9 @@ import json
 from pathlib import Path
 import unittest
 
-from agentops.context import LocalContextIndex, build_context_pack, load_source_documents
-from agentops.contracts import load_task_contract
-from agentops.evaluation import evaluate_chief_of_staff, load_evaluation_expectations
+from ordomata.context import LocalContextIndex, build_context_pack, load_source_documents
+from ordomata.contracts import load_task_contract
+from ordomata.evaluation import evaluate_chief_of_staff, load_evaluation_expectations
 
 
 ROOT = Path(__file__).resolve().parents[1]

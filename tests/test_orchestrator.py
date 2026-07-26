@@ -8,10 +8,10 @@ import time
 import unittest
 from unittest.mock import patch
 
-from agentops.authorization import canonical_digest
-from agentops.authorization_inspection import inspect_authorization_shadows
-from agentops.errors import BillingRouteBlocked, ValidationError
-from agentops.models import (
+from ordomata.authorization import canonical_digest
+from ordomata.authorization_inspection import inspect_authorization_shadows
+from ordomata.errors import BillingRouteBlocked, ValidationError
+from ordomata.models import (
     AgentEvent,
     AssessmentConfidence,
     BillingRoute,
@@ -27,13 +27,13 @@ from agentops.models import (
     RunStatus,
     UsageObservation,
 )
-from agentops.orchestrator import (
+from ordomata.orchestrator import (
     load_mock_chief_of_staff_output,
     prepare_chief_of_staff,
     run_chief_of_staff,
 )
-from agentops.runners.mock import MockRunner
-from agentops.state import SQLiteStateStore
+from ordomata.runners.mock import MockRunner
+from ordomata.state import SQLiteStateStore
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
@@ -177,7 +177,7 @@ class OrchestratorTests(unittest.TestCase):
             )
             self.assertFalse(output["safety"]["external_actions_executed"])
 
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 self.assertEqual(
                     state.current_status("mock-success"), RunStatus.SUCCEEDED
                 )
@@ -308,7 +308,7 @@ class OrchestratorTests(unittest.TestCase):
 
             self.assertEqual(report.status, RunStatus.SUCCEEDED)
             self.assertTrue(report.accepted)
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 shadows = [
                     event.payload
                     for event in state.list_events("shadow-defer-legacy-permit")
@@ -332,7 +332,7 @@ class OrchestratorTests(unittest.TestCase):
             root = self._project(temporary)
             sensitive_error = "sk-" + ("x" * 24)
             with patch(
-                "agentops.shadow_authorization.ShadowAuthorizationEvaluator.evaluate",
+                "ordomata.shadow_authorization.ShadowAuthorizationEvaluator.evaluate",
                 side_effect=RuntimeError(sensitive_error),
             ):
                 report = asyncio.run(
@@ -341,7 +341,7 @@ class OrchestratorTests(unittest.TestCase):
 
             self.assertEqual(report.status, RunStatus.SUCCEEDED)
             self.assertTrue(report.accepted)
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 shadow_event = next(
                     event
                     for event in state.list_events("shadow-failure-legacy-permit")
@@ -373,7 +373,7 @@ class OrchestratorTests(unittest.TestCase):
 
             self.assertEqual(report.status, RunStatus.SUCCEEDED)
             self.assertTrue(report.accepted)
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 shadows = [
                     event.payload
                     for event in state.list_events("shadow-class-mismatch")
@@ -429,7 +429,7 @@ class OrchestratorTests(unittest.TestCase):
             )
 
             self.assertEqual(report.status, RunStatus.SUCCEEDED)
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 shadows = [
                     event.payload
                     for event in state.list_events("shadow-intent-fallback")
@@ -471,7 +471,7 @@ class OrchestratorTests(unittest.TestCase):
 
             self.assertEqual(report.status, RunStatus.SUCCEEDED)
             self.assertTrue(Path(report.artifact_path or "").is_file())
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 shadows = [
                     event.payload
                     for event in state.list_events("shadow-class-zero-create")
@@ -483,7 +483,7 @@ class OrchestratorTests(unittest.TestCase):
                 all(not shadow["authority_ceiling_parity"] for shadow in shadows)
             )
             inspection = inspect_authorization_shadows(
-                root / ".agentops" / "state.sqlite3",
+                root / ".ordomata" / "state.sqlite3",
                 run_id="shadow-class-zero-create",
             )
             self.assertFalse(inspection.clean)
@@ -513,7 +513,7 @@ class OrchestratorTests(unittest.TestCase):
             )
 
             self.assertEqual(report.status, RunStatus.SUCCEEDED)
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 shadows = [
                     event.payload
                     for event in state.list_events("shadow-class-zero-fallback")
@@ -547,7 +547,7 @@ class OrchestratorTests(unittest.TestCase):
                 [True, True, False],
             )
             inspection = inspect_authorization_shadows(
-                root / ".agentops" / "state.sqlite3",
+                root / ".ordomata" / "state.sqlite3",
                 run_id="shadow-class-zero-fallback",
             )
             self.assertEqual(inspection.authority_ceiling_mismatch_count, 1)
@@ -580,7 +580,7 @@ class OrchestratorTests(unittest.TestCase):
             self.assertEqual(report.status, RunStatus.SUCCEEDED)
             self.assertTrue(report.accepted)
             self.assertTrue(Path(report.artifact_path or "").is_file())
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 shadows = [
                     event
                     for event in state.list_events("shadow-write-failure")
@@ -602,7 +602,7 @@ class OrchestratorTests(unittest.TestCase):
                     operator_instructions=(instruction,),
                 )
             )
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 events = {
                     run_id: next(
                         event
@@ -639,7 +639,7 @@ class OrchestratorTests(unittest.TestCase):
             self.assertEqual(report.status, RunStatus.QUARANTINED)
             self.assertFalse(report.accepted)
             self.assertIsNone(report.artifact_path)
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 scopes = [
                     event.payload["action_scope"]
                     for event in state.list_events("mock-invalid")
@@ -665,7 +665,7 @@ class OrchestratorTests(unittest.TestCase):
             )
             self.assertEqual(report.status, RunStatus.CANCELLED)
             self.assertIsNone(report.artifact_path)
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 scopes = [
                     event.payload["action_scope"]
                     for event in state.list_events("mock-cancelled")
@@ -697,7 +697,7 @@ class OrchestratorTests(unittest.TestCase):
                         run_id="blocked-api-route",
                     )
                 )
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 self.assertEqual(
                     state.current_status("blocked-api-route"), RunStatus.BLOCKED
                 )
@@ -728,7 +728,7 @@ class OrchestratorTests(unittest.TestCase):
                 )
             )
             self.assertEqual(report.events_seen, 1)
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 serialized = "\n".join(
                     event.payload_json
                     for event in state.list_events("event-redaction")
@@ -803,7 +803,7 @@ class OrchestratorTests(unittest.TestCase):
             self.assertTrue(report.billing_quarantine_required)
             self.assertTrue(report.billing_circuit_breaker_required)
 
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 breaker = state.current_billing_circuit(
                     runner_id="codex",
                     account_identity_fingerprint="b" * 64,
@@ -874,7 +874,7 @@ class OrchestratorTests(unittest.TestCase):
             self.assertTrue(report.accepted)
             self.assertFalse(report.billing_quarantine_required)
             self.assertEqual(report.incremental_api_charge, "none")
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 shadows = [
                     event.payload
                     for event in state.list_events("regenerated-timestamps")
@@ -958,7 +958,7 @@ class OrchestratorTests(unittest.TestCase):
             )
             self.assertEqual(report.status, RunStatus.QUARANTINED)
             self.assertIsNone(report.artifact_path)
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 broad = state.current_billing_circuit(
                     runner_id="codex",
                     account_identity_fingerprint=None,
@@ -1007,7 +1007,7 @@ class OrchestratorTests(unittest.TestCase):
                 self.assertEqual(report.incremental_ai_charge, "unknown")
                 self.assertIsNone(report.artifact_path)
                 with SQLiteStateStore(
-                    root / ".agentops" / "state.sqlite3"
+                    root / ".ordomata" / "state.sqlite3"
                 ) as state:
                     broad = state.current_billing_circuit(
                         runner_id="codex",
@@ -1045,7 +1045,7 @@ class OrchestratorTests(unittest.TestCase):
             )
             self.assertEqual(report.status, RunStatus.QUARANTINED)
             self.assertEqual(report.included_capacity_state, "unknown")
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 broad = state.current_billing_circuit(
                     runner_id="codex",
                     account_identity_fingerprint=None,
@@ -1076,7 +1076,7 @@ class OrchestratorTests(unittest.TestCase):
                         profile_id="codex.subscription.fixture",
                     )
                 )
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 self.assertEqual(
                     state.current_status("live-identity-mismatch"),
                     RunStatus.QUARANTINED,
@@ -1106,7 +1106,7 @@ class OrchestratorTests(unittest.TestCase):
                         profile_id="codex.subscription.fixture",
                     )
                 )
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 self.assertEqual(
                     state.current_status("cancelled-live-dispatch"),
                     RunStatus.QUARANTINED,
@@ -1154,7 +1154,7 @@ class OrchestratorTests(unittest.TestCase):
             self.assertEqual(report.incremental_ai_charge, "none")
             self.assertEqual(report.paid_capacity_consumed, "no")
             self.assertFalse(report.billing_circuit_breaker_required)
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 capacity = state.latest_billing_capacity_event(
                     runner_id="codex",
                     account_identity_fingerprint="b" * 64,
@@ -1189,7 +1189,7 @@ class OrchestratorTests(unittest.TestCase):
                     asyncio.run(
                         run_chief_of_staff(root, runner=runner, run_id=run_id)
                     )
-                with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+                with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                     self.assertEqual(state.get_run(run_id).runner_id, "mock")
                     self.assertEqual(
                         state.current_status(run_id), RunStatus.QUARANTINED
@@ -1200,14 +1200,14 @@ class OrchestratorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = self._project(temporary)
             with patch(
-                "agentops.orchestrator.evaluate_chief_of_staff",
+                "ordomata.orchestrator.evaluate_chief_of_staff",
                 side_effect=RuntimeError("injected evaluation failure"),
             ):
                 with self.assertRaisesRegex(RuntimeError, "injected evaluation failure"):
                     asyncio.run(
                         run_chief_of_staff(root, run_id="evaluation-failure")
                     )
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 self.assertEqual(
                     state.current_status("evaluation-failure"), RunStatus.FAILED
                 )
@@ -1217,17 +1217,17 @@ class OrchestratorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = self._project(temporary)
             with patch(
-                "agentops.orchestrator._stage_artifact",
+                "ordomata.orchestrator._stage_artifact",
                 side_effect=OSError("injected staging failure"),
             ):
                 with self.assertRaisesRegex(OSError, "injected staging failure"):
                     asyncio.run(run_chief_of_staff(root, run_id="staging-failure"))
             artifact = (
                 root
-                / ".agentops/runs/staging-failure/artifacts/chief-of-staff-lite.json"
+                / ".ordomata/runs/staging-failure/artifacts/chief-of-staff-lite.json"
             )
             self.assertFalse(artifact.exists())
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 self.assertEqual(
                     state.current_status("staging-failure"), RunStatus.FAILED
                 )
@@ -1249,11 +1249,11 @@ class OrchestratorTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(RuntimeError, "injected metadata failure"):
                     asyncio.run(run_chief_of_staff(root, run_id="metadata-failure"))
-            artifact_directory = root / ".agentops/runs/metadata-failure/artifacts"
+            artifact_directory = root / ".ordomata/runs/metadata-failure/artifacts"
             artifact = artifact_directory / "chief-of-staff-lite.json"
             self.assertFalse(artifact.exists())
             self.assertEqual(tuple(artifact_directory.glob(".*.tmp")), ())
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 self.assertEqual(
                     state.current_status("metadata-failure"), RunStatus.FAILED
                 )
@@ -1263,16 +1263,16 @@ class OrchestratorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = self._project(temporary)
             with patch(
-                "agentops.orchestrator._promote_staged_artifact",
+                "ordomata.orchestrator._promote_staged_artifact",
                 side_effect=OSError("injected publication failure"),
             ):
                 with self.assertRaisesRegex(OSError, "injected publication failure"):
                     asyncio.run(run_chief_of_staff(root, run_id="publication-failure"))
-            artifact_directory = root / ".agentops/runs/publication-failure/artifacts"
+            artifact_directory = root / ".ordomata/runs/publication-failure/artifacts"
             artifact = artifact_directory / "chief-of-staff-lite.json"
             self.assertFalse(artifact.exists())
             self.assertEqual(tuple(artifact_directory.glob(".*.tmp")), ())
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 self.assertEqual(
                     state.current_status("publication-failure"), RunStatus.FAILED
                 )
@@ -1305,10 +1305,10 @@ class OrchestratorTests(unittest.TestCase):
 
             artifact = (
                 root
-                / ".agentops/runs/audit-failure/artifacts/chief-of-staff-lite.json"
+                / ".ordomata/runs/audit-failure/artifacts/chief-of-staff-lite.json"
             )
             self.assertTrue(artifact.is_file())
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 self.assertEqual(
                     state.current_status("audit-failure"), RunStatus.FAILED
                 )

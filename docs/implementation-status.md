@@ -1,5 +1,10 @@
 # Implementation status
 
+Product identity: **Ordomata** — a local control plane for governed autonomous
+work. The distribution, Python package, and CLI are `ordomata`; `.ordomata/` is
+the canonical state root. A sole `.agentops/` directory and the former live-
+gate variable remain fail-closed compatibility inputs for pre-rename state.
+
 ## Repository context
 
 The repository was an initialized but otherwise empty Git repository: no files, commits, remote, instructions, architecture, implementation, database, or tests existed.
@@ -117,9 +122,9 @@ Startup verifies canonical baseline, migration-ledger, and supervisor schema
 objects, including non-prefixed triggers targeting owned tables, before use.
 Read-only status and audit do not create absent state. Reconciliation is
 preview-first and apply requires the exact current plan digest. The
-`agentops supervisor` command group exposes enqueue and explicit control,
+`ordomata supervisor` command group exposes enqueue and explicit control,
 cancellation, inspection, recovery, and local completion-receipt operations;
-`agentops supervise` runs the fenced loop only in the foreground.
+`ordomata supervise` runs the fenced loop only in the foreground.
 
 This is not a completed supervisor. The foreground loop deliberately never
 calls the claim library or a runner because enforcing runtime ABAC remains a
@@ -129,26 +134,26 @@ cells, runtime authorization enforcement, and soak evidence remain planned.
 
 ## Implemented vertical slice
 
-- `agentops doctor`: value-free, non-model diagnostics for Codex, Claude, mock, paths, SQLite/FTS5, route, current capacity, paid-continuation protection, account-identity verification, attestation status, and fixed blocker categories.
-- `agentops billing-attest --runner codex|claude`: TTY-only, exact-confirmation refresh of short-lived account-bound evidence after independent machine inspection; private atomic storage contains no raw identity, numeric balance, token, or diagnostic free text.
-- `agentops profiles` and `agentops route`: versioned execution profiles, exact billing lanes, capability filters, and auditable ranking.
-- `agentops task-validate` and `context-inspect`: strict contract/schema loading and immutable local context construction.
-- `agentops auth-inspect`: source-preserving, SQLite read-only inspection of
+- `ordomata doctor`: value-free, non-model diagnostics for Codex, Claude, mock, paths, SQLite/FTS5, route, current capacity, paid-continuation protection, account-identity verification, attestation status, and fixed blocker categories.
+- `ordomata billing-attest --runner codex|claude`: TTY-only, exact-confirmation refresh of short-lived account-bound evidence after independent machine inspection; private atomic storage contains no raw identity, numeric balance, token, or diagnostic free text.
+- `ordomata profiles` and `ordomata route`: versioned execution profiles, exact billing lanes, capability filters, and auditable ranking.
+- `ordomata task-validate` and `context-inspect`: strict contract/schema loading and immutable local context construction.
+- `ordomata auth-inspect`: source-preserving, SQLite read-only inspection of
   authorization shadow integrity, authenticated freshness, legacy and
   authority-ceiling parity, and expected Chief-of-Staff boundary
   coverage/order.
-- `agentops demo`: end-to-end deterministic Chief of Staff Lite run with append-only state and a validated local artifact.
+- `ordomata demo`: end-to-end deterministic Chief of Staff Lite run with append-only state and a validated local artifact.
 - Billing Hard-Stop v2: independent route/capacity/protection/balance axes; strict account-bound, short-lived attestations; a necessary-but-insufficient live gate; and explicit rejection of credits, overage, APIs, cloud routes, and unknown evidence.
 - Post-run billing disposition: normalized capacity/paid/account-change evidence, typed paid-capacity and incremental-AI-charge accounting, quarantine before promotion, durable append-only capacity state, atomic capacity persistence before lease release, restart-safe capacity blocking, and account/profile circuit breakers.
-- `agentops run --profile ...`: explicit live-adapter entry point guarded by diagnostics, current evidence, environment/profile/isolation checks, a closed durable circuit, and the exact live gate.
-- `agentops compare-plan`: identical-snapshot, repeated, block-randomized, fresh-session plan creation without execution.
-- `agentops compare-run`: preflight-all controlled execution for explicit named profiles using one immutable sanitized Class 0 snapshot, fresh adapters/sessions/empty workspaces, randomized repetition blocks, private per-trial review artifacts, raw reports, and a separate human-review template. It performs no ranking or promotion and retains partial results after a stop condition.
-- `agentops schedule-inspect`: non-mutating run-once schedule inspection; atomic claims and leases are available as library primitives.
-- `agentops supervisor ...`: mock-only immutable admission; append-only
+- `ordomata run --profile ...`: explicit live-adapter entry point guarded by diagnostics, current evidence, environment/profile/isolation checks, a closed durable circuit, and the exact live gate.
+- `ordomata compare-plan`: identical-snapshot, repeated, block-randomized, fresh-session plan creation without execution.
+- `ordomata compare-run`: preflight-all controlled execution for explicit named profiles using one immutable sanitized Class 0 snapshot, fresh adapters/sessions/empty workspaces, randomized repetition blocks, private per-trial review artifacts, raw reports, and a separate human-review template. It performs no ranking or promotion and retains partial results after a stop condition.
+- `ordomata schedule-inspect`: non-mutating run-once schedule inspection; atomic claims and leases are available as library primitives.
+- `ordomata supervisor ...`: mock-only immutable admission; append-only
   start/pause/resume/drain/stop and sticky cancel intent; read-only status,
   audit, and completion inspection; digest-bound reconcile; and local
   completion acknowledgement.
-- `agentops supervise`: explicit foreground control-loop ticks with a fenced
+- `ordomata supervise`: explicit foreground control-loop ticks with a fenced
   singleton lease and worker dispatch hard-disabled.
 
 The deterministic suite is the verification source of truth; documentation

@@ -2,11 +2,38 @@
 
 ## Purpose
 
-This project is a local, single-operator control plane for running neutral tasks through first-party subscription-backed coding harnesses. It is intended to support both repository maintenance and information-synthesis workflows without purchased product credits, subscription overage, separately billed model APIs, or cloud inference routes.
+Ordomata is a local, single-operator control plane for governed autonomous work. It runs neutral tasks through first-party subscription-backed coding harnesses and is intended to support both repository maintenance and information-synthesis workflows without purchased product credits, subscription overage, separately billed model APIs, or cloud inference routes.
 
-The source and sanitized configuration may be tracked in a private GitHub repository under the operator's `jazzli` account. GitHub is not the runtime queue or state store: attestations, databases, logs, workspaces, and artifacts remain local and ignored, and the orchestrator does not push automatically.
+The source and sanitized configuration are intended to be tracked at the private GitHub slug `jazzli/ordomata`. GitHub is not the runtime queue or state store: attestations, databases, logs, workspaces, and artifacts remain local and ignored, and the orchestrator does not push automatically.
 
 The control plane is deterministic. Coding harnesses are bounded workers used only for stages where model judgment materially improves the result.
+
+## Identity and compatibility boundary
+
+`Ordomata` is the product name; the repository, distribution, import package,
+and CLI use `ordomata`. New runtime state uses `.ordomata/`. A sole legacy
+`.agentops/` root is selected in place without mutation; the presence of both
+roots is an integrity conflict and fails closed. This preserves append-only
+records and their original absolute-path provenance.
+
+The canonical live gate is `ORDOMATA_ALLOW_SUBSCRIPTION_RUNS=1`. The legacy
+`AGENTOPS_ALLOW_SUBSCRIPTION_RUNS` spelling is accepted only as an exact,
+non-conflicting compatibility alias. Both names are controller-only and are
+excluded from worker environments.
+
+The renamed distribution does not expose legacy `agentops` import-package or
+CLI aliases. Operators must quiesce and remove pre-rename installed runtimes
+before starting Ordomata because old code cannot honor the dual-root integrity
+check. A legacy-only state root remains in place pending a separately verified
+offline migration.
+
+Some v1 protocol identifiers retain the former namespace because they are
+inputs to persisted hashes, migration verification, or append-only shadow
+evidence. These include the account-fingerprint domain separator, supervisor
+baseline-migration digest seed, current shadow-policy/controller/source IDs,
+v1 JSON Schema `$id` URIs, and the existing Codex billing-probe client label.
+Future branded protocol identifiers require a new explicit version; existing
+records are never rewritten for cosmetic reasons.
 
 ## System boundary
 
@@ -287,9 +314,9 @@ absent state without creating it.
 Reconciliation is preview-first and its apply step must present the exact
 current plan digest.
 
-`agentops supervisor` exposes enqueue, start, pause, resume, drain, stop,
+`ordomata supervisor` exposes enqueue, start, pause, resume, drain, stop,
 status, cancel, audit, reconcile, completion inspection, and local receipt
-commands. `agentops supervise` holds a fenced foreground lease and processes
+commands. `ordomata supervise` holds a fenced foreground lease and processes
 control intent, including drain/stop completion, without installing a service.
 This is deliberately a control-plane tracer, not a completed supervisor:
 claim APIs are not connected to the CLI loop, and worker/runner dispatch stays

@@ -10,9 +10,9 @@ import unittest
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from agentops.errors import BillingRouteBlocked, LiveRunDisabled, ValidationError
-from agentops.billing import BillingDispatchReservation
-from agentops.models import (
+from ordomata.errors import BillingRouteBlocked, LiveRunDisabled, ValidationError
+from ordomata.billing import BillingDispatchReservation
+from ordomata.models import (
     AgentEvent,
     AssessmentConfidence,
     BillingRoute,
@@ -28,16 +28,16 @@ from agentops.models import (
     RunStatus,
     UsageObservation,
 )
-from agentops.redaction import REDACTED, Redactor
-from agentops.runners import AgentRunner, ClaudeRunner, CodexRunner, MockRunner
-from agentops.runners.base import ProbeResult
-from agentops.runners._harness import FirstPartyHarnessRunner
-from agentops.runners.codex import (
+from ordomata.redaction import REDACTED, Redactor
+from ordomata.runners import AgentRunner, ClaudeRunner, CodexRunner, MockRunner
+from ordomata.runners.base import ProbeResult
+from ordomata.runners._harness import FirstPartyHarnessRunner
+from ordomata.runners.codex import (
     CodexAppServerBillingProbe,
     CodexBillingEvidence,
     sanitize_codex_billing_snapshot,
 )
-from agentops.runners.process import AsyncCommandProbe
+from ordomata.runners.process import AsyncCommandProbe
 
 
 class FakeProbe:
@@ -219,7 +219,7 @@ class LocalScriptHarness(FirstPartyHarnessRunner):
         return "local-script"
 
     async def detect_capabilities(self):
-        from agentops.models import RunnerCapabilities
+        from ordomata.models import RunnerCapabilities
 
         installed = self._resolved_binary() is not None
         return RunnerCapabilities(
@@ -293,7 +293,7 @@ class LocalScriptHarness(FirstPartyHarnessRunner):
         )
 
     def parse_event_line(self, line: str, redactor: Redactor) -> AgentEvent | None:
-        from agentops.runners.base import parse_jsonl_event
+        from ordomata.runners.base import parse_jsonl_event
 
         return parse_jsonl_event(line, redactor=redactor)
 
@@ -380,7 +380,7 @@ class RunnerDiagnosticTests(unittest.IsolatedAsyncioTestCase):
         assessment = await runner.inspect_billing_route()
         self.assertEqual(assessment.route, BillingRoute.SEPARATELY_BILLED_API)
         with self.assertRaises(BillingRouteBlocked):
-            from agentops.billing import BillingPolicy
+            from ordomata.billing import BillingPolicy
 
             BillingPolicy.assert_route_allowed(assessment)
 
@@ -967,7 +967,7 @@ class LiveGateTests(unittest.IsolatedAsyncioTestCase):
             parent_environment={
                 "PATH": "/tools",
                 "HOME": "/home/test",
-                "AGENTOPS_ALLOW_SUBSCRIPTION_RUNS": "1",
+                "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
             },
         )
         with tempfile.TemporaryDirectory() as temporary:
@@ -990,7 +990,7 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                 parent_environment={
                     "PATH": "/bin",
                     "HOME": "/safe/home",
-                    "AGENTOPS_ALLOW_SUBSCRIPTION_RUNS": "1",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
                 },
             )
             with self.assertRaisesRegex(
@@ -1013,7 +1013,7 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                 parent_environment={
                     "PATH": "/bin",
                     "HOME": "/safe/home",
-                    "AGENTOPS_ALLOW_SUBSCRIPTION_RUNS": "1",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
                 },
             )
             result = await runner.execute(request(Path(temporary)), lambda _: None)
@@ -1037,7 +1037,7 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                 parent_environment={
                     "PATH": "/bin",
                     "HOME": "/safe/home",
-                    "AGENTOPS_ALLOW_SUBSCRIPTION_RUNS": "1",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
                 },
             )
             task = asyncio.create_task(
@@ -1082,7 +1082,7 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                 parent_environment={
                     "PATH": "/bin",
                     "HOME": "/safe/home",
-                    "AGENTOPS_ALLOW_SUBSCRIPTION_RUNS": "1",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
                 },
             )
             result = await runner.execute(request(Path(temporary)), lambda _: None)
@@ -1104,7 +1104,7 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                 parent_environment={
                     "PATH": "/bin",
                     "HOME": "/safe/home",
-                    "AGENTOPS_ALLOW_SUBSCRIPTION_RUNS": "1",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
                 },
             )
             result = await runner.execute(request(Path(temporary)), failing_sink)
@@ -1129,7 +1129,7 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                 parent_environment={
                     "PATH": "/bin",
                     "HOME": "/safe/home",
-                    "AGENTOPS_ALLOW_SUBSCRIPTION_RUNS": "1",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
                 },
             )
 
@@ -1167,7 +1167,7 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                     "PATH": "/bin",
                     "HOME": "/safe/home",
                     "OPENAI_API_KEY": secret,
-                    "AGENTOPS_ALLOW_SUBSCRIPTION_RUNS": "1",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
                 },
             )
             run_request = request(workspace)
@@ -1200,7 +1200,7 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                 parent_environment={
                     "PATH": "/bin",
                     "HOME": "/safe/home",
-                    "AGENTOPS_ALLOW_SUBSCRIPTION_RUNS": "1",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
                 },
             )
             with self.assertRaises(BillingRouteBlocked):
@@ -1221,7 +1221,7 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                 parent_environment={
                     "PATH": "/bin",
                     "HOME": "/safe/home",
-                    "AGENTOPS_ALLOW_SUBSCRIPTION_RUNS": "1",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
                 },
             )
             result = await runner.execute(request(workspace), lambda _: None)
@@ -1243,7 +1243,7 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                 parent_environment={
                     "PATH": "/bin",
                     "HOME": "/safe/home",
-                    "AGENTOPS_ALLOW_SUBSCRIPTION_RUNS": "1",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
                 },
             )
             base = request(workspace)

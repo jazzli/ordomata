@@ -9,9 +9,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from agentops.authorization import canonical_digest
-from agentops.cli import main
-from agentops.models import (
+from ordomata.authorization import canonical_digest
+from ordomata.cli import main
+from ordomata.models import (
     AssessmentConfidence,
     BillingRoute,
     BillingSafetyAttestation,
@@ -19,7 +19,7 @@ from agentops.models import (
     PaidContinuationProtection,
     PaidCreditBalance,
 )
-from agentops.state import SQLiteStateStore
+from ordomata.state import SQLiteStateStore
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
@@ -96,7 +96,7 @@ class CLITests(unittest.TestCase):
             self.assertTrue(report["clean"])
             self.assertFalse(report["database_present"])
             self.assertEqual(report["runs"], [])
-            self.assertFalse((root / ".agentops").exists())
+            self.assertFalse((root / ".ordomata").exists())
 
     def test_auth_inspect_reports_all_mock_run_boundaries(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -141,7 +141,7 @@ class CLITests(unittest.TestCase):
                 "--json",
             )
             self.assertEqual(demo_status, 0, demo_errors)
-            with SQLiteStateStore(root / ".agentops" / "state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 original = next(
                     event.payload
                     for event in state.list_events("cli-auth-mismatch")
@@ -189,7 +189,7 @@ class CLITests(unittest.TestCase):
             self.assertEqual(output, "")
             self.assertNotIn("missing-inspection-run", errors)
 
-            state_directory = root / ".agentops"
+            state_directory = root / ".ordomata"
             state_directory.mkdir()
             (state_directory / "state.sqlite3").write_text(
                 "malformed state marker",
@@ -286,10 +286,10 @@ class CLITests(unittest.TestCase):
             )
             with (
                 patch(
-                    "agentops.cli.run_chief_of_staff", new=guarded_execution
+                    "ordomata.cli.run_chief_of_staff", new=guarded_execution
                 ),
                 patch(
-                    "agentops.cli.collect_doctor_report", new=fixed_doctor
+                    "ordomata.cli.collect_doctor_report", new=fixed_doctor
                 ),
             ):
                 status, output, errors = self._invoke(
@@ -312,7 +312,7 @@ class CLITests(unittest.TestCase):
             self.assertIn("context exceeds profile limit", errors)
             fixed_doctor.assert_awaited_once()
             guarded_execution.assert_not_awaited()
-            self.assertFalse((root / ".agentops").exists())
+            self.assertFalse((root / ".ordomata").exists())
 
     def test_durable_capacity_block_rejects_route_and_explicit_run(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -320,7 +320,7 @@ class CLITests(unittest.TestCase):
             now = time.time()
             fingerprint = "c" * 64
             profile_id = "codex.subscription.local-draft-synthesis"
-            state_path = root / ".agentops" / "state.sqlite3"
+            state_path = root / ".ordomata" / "state.sqlite3"
             state_path.parent.mkdir(parents=True)
             with SQLiteStateStore(state_path) as state:
                 state.append_billing_capacity_event(
@@ -373,8 +373,8 @@ class CLITests(unittest.TestCase):
                 side_effect=AssertionError("durably blocked profile must not execute")
             )
             with (
-                patch("agentops.cli.collect_doctor_report", new=fixed_doctor),
-                patch("agentops.cli.run_chief_of_staff", new=guarded_execution),
+                patch("ordomata.cli.collect_doctor_report", new=fixed_doctor),
+                patch("ordomata.cli.run_chief_of_staff", new=guarded_execution),
             ):
                 route_status, route_output, route_errors = self._invoke(
                     "--project-root",
@@ -410,7 +410,7 @@ class CLITests(unittest.TestCase):
             self.assertIn("durable_billing_state_blocks_dispatch", run_errors)
             guarded_execution.assert_not_awaited()
             self.assertFalse(
-                (root / ".agentops" / "runs" / "durably-blocked-run").exists()
+                (root / ".ordomata" / "runs" / "durably-blocked-run").exists()
             )
 
     def test_comparison_plan_is_repeated_randomized_and_no_execution(self) -> None:
@@ -464,8 +464,8 @@ class CLITests(unittest.TestCase):
                 side_effect=AssertionError("mock comparison must not call Claude")
             )
             with (
-                patch("agentops.runners.CodexRunner.execute", new=codex_execute),
-                patch("agentops.runners.ClaudeRunner.execute", new=claude_execute),
+                patch("ordomata.runners.CodexRunner.execute", new=codex_execute),
+                patch("ordomata.runners.ClaudeRunner.execute", new=claude_execute),
             ):
                 status, output, errors = self._invoke(
                     "--project-root",
@@ -525,7 +525,7 @@ class CLITests(unittest.TestCase):
                 json.dumps(document, indent=2) + "\n", encoding="utf-8"
             )
             with patch(
-                "agentops.cli.load_mock_chief_of_staff_output",
+                "ordomata.cli.load_mock_chief_of_staff_output",
                 return_value={},
             ):
                 status, output, errors = self._invoke(
@@ -573,14 +573,14 @@ class CLITests(unittest.TestCase):
             )
             with (
                 patch(
-                    "agentops.cli.collect_doctor_report", new=blocked_doctor
+                    "ordomata.cli.collect_doctor_report", new=blocked_doctor
                 ),
                 patch(
-                    "agentops.cli.run_controlled_comparison",
+                    "ordomata.cli.run_controlled_comparison",
                     new=guarded_comparison,
                 ),
-                patch("agentops.runners.CodexRunner.execute", new=codex_execute),
-                patch("agentops.runners.ClaudeRunner.execute", new=claude_execute),
+                patch("ordomata.runners.CodexRunner.execute", new=codex_execute),
+                patch("ordomata.runners.ClaudeRunner.execute", new=claude_execute),
             ):
                 status, output, errors = self._invoke(
                     "--project-root",
@@ -598,7 +598,7 @@ class CLITests(unittest.TestCase):
             guarded_comparison.assert_not_awaited()
             codex_execute.assert_not_awaited()
             claude_execute.assert_not_awaited()
-            self.assertFalse((root / ".agentops").exists())
+            self.assertFalse((root / ".ordomata").exists())
 
     def test_schedule_inspection_never_claims_or_installs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

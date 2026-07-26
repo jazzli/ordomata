@@ -8,8 +8,8 @@ import time
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from agentops.cli import main
-from agentops.supervisor import SQLiteSupervisorStore
+from ordomata.cli import main
+from ordomata.supervisor import SQLiteSupervisorStore
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
@@ -64,7 +64,37 @@ class SupervisorCLITests(unittest.TestCase):
             self.assertEqual(audit["finding_count"], 0)
             self.assertEqual(audit["actionable_count"], 0)
             self.assertEqual(audit["findings"], [])
-            self.assertFalse((root / ".agentops").exists())
+            self.assertFalse((root / ".ordomata").exists())
+
+    def test_status_reads_a_sole_legacy_state_root_in_place(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            legacy_state = root / ".agentops" / "state.sqlite3"
+            legacy_state.parent.mkdir()
+            with SQLiteSupervisorStore(legacy_state):
+                pass
+
+            status = self._invoke_json(root, "supervisor", "status")
+
+            self.assertTrue(status["database_present"])
+            self.assertTrue(status["schema_present"])
+            self.assertFalse((root / ".ordomata").exists())
+
+    def test_dual_state_roots_fail_before_status_can_write(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            (root / ".ordomata").mkdir()
+            (root / ".agentops").mkdir()
+
+            status, output, errors = self._invoke(
+                "--project-root", str(root), "supervisor", "status", "--json"
+            )
+
+            self.assertEqual(status, 2)
+            self.assertEqual(output, "")
+            self.assertIn("both .ordomata", errors)
+            self.assertFalse((root / ".ordomata" / "state.sqlite3").exists())
+            self.assertFalse((root / ".agentops" / "state.sqlite3").exists())
 
     def test_enqueue_replay_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -187,7 +217,7 @@ class SupervisorCLITests(unittest.TestCase):
             )
             self._invoke_json(root, "supervisor", "start")
 
-            state_path = root / ".agentops" / "state.sqlite3"
+            state_path = root / ".ordomata" / "state.sqlite3"
             owner = "test/0000000000000001"
             with SQLiteSupervisorStore(state_path) as store:
                 self.assertTrue(
@@ -293,9 +323,9 @@ class SupervisorCLITests(unittest.TestCase):
                 side_effect=AssertionError("Claude must not dispatch")
             )
             with (
-                patch("agentops.runners.MockRunner.execute", new=mock_execute),
-                patch("agentops.runners.CodexRunner.execute", new=codex_execute),
-                patch("agentops.runners.ClaudeRunner.execute", new=claude_execute),
+                patch("ordomata.runners.MockRunner.execute", new=mock_execute),
+                patch("ordomata.runners.CodexRunner.execute", new=codex_execute),
+                patch("ordomata.runners.ClaudeRunner.execute", new=claude_execute),
             ):
                 report = self._invoke_json(
                     root,

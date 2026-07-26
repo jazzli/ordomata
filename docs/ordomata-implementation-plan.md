@@ -1,4 +1,4 @@
-# Subscription Worker OS Implementation Plan
+# Ordomata Implementation Plan
 
 Status: proposed expansion; baseline and Billing Hard-Stop v2 implemented; Chief-of-Staff three-boundary authorization shadow slice implemented; Phase 2 durable supervisor control-plane tracer partially implemented with dispatch disabled; enforcement planned
 
@@ -8,7 +8,7 @@ Scope: local, single-operator orchestration of subscription-backed coding harnes
 
 ## Objective
 
-Evolve the current subscription agent orchestrator into a durable local "subscription worker OS": a deterministic control plane that can keep a backlog moving, dispatch bounded Codex and Claude Code workers, verify their work, recover after interruption, and improve through reviewed evidence without introducing separately billed inference.
+Evolve the current Ordomata into a durable local "subscription worker OS": a deterministic control plane that can keep a backlog moving, dispatch bounded Codex and Claude Code workers, verify their work, recover after interruption, and improve through reviewed evidence without introducing separately billed inference.
 
 The target is not a continuously thinking chatbot. The controller may remain available continuously, but model workers start only for eligible work and only while verified included subscription capacity is available.
 
@@ -57,7 +57,7 @@ The next work should extend these mechanisms rather than introduce a parallel fr
 
 The original live-run diagnosis proved only the intended subscription authentication route; that was insufficient because Codex product credits and Claude extra usage can continue inference beyond included capacity. Billing Hard-Stop v2 now separates route, included-capacity state, paid-continuation protection, and paid-balance state. It requires current capacity evidence, a short-lived matching account attestation, no durable capacity stop, a closed durable circuit, and post-run billing assessment. Capacity and breakers are checked atomically with dispatch; postflight capacity is persisted before lease release. Paid or unknown post-run evidence quarantines the attempt and artifacts and opens a circuit; verified included-capacity exhaustion survives restart and blocks until strictly newer verified post-reset availability without changing lanes.
 
-Implementation does not make either account permanently eligible. Every live Codex or Claude attempt remains blocked unless `doctor` can establish current evidence for the exact runner/account/profile through the full requested run window and `AGENTOPS_ALLOW_SUBSCRIPTION_RUNS=1` is also set. The gate and subscription login are necessary, never sufficient. The controlled `compare-run` workflow is implemented, but no live Codex-versus-Claude comparison has been completed or human-scored.
+Implementation does not make either account permanently eligible. Every live Codex or Claude attempt remains blocked unless `doctor` can establish current evidence for the exact runner/account/profile through the full requested run window and `ORDOMATA_ALLOW_SUBSCRIPTION_RUNS=1` is also set. The gate and subscription login are necessary, never sufficient. The controlled `compare-run` workflow is implemented, but no live Codex-versus-Claude comparison has been completed or human-scored.
 
 ### Authorization-model checkpoint
 
@@ -108,7 +108,7 @@ Phase 8 is a new conditional evaluation track and is not part of the core roadma
 
 1. AI inference is eligible only through a verified first-party subscription-backed harness and included subscription capacity.
 2. API-key, cloud-provider, purchased-credit, overage, contradictory, and unknown billing routes fail closed.
-3. `AGENTOPS_ALLOW_SUBSCRIPTION_RUNS=1` remains necessary but never sufficient for a live run.
+3. `ORDOMATA_ALLOW_SUBSCRIPTION_RUNS=1` remains necessary but never sufficient for a live run.
 4. Deterministic code owns authorization, scheduling, state transitions, routing eligibility, evaluation, approvals, and promotion. The target authorization mechanism is a versioned, deny-by-default ABAC decision; the current Class 0/1 gate remains authoritative until the migration is proven.
 5. Workers cannot modify billing policy, runner policy, repository registration, protected tests, historical records, or their own authority.
 6. Only actions within the current Class 0/1 ceiling remain eligible in the
@@ -122,6 +122,13 @@ Phase 8 is a new conditional evaluation track and is not part of the core roadma
 11. Active authorization/billing policy, worker authority expansion,
     audit/containment weakening, and credential material form a root kernel
     that is never delegable to agents or ordinary workflows.
+
+During the Ordomata identity transition, the former live-gate variable remains
+an exact-value compatibility alias. Conflicting canonical and legacy values
+fail closed. Existing `.agentops/` state is used in place only when it is the
+sole state root; dual roots are rejected rather than merged. Persisted v1
+fingerprint, migration, schema, and authorization-evidence namespaces remain
+unchanged as historical protocol identities.
 
 ## OpenClaw ecosystem decision
 
@@ -370,7 +377,7 @@ completion:** the versioned additive SQLite migration, mock-only immutable flow
 admission, append-only optimistic control/flow/attempt state, sticky
 cancellation, fenced multi-resource claim library APIs, internal local
 completion outbox and receipts, read-only status/audit, digest-bound
-reconciliation, operator control commands, and foreground `agentops supervise`
+reconciliation, operator control commands, and foreground `ordomata supervise`
 loop are implemented. The loop deliberately does not call the claim API or any
 runner. Runtime ABAC enforcement remains a prerequisite for dispatch. No live
 model, worker subprocess, network action, repository worker, Class 2/3 effect,
@@ -392,7 +399,7 @@ satisfied.
   deterministic operations maintain the control plane and never become worker
   authority. Active-policy changes remain explicit operator-only actions and
   are not enabled by the supervisor phase.
-- Preserve the implemented foreground `agentops supervise` process; connect it
+- Preserve the implemented foreground `ordomata supervise` process; connect it
   to claiming and execution only after runtime ABAC enforcement.
 - Preserve the implemented operator commands for `start`, `pause`, `resume`,
   `drain`, `stop`, `status`, `audit`, and `reconcile`; control commands never

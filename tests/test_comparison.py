@@ -8,7 +8,7 @@ import tempfile
 import time
 import unittest
 
-from agentops.comparison import (
+from ordomata.comparison import (
     COMPARISON_AUTHORIZATION_SHADOW_COVERAGE,
     CONTROLLED_COMPARISON_TRIAL_TIMEOUT_SECONDS,
     ComparisonPlan,
@@ -21,8 +21,8 @@ from agentops.comparison import (
     comparison_snapshot_from_prepared,
     run_controlled_comparison,
 )
-from agentops.errors import BillingRouteBlocked, ValidationError
-from agentops.models import (
+from ordomata.errors import BillingRouteBlocked, ValidationError
+from ordomata.models import (
     AssessmentConfidence,
     BillingRoute,
     BillingRouteAssessment,
@@ -40,13 +40,13 @@ from agentops.models import (
     RunStatus,
     UsageObservation,
 )
-from agentops.orchestrator import (
+from ordomata.orchestrator import (
     load_mock_chief_of_staff_output,
     prepare_chief_of_staff,
 )
-from agentops.routing import ExecutionProfile, load_execution_profiles
-from agentops.runners import MockRunner
-from agentops.state import SQLiteStateStore
+from ordomata.routing import ExecutionProfile, load_execution_profiles
+from ordomata.runners import MockRunner
+from ordomata.state import SQLiteStateStore
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
@@ -587,7 +587,7 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(payload["trials"][0]["status"], "quarantined")
 
-            with SQLiteStateStore(root / ".agentops/state.sqlite3") as state:
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
                 exact = state.current_billing_circuit(
                     runner_id="codex",
                     account_identity_fingerprint=fingerprint,
@@ -617,7 +617,7 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                     runner_factory=factory,
                 )
             self.assertFalse(
-                (root / ".agentops/comparisons/breaker-second").exists()
+                (root / ".ordomata/comparisons/breaker-second").exists()
             )
 
     async def test_durable_capacity_block_stops_before_comparison_records(
@@ -687,7 +687,7 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                 repetitions=3,
                 random_seed=17,
             )
-            state_path = root / ".agentops" / "state.sqlite3"
+            state_path = root / ".ordomata" / "state.sqlite3"
             state_path.parent.mkdir(parents=True)
             with SQLiteStateStore(state_path) as state:
                 state.append_billing_capacity_event(
@@ -718,7 +718,7 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(executions, [])
             self.assertFalse(
-                (root / ".agentops/comparisons/durable-capacity-blocked").exists()
+                (root / ".ordomata/comparisons/durable-capacity-blocked").exists()
             )
 
     async def test_cooldown_and_unknown_capacity_stop_remaining_trials(

@@ -6,6 +6,10 @@ import os
 import re
 from collections.abc import Mapping
 
+from .billing import (
+    LEGACY_LIVE_RUN_ENVIRONMENT_NAME,
+    LIVE_RUN_ENVIRONMENT_NAME,
+)
 from .models import EnvironmentValidation
 
 
@@ -39,6 +43,10 @@ CLOUD_ROUTE_ENVIRONMENT_NAMES = frozenset(
         "CLAUDE_CODE_USE_VERTEX",
         "CLAUDE_CODE_USE_FOUNDRY",
     }
+)
+
+CONTROL_PLANE_ENVIRONMENT_NAMES = frozenset(
+    {LIVE_RUN_ENVIRONMENT_NAME, LEGACY_LIVE_RUN_ENVIRONMENT_NAME}
 )
 
 # Deliberately small.  Authentication is reached through the harness's files
@@ -155,6 +163,13 @@ def build_child_environment(
         if not isinstance(name, str) or not isinstance(value, str):
             errors.append("Approved environment entries must be string pairs.")
             continue
+        if _canonical_name(name) in CONTROL_PLANE_ENVIRONMENT_NAMES:
+            errors.append(
+                f"Approved environment variable {name!r} was rejected because "
+                "live-run gates are controller-only."
+            )
+            excluded.add(name)
+            continue
         if is_sensitive_environment_name(name):
             errors.append(
                 f"Approved environment variable {name!r} was rejected because "
@@ -185,6 +200,7 @@ def build_child_environment(
 
 __all__ = [
     "CLOUD_ROUTE_ENVIRONMENT_NAMES",
+    "CONTROL_PLANE_ENVIRONMENT_NAMES",
     "RISKY_MODEL_ENVIRONMENT_NAMES",
     "SAFE_BASE_ENVIRONMENT_NAMES",
     "build_child_environment",

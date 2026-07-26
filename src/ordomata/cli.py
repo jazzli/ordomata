@@ -27,7 +27,7 @@ from .comparison import (
 from .billing import FileBillingAttestationLoader
 from .contracts import load_task_contract
 from .doctor import DoctorReport, RunnerDiagnostic, collect_doctor_report
-from .errors import AgentOpsError, BillingRouteBlocked, ConfigurationError
+from .errors import OrdomataError, BillingRouteBlocked, ConfigurationError
 from .models import (
     AssessmentConfidence,
     BillingRoute,
@@ -42,6 +42,7 @@ from .orchestrator import (
     prepare_chief_of_staff,
     run_chief_of_staff,
 )
+from .paths import resolve_state_root
 from .routing import (
     ExecutionProfile,
     ProfileRouter,
@@ -74,8 +75,8 @@ DEFAULT_COMPARISON_PROFILES = (
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="agentops",
-        description="Local, subscription-only agent orchestration",
+        prog="ordomata",
+        description="A local control plane for governed autonomous work.",
     )
     parser.add_argument(
         "--project-root",
@@ -288,7 +289,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("supervisor interrupted", file=sys.stderr)
         return 130
-    except (AgentOpsError, OSError, ValueError) as exc:
+    except (OrdomataError, OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
@@ -298,7 +299,7 @@ async def _dispatch(arguments: argparse.Namespace) -> int:
     if arguments.command == "doctor":
         report = await collect_doctor_report(
             workspace=root,
-            run_root=root / ".agentops" / "runs",
+            run_root=resolve_state_root(root) / "runs",
         )
         _emit(report.to_mapping(), json_output=arguments.json, human=_doctor_text(report))
         return 0 if report.local_control_plane_ready else 1
@@ -376,7 +377,7 @@ async def _dispatch(arguments: argparse.Namespace) -> int:
 
     if arguments.command == "auth-inspect":
         report = inspect_authorization_shadows(
-            root / ".agentops" / "state.sqlite3",
+            resolve_state_root(root) / "state.sqlite3",
             run_id=arguments.run_id,
             mismatches_only=arguments.mismatches_only,
         )
@@ -485,7 +486,7 @@ async def _dispatch(arguments: argparse.Namespace) -> int:
 
 
 def _supervisor_state_path(root: Path) -> Path:
-    state_directory = root / ".agentops"
+    state_directory = resolve_state_root(root)
     if state_directory.is_symlink():
         raise ConfigurationError("supervisor state directory must not be a symlink")
     if state_directory.exists() and not state_directory.is_dir():
@@ -667,7 +668,7 @@ def _dispatch_supervisor_command(
                 json_output=arguments.json,
                 human=(
                     f"supervisor requested: {updated.mode.value} "
-                    f"rev={updated.revision}; run `agentops supervise` in foreground"
+                    f"rev={updated.revision}; run `ordomata supervise` in foreground"
                 ),
             )
             return 0
@@ -809,7 +810,7 @@ async def _route_profiles(root: Path, *, lane: str) -> dict[str, Any]:
     doctor = await collect_doctor_report(
         relevant_runners,
         workspace=root,
-        run_root=root / ".agentops" / "runs",
+        run_root=resolve_state_root(root) / "runs",
     )
     diagnostics = {item.runner_id: item for item in doctor.runners}
     states: list[RuntimeProfileState] = []
@@ -948,14 +949,14 @@ async def _run_profile(
 
     # An explicit profile selection bypasses ranking, not eligibility.  Build
     # the exact task/context features and route the sole candidate through the
-    # same hard filters used by `agentops route` before any runner executes.
+    # same hard filters used by `ordomata route` before any runner executes.
     prepared = prepare_chief_of_staff(
         root, operator_instructions=operator_instructions
     )
     doctor = await collect_doctor_report(
         (runner,),
         workspace=root,
-        run_root=root / ".agentops" / "runs",
+        run_root=resolve_state_root(root) / "runs",
     )
     if len(doctor.runners) != 1:
         raise ConfigurationError("selected runner diagnostic failed closed")
@@ -1202,7 +1203,7 @@ async def _run_controlled_profile_comparison(
     doctor = await collect_doctor_report(
         diagnostic_runners,
         workspace=root,
-        run_root=root / ".agentops" / "comparisons",
+        run_root=resolve_state_root(root) / "comparisons",
     )
     diagnostics = {item.runner_id: item for item in doctor.runners}
     allowed_route = (
@@ -1310,7 +1311,7 @@ def _comparison_runner(
 
 def _billing_attestation_loader(root: Path) -> FileBillingAttestationLoader:
     return FileBillingAttestationLoader(
-        root / ".agentops" / "billing-attestations.json"
+        resolve_state_root(root) / "billing-attestations.json"
     )
 
 
@@ -1325,7 +1326,7 @@ def _billing_attestation_runner(runner_id: str):
 
 
 def _billing_state_path(root: Path) -> Path:
-    state_path = root / ".agentops" / "state.sqlite3"
+    state_path = resolve_state_root(root) / "state.sqlite3"
     if state_path.is_symlink():
         raise ConfigurationError("billing state database must not be a symlink")
     return state_path

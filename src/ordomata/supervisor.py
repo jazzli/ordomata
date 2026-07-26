@@ -29,12 +29,12 @@ from typing import Any, Iterator
 from urllib.parse import quote
 from uuid import uuid4
 
-from .errors import AgentOpsError, ConfigurationError, ValidationError
+from .errors import OrdomataError, ConfigurationError, ValidationError
 from .models import PermissionClass
 from .state import SQLiteStateStore, _canonical_json
 
 
-class SupervisorError(AgentOpsError):
+class SupervisorError(OrdomataError):
     """The durable supervisor could not complete an expected operation."""
 
 
@@ -813,6 +813,8 @@ class SQLiteSupervisorStore:
                 raise ConfigurationError("state database baseline is incomplete")
             _verify_baseline_schema(self._connection)
             now = self._now(None)
+            # Frozen pre-rename migration identity. Existing ledgers verify
+            # this exact digest, so changing the spelling would strand state.
             baseline_digest = _sha256_text("agentops-baseline-schema-v1")
             if 1 not in versions:
                 self._connection.execute(

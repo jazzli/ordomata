@@ -36,7 +36,8 @@ from .models import (
 )
 
 
-LIVE_RUN_ENVIRONMENT_NAME = "AGENTOPS_ALLOW_SUBSCRIPTION_RUNS"
+LIVE_RUN_ENVIRONMENT_NAME = "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS"
+LEGACY_LIVE_RUN_ENVIRONMENT_NAME = "AGENTOPS_ALLOW_SUBSCRIPTION_RUNS"
 MAX_BILLING_ATTESTATION_LIFETIME_SECONDS = 24 * 60 * 60
 LIVE_RUN_EVIDENCE_MARGIN_SECONDS = 5.0
 BILLING_DISPATCH_COMPLETION_MARGIN_SECONDS = 30.0
@@ -224,6 +225,9 @@ def fingerprint_account_identity(provider: str, identity: str) -> str:
         or len(identity) > 1_024
     ):
         raise ValueError("provider and account identity must be bounded non-empty text")
+    # This v1 domain separator is persisted indirectly through account-bound
+    # attestations and billing-circuit evidence.  Its pre-rename spelling is
+    # an immutable protocol identifier, not current product branding.
     material = (
         "agentops-account-fingerprint-v1\0"
         + provider.strip().casefold()
@@ -490,11 +494,47 @@ class BillingPolicy:
                 )
 
     @staticmethod
-    def live_run_enabled(environment: Mapping[str, str] | None = None) -> bool:
-        """The live gate is enabled only by the exact value ``1``."""
+    def live_run_gate_state(
+        environment: Mapping[str, str] | None = None,
+    ) -> str:
+        """Describe the canonical/legacy opt-in pair without exposing values."""
 
         source = os.environ if environment is None else environment
-        return source.get(LIVE_RUN_ENVIRONMENT_NAME) == "1"
+        canonical_present = LIVE_RUN_ENVIRONMENT_NAME in source
+        legacy_present = LEGACY_LIVE_RUN_ENVIRONMENT_NAME in source
+        if not canonical_present and not legacy_present:
+            return "unset"
+        if canonical_present and legacy_present:
+            canonical_enabled = source.get(LIVE_RUN_ENVIRONMENT_NAME) == "1"
+            legacy_enabled = source.get(LEGACY_LIVE_RUN_ENVIRONMENT_NAME) == "1"
+            if canonical_enabled and legacy_enabled:
+                return "enabled_both_exactly"
+            if source.get(LIVE_RUN_ENVIRONMENT_NAME) != source.get(
+                LEGACY_LIVE_RUN_ENVIRONMENT_NAME
+            ):
+                return "conflicting_values"
+            return "both_set_but_not_exactly_enabled"
+        if canonical_present:
+            return (
+                "enabled_exactly"
+                if source.get(LIVE_RUN_ENVIRONMENT_NAME) == "1"
+                else "set_but_not_exactly_enabled"
+            )
+        return (
+            "enabled_via_legacy_alias"
+            if source.get(LEGACY_LIVE_RUN_ENVIRONMENT_NAME) == "1"
+            else "legacy_set_but_not_exactly_enabled"
+        )
+
+    @staticmethod
+    def live_run_enabled(environment: Mapping[str, str] | None = None) -> bool:
+        """Enable only an exact, non-conflicting canonical or legacy opt-in."""
+
+        return BillingPolicy.live_run_gate_state(environment) in {
+            "enabled_exactly",
+            "enabled_via_legacy_alias",
+            "enabled_both_exactly",
+        }
 
     @classmethod
     def assert_live_run_allowed(
@@ -811,6 +851,7 @@ __all__ = [
     "BillingCircuitGuard",
     "BillingDispatchReservation",
     "FileBillingAttestationLoader",
+    "LEGACY_LIVE_RUN_ENVIRONMENT_NAME",
     "LIVE_RUN_ENVIRONMENT_NAME",
     "LIVE_RUN_EVIDENCE_MARGIN_SECONDS",
     "MAX_BILLING_ATTESTATION_LIFETIME_SECONDS",

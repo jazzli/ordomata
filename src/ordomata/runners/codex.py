@@ -552,7 +552,7 @@ def sanitize_codex_billing_snapshot(
             evidence.append("Codex app-server reports an included-capacity limit.")
 
     # rateLimitResetCredits is intentionally ignored. Those are free explicit
-    # reset grants with a separate mutating consume RPC, which AgentOps never
+    # reset grants with a separate mutating consume RPC, which Ordomata never
     # invokes automatically and must not confuse with paid product credits.
     return CodexBillingEvidence(
         route=route,

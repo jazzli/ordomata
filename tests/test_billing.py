@@ -6,14 +6,15 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from agentops.billing import (
+from ordomata.billing import (
     BillingPolicy,
     FileBillingAttestationLoader,
+    LEGACY_LIVE_RUN_ENVIRONMENT_NAME,
     LIVE_RUN_ENVIRONMENT_NAME,
     fingerprint_account_identity,
 )
-from agentops.errors import BillingRouteBlocked, LiveRunDisabled
-from agentops.models import (
+from ordomata.errors import BillingRouteBlocked, LiveRunDisabled
+from ordomata.models import (
     AgentEvent,
     AssessmentConfidence,
     BillingRoute,
@@ -123,6 +124,45 @@ class BillingPolicyTests(unittest.TestCase):
         BillingPolicy.assert_live_run_allowed(
             allowed, {LIVE_RUN_ENVIRONMENT_NAME: "1"}, now=NOW
         )
+
+    def test_live_gate_legacy_alias_is_exact_and_conflicts_fail_closed(self) -> None:
+        allowed = assessment(
+            BillingRoute.SUBSCRIPTION_INCLUDED, safe_subscription=True
+        )
+        accepted = (
+            {LEGACY_LIVE_RUN_ENVIRONMENT_NAME: "1"},
+            {
+                LIVE_RUN_ENVIRONMENT_NAME: "1",
+                LEGACY_LIVE_RUN_ENVIRONMENT_NAME: "1",
+            },
+        )
+        for environment in accepted:
+            with self.subTest(environment=tuple(sorted(environment))):
+                BillingPolicy.assert_live_run_allowed(
+                    allowed, environment, now=NOW
+                )
+
+        rejected = (
+            {LEGACY_LIVE_RUN_ENVIRONMENT_NAME: "true"},
+            {
+                LIVE_RUN_ENVIRONMENT_NAME: "1",
+                LEGACY_LIVE_RUN_ENVIRONMENT_NAME: "0",
+            },
+            {
+                LIVE_RUN_ENVIRONMENT_NAME: "0",
+                LEGACY_LIVE_RUN_ENVIRONMENT_NAME: "1",
+            },
+            {
+                LIVE_RUN_ENVIRONMENT_NAME: "true",
+                LEGACY_LIVE_RUN_ENVIRONMENT_NAME: "true",
+            },
+        )
+        for environment in rejected:
+            with self.subTest(environment=tuple(sorted(environment))):
+                with self.assertRaises(LiveRunDisabled):
+                    BillingPolicy.assert_live_run_allowed(
+                        allowed, environment, now=NOW
+                    )
 
     def test_live_gate_never_enables_api_route(self) -> None:
         with self.assertRaises(BillingRouteBlocked):
@@ -323,6 +363,10 @@ class BillingAttestationLoaderTests(unittest.TestCase):
         self.assertEqual(
             fingerprint_account_identity("codex", "operator@example.invalid"),
             fingerprint_account_identity("codex", "OPERATOR@example.invalid"),
+        )
+        self.assertEqual(
+            fingerprint_account_identity("codex", "operator@example.invalid"),
+            "ee0f3fd8f61df2d2063d375292dc27402a8bc38176d7c43aa5cd6bf8e6eb2cd5",
         )
 
     def test_loader_rejects_permissive_file_and_arbitrary_or_missing_codes(self) -> None:

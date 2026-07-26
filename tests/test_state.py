@@ -5,8 +5,8 @@ import tempfile
 from pathlib import Path
 import unittest
 
-from agentops.errors import BillingRouteBlocked, ValidationError
-from agentops.models import (
+from ordomata.errors import BillingRouteBlocked, ValidationError
+from ordomata.models import (
     AssessmentConfidence,
     BillingRoute,
     BillingRouteAssessment,
@@ -15,7 +15,7 @@ from agentops.models import (
     PermissionClass,
     RunStatus,
 )
-from agentops.state import (
+from ordomata.state import (
     ArtifactRecord,
     InvalidStateTransition,
     RunRecord,

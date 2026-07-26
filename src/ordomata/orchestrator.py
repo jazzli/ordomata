@@ -30,7 +30,7 @@ from .context import (
 )
 from .contracts import TaskContract, load_task_contract
 from .errors import (
-    AgentOpsError,
+    OrdomataError,
     BillingRouteBlocked,
     ConfigurationError,
     ValidationError,
@@ -52,6 +52,7 @@ from .models import (
     RunnerExecutionResult,
     RunStatus,
 )
+from .paths import resolve_state_root
 from .runners.base import AgentRunner
 from .runners.mock import MockRunner
 from .redaction import contains_credential_material
@@ -239,7 +240,7 @@ async def run_chief_of_staff(
 
     Passing no runner selects the deterministic mock.  Live runners remain
     subject to their own high-confidence subscription checks and the exact
-    ``AGENTOPS_ALLOW_SUBSCRIPTION_RUNS=1`` gate.
+    ``ORDOMATA_ALLOW_SUBSCRIPTION_RUNS=1`` gate.
     """
 
     root = Path(project_root).resolve()
@@ -258,15 +259,15 @@ async def run_chief_of_staff(
     _validate_run_identifier(selected_run_id)
     if profile_id is not None:
         _validate_profile_identifier(profile_id)
-    agentops_root = _contained_path(root, root / ".agentops")
+    ordomata_root = _contained_path(root, resolve_state_root(root))
     selected_run_root = _contained_path(
-        root, Path(run_root).resolve() if run_root is not None else agentops_root / "runs"
+        root, Path(run_root).resolve() if run_root is not None else ordomata_root / "runs"
     )
     selected_state_path = _contained_path(
         root,
         Path(state_path).resolve()
         if state_path is not None
-        else agentops_root / "state.sqlite3",
+        else ordomata_root / "state.sqlite3",
     )
     run_directory = _contained_path(root, selected_run_root / selected_run_id)
     isolated_workspace = _contained_path(root, run_directory / "workspace")
@@ -324,7 +325,7 @@ async def run_chief_of_staff(
         try:
             preflight_assessment = await active_runner.inspect_billing_route()
             _assert_runner_billing_route(active_runner.runner_id, preflight_assessment)
-        except AgentOpsError:
+        except OrdomataError:
             state.append_event(
                 selected_run_id,
                 "status",
@@ -384,7 +385,7 @@ async def run_chief_of_staff(
 
         try:
             result = await active_runner.execute(request, event_sink)
-        except AgentOpsError:
+        except OrdomataError:
             state.append_event(
                 selected_run_id,
                 "status",

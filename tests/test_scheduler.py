@@ -4,14 +4,14 @@ import tempfile
 from pathlib import Path
 import unittest
 
-from agentops.scheduler import (
+from ordomata.scheduler import (
     ClaimReason,
     ExecutionTimedOut,
     IntervalSchedule,
     RunOnceScheduler,
     current_slot,
 )
-from agentops.state import SQLiteStateStore
+from ordomata.state import SQLiteStateStore
 
 
 class RunOnceSchedulerTests(unittest.TestCase):

@@ -1,6 +1,6 @@
 """Non-authoritative ABAC observations for the Phase 1C migration.
 
-The current :class:`~agentops.approval.ApprovalPolicy` remains authoritative.
+The current :class:`~ordomata.approval.ApprovalPolicy` remains authoritative.
 This module evaluates a typed task effect at three Chief-of-Staff controller
 boundaries and returns bounded, secret-free audit payloads.  A shadow result
 can neither enable nor block execution or local candidate publication.

@@ -123,7 +123,7 @@ class RunnerCapabilities:
 class BillingSafetyAttestation:
     """Short-lived, non-secret evidence binding an account to safe settings.
 
-    ``account_identity_fingerprint`` is an AgentOps-generated digest, never an
+    ``account_identity_fingerprint`` is an Ordomata-generated digest, never an
     email address, account identifier, token, or provider credential.
     """
 

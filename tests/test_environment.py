@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import unittest
 
-from agentops.environment import (
+from ordomata.environment import (
     build_child_environment,
     inspect_risky_environment,
     is_sensitive_environment_name,
 )
-from agentops.redaction import REDACTED, Redactor
+from ordomata.billing import (
+    LEGACY_LIVE_RUN_ENVIRONMENT_NAME,
+    LIVE_RUN_ENVIRONMENT_NAME,
+)
+from ordomata.redaction import REDACTED, Redactor
 
 
 class EnvironmentTests(unittest.TestCase):
@@ -71,6 +75,19 @@ class EnvironmentTests(unittest.TestCase):
         self.assertFalse(result.valid)
         self.assertNotIn("PROJECT_HEADER", result.sanitized_environment)
         self.assertNotIn("abcdefghijklmnop", " ".join(result.errors))
+
+    def test_live_gate_names_cannot_enter_child_environment(self) -> None:
+        for name in (
+            LIVE_RUN_ENVIRONMENT_NAME,
+            LEGACY_LIVE_RUN_ENVIRONMENT_NAME,
+        ):
+            with self.subTest(name=name):
+                result = build_child_environment(
+                    {"PATH": "/bin", "HOME": "/home"},
+                    approved={name: "1"},
+                )
+                self.assertFalse(result.valid)
+                self.assertNotIn(name, result.sanitized_environment)
 
     def test_generic_token_name_is_reported_without_value(self) -> None:
         secret = "opaque-value-that-must-not-appear"

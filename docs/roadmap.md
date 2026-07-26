@@ -15,7 +15,7 @@ Exit evidence: deterministic suite passes, mock workflow produces an accepted ar
 - Keep route, included-capacity state, paid-continuation protection, and paid-credit balance as independent typed observations.
 - Require current capacity evidence and a short-lived attestation bound to the diagnosed account identity and valid through the requested run window.
 - Block purchased product credits, subscription overage, separately billed APIs, cloud providers, and unknown routes.
-- Treat `AGENTOPS_ALLOW_SUBSCRIPTION_RUNS=1` as necessary but never sufficient.
+- Treat `ORDOMATA_ALLOW_SUBSCRIPTION_RUNS=1` as necessary but never sufficient.
 - Normalize post-run limit, paid-route, consumption, and account-change signals.
 - Record capacity and billing-circuit events append-only; quarantine paid or unknown post-run outcomes and suppress artifact promotion.
 - Expose sanitized readiness and blocker categories through `doctor` without exposing account values.
@@ -93,7 +93,7 @@ additive SQLite migration, immutable flow admission, append-only optimistic
 control/flow/attempt state, sticky cancellation, fenced multi-resource claim
 library APIs, an internal local completion outbox and receipts, read-only
 status/audit, digest-bound reconciliation, operator control commands, and a
-foreground `agentops supervise` loop. Worker dispatch is deliberately disabled
+foreground `ordomata supervise` loop. Worker dispatch is deliberately disabled
 until runtime ABAC enforcement exists. This does not implement a repository
 worker, live model loop, subprocess execution, network access, Class 2/3
 actions, or OS scheduling, so Phase 2 is not complete.

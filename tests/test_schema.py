@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 import unittest
 
-from agentops.errors import ValidationError
-from agentops.schema import SchemaValidator, parse_json_document, require_valid, validate_instance, validate_json_text
+from ordomata.errors import ValidationError
+from ordomata.schema import SchemaValidator, parse_json_document, require_valid, validate_instance, validate_json_text
 
 
 ROOT = Path(__file__).resolve().parents[1]

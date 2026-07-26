@@ -14,11 +14,11 @@ import math
 import time
 from uuid import uuid4
 
-from .errors import AgentOpsError, ValidationError
+from .errors import OrdomataError, ValidationError
 from .state import SQLiteStateStore, ScheduleClaimRecord
 
 
-class ExecutionTimedOut(AgentOpsError):
+class ExecutionTimedOut(OrdomataError):
     """A claimed execution exhausted its fixed wall-clock deadline."""
 
 

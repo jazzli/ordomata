@@ -11,6 +11,11 @@ PROTECTED_TARGETS = frozenset(
     {
         PurePosixPath("AGENTS.md"),
         PurePosixPath("docs/subscription-only-policy.md"),
+        PurePosixPath("src/ordomata/billing.py"),
+        PurePosixPath("src/ordomata/environment.py"),
+        PurePosixPath("src/ordomata/approval.py"),
+        # Historical proposals can still carry pre-rename paths. Keeping the
+        # old protected identities prevents a rename from bypassing policy.
         PurePosixPath("src/agentops/billing.py"),
         PurePosixPath("src/agentops/environment.py"),
         PurePosixPath("src/agentops/approval.py"),

@@ -80,10 +80,10 @@ class FirstPartyHarnessRunner(ABC):
         self._billing_circuit_guard = billing_circuit_guard
         self._billing_clock = billing_clock
         self._bound_parent_environment: ContextVar[dict[str, str] | None] = ContextVar(
-            f"agentops_parent_environment_{id(self)}", default=None
+            f"ordomata_parent_environment_{id(self)}", default=None
         )
         self._bound_executable: ContextVar[object | str | None] = ContextVar(
-            f"agentops_executable_{id(self)}", default=_UNBOUND_EXECUTABLE
+            f"ordomata_executable_{id(self)}", default=_UNBOUND_EXECUTABLE
         )
         self._active_processes: dict[str, asyncio.subprocess.Process] = {}
         self._cancelled_runs: set[str] = set()

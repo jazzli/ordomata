@@ -5,10 +5,10 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from agentops.contracts import load_task_contract
-from agentops.errors import ConfigurationError
-from agentops.authorization import ActionVerb, ImpactLevel, Reach
-from agentops.models import PermissionClass
+from ordomata.contracts import load_task_contract
+from ordomata.errors import ConfigurationError
+from ordomata.authorization import ActionVerb, ImpactLevel, Reach
+from ordomata.models import PermissionClass
 
 
 ROOT = Path(__file__).resolve().parents[1]

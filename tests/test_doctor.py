@@ -6,8 +6,12 @@ import unittest
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from agentops.doctor import collect_doctor_report
-from agentops.models import (
+from ordomata.billing import (
+    LEGACY_LIVE_RUN_ENVIRONMENT_NAME,
+    LIVE_RUN_ENVIRONMENT_NAME,
+)
+from ordomata.doctor import collect_doctor_report
+from ordomata.models import (
     AssessmentConfidence,
     BillingRoute,
     BillingRouteAssessment,
@@ -15,8 +19,8 @@ from agentops.models import (
     RunRequest,
     RunnerCapabilities,
 )
-from agentops.runners import ClaudeRunner, CodexRunner, MockRunner
-from agentops.runners.base import ProbeResult
+from ordomata.runners import ClaudeRunner, CodexRunner, MockRunner
+from ordomata.runners.base import ProbeResult
 
 
 class FakeProbe:
@@ -117,7 +121,7 @@ class DoctorTests(unittest.IsolatedAsyncioTestCase):
             "HOME": "/fixtures/safe-home-value",
             "OPENAI_API_KEY": "openai-secret-never-report",
             "ANTHROPIC_API_KEY": "anthropic-secret-never-report",
-            "AGENTOPS_ALLOW_SUBSCRIPTION_RUNS": "1",
+            "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
             "UNRELATED": "unrelated-value-never-report",
         }
         runners, probes = verified_runners(environment)
@@ -179,7 +183,7 @@ class DoctorTests(unittest.IsolatedAsyncioTestCase):
         environment = {
             "PATH": "/bin",
             "HOME": "/safe/home",
-            "AGENTOPS_ALLOW_SUBSCRIPTION_RUNS": "true",
+            "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "true",
         }
         runners, _ = verified_runners(environment)
         with tempfile.TemporaryDirectory() as temporary:
@@ -196,6 +200,29 @@ class DoctorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(
             "live_subscription_gate_disabled", report.runners[0].blockers
         )
+
+    async def test_live_gate_reports_legacy_alias_and_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            legacy = await collect_doctor_report(
+                (MockRunner(),),
+                environment={LEGACY_LIVE_RUN_ENVIRONMENT_NAME: "1"},
+                workspace=temporary,
+                run_root=Path(temporary) / "runs",
+            )
+            conflict = await collect_doctor_report(
+                (MockRunner(),),
+                environment={
+                    LIVE_RUN_ENVIRONMENT_NAME: "0",
+                    LEGACY_LIVE_RUN_ENVIRONMENT_NAME: "1",
+                },
+                workspace=temporary,
+                run_root=Path(temporary) / "runs",
+            )
+
+        self.assertTrue(legacy.live_gate.enabled)
+        self.assertEqual(legacy.live_gate.state, "enabled_via_legacy_alias")
+        self.assertFalse(conflict.live_gate.enabled)
+        self.assertEqual(conflict.live_gate.state, "conflicting_values")
 
     async def test_api_route_fails_closed_even_when_live_gate_is_enabled(self) -> None:
         executable = "/fixtures/codex"
@@ -221,7 +248,7 @@ class DoctorTests(unittest.IsolatedAsyncioTestCase):
         environment = {
             "PATH": "/bin",
             "HOME": "/safe/home",
-            "AGENTOPS_ALLOW_SUBSCRIPTION_RUNS": "1",
+            "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
         }
         runner = CodexRunner(
             probe=probe,

@@ -7,16 +7,16 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from agentops.authorization import canonical_digest
-from agentops.authorization_inspection import (
+from ordomata.authorization import canonical_digest
+from ordomata.authorization_inspection import (
     ADMISSION_SCOPE,
     DISPATCH_SCOPE,
     PUBLICATION_SCOPE,
     inspect_authorization_shadows,
 )
-from agentops.errors import ConfigurationError
-from agentops.models import PermissionClass, RunStatus
-from agentops.state import (
+from ordomata.errors import ConfigurationError
+from ordomata.models import PermissionClass, RunStatus
+from ordomata.state import (
     ArtifactRecord,
     RecordNotFoundError,
     RunRecord,
@@ -266,7 +266,7 @@ class AuthorizationInspectionTests(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            state_directory = Path(temporary) / ".agentops"
+            state_directory = Path(temporary) / ".ordomata"
             database = state_directory / "state.sqlite3"
 
             report = inspect_authorization_shadows(database, now=300.0)
@@ -362,7 +362,7 @@ class AuthorizationInspectionTests(unittest.TestCase):
                 return original_connect(*args, **kwargs)
 
             with patch(
-                "agentops.authorization_inspection.sqlite3.connect",
+                "ordomata.authorization_inspection.sqlite3.connect",
                 side_effect=recording_connect,
             ):
                 report = inspect_authorization_shadows(database, now=300.0)

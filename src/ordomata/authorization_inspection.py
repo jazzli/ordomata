@@ -528,7 +528,7 @@ def _read_only_database_uri(database: Path) -> Iterator[str]:
                 )
         return
 
-    with tempfile.TemporaryDirectory(prefix="agentops-auth-inspect-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="ordomata-auth-inspect-") as temporary:
         snapshot = Path(temporary) / "state.sqlite3"
         snapshot_wal = Path(str(snapshot) + "-wal")
         source_wal = Path(str(database) + "-wal")

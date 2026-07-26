@@ -22,7 +22,7 @@ from typing import Any
 
 from .billing import BillingPolicy
 from .errors import (
-    AgentOpsError,
+    OrdomataError,
     BillingRouteBlocked,
     ConfigurationError,
     ValidationError,
@@ -41,6 +41,7 @@ from .models import (
     UsageObservation,
 )
 from .orchestrator import PreparedTask
+from .paths import resolve_state_root
 from .redaction import DEFAULT_REDACTOR, contains_credential_material
 from .routing import ExecutionProfile, runner_overrides_for_profile
 from .runners.base import AgentRunner
@@ -1084,6 +1085,7 @@ async def run_controlled_comparison(
     root = Path(project_root).resolve()
     if not root.is_dir():
         raise ConfigurationError(f"project root is not a directory: {root}")
+    state_root = resolve_state_root(root)
     expected_snapshot = comparison_snapshot_from_prepared(prepared)
     if expected_snapshot.digest != plan.snapshot.digest:
         raise ValidationError("controlled plan does not match the prepared snapshot")
@@ -1149,7 +1151,7 @@ async def run_controlled_comparison(
         )
         prepared_trials.append((trial, profile, runner, assessment))
 
-    state_path = root / ".agentops" / "state.sqlite3"
+    state_path = state_root / "state.sqlite3"
     if state_path.is_symlink():
         raise ConfigurationError("comparison state database must not be a symlink")
     if state_path.exists():
@@ -1171,7 +1173,7 @@ async def run_controlled_comparison(
                     ) from exc
 
     base = (
-        root / ".agentops" / "comparisons"
+        state_root / "comparisons"
         if comparison_root is None
         else Path(comparison_root).resolve()
     )
@@ -1327,7 +1329,7 @@ async def run_controlled_comparison(
                         session_id_observed=False,
                         status=(
                             RunStatus.BLOCKED
-                            if isinstance(exc, AgentOpsError)
+                            if isinstance(exc, OrdomataError)
                             else RunStatus.FAILED
                         ),
                         metrics=_failed_trial_metrics(
@@ -1575,7 +1577,7 @@ def _exception_failure_type(exc: Exception) -> str:
         return "runner_timeout"
     if isinstance(exc, OSError):
         return "runner_process_error"
-    if isinstance(exc, AgentOpsError):
+    if isinstance(exc, OrdomataError):
         return "controller_blocked"
     return "runner_execution_error"
 

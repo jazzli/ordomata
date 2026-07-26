@@ -41,8 +41,14 @@ paid-continuation attestation == current, matching, and provider-valid
 paid-continuation protection == safe for that runner
 profile/capability/isolation/environment checks == passed
 durable billing circuit == closed
-AGENTOPS_ALLOW_SUBSCRIPTION_RUNS == 1
+ORDOMATA_ALLOW_SUBSCRIPTION_RUNS == 1
 ```
+
+The former `AGENTOPS_ALLOW_SUBSCRIPTION_RUNS` name is a temporary compatibility
+alias. It enables the same gate only when its value is exactly `1`. If both
+names are present, both must equal exactly `1`; any disagreement or malformed
+value disables live execution. Neither variable is inherited by worker
+processes, and neither can override another eligibility check.
 
 The live gate and first-party subscription authentication are necessary, never sufficient. Missing, stale, contradictory, mismatched, or unknown evidence fails closed.
 
@@ -53,9 +59,9 @@ When a provider setting cannot be read safely by the harness diagnostic, a short
 - Codex requires current included capacity, a usable paid-credit balance classified as `zero`, and operator-observed automatic top-up disabled. A positive, unlimited, or unknown paid balance blocks execution.
 - Claude requires a positively identified paid Claude subscription, current included capacity, and operator-observed extra usage/usage credits disabled. Free, null, contradictory, or unknown subscription identity blocks execution.
 
-Attestations contain semantic evidence codes, not account names, addresses, tokens, numeric balances, screenshots, or credential material. The ignored local file is `.agentops/billing-attestations.json`; `doctor` reports only sanitized status categories.
+Attestations contain semantic evidence codes, not account names, addresses, tokens, numeric balances, screenshots, or credential material. The ignored local file is `.ordomata/billing-attestations.json`; `doctor` reports only sanitized status categories.
 
-The supported lifecycle command is `agentops billing-attest --runner codex|claude`. It is terminal-interactive only, exposes no `--yes` or noninteractive bypass, probes an adapter configured without prior file evidence, and requires the operator to type the exact provider-specific statement shown. Codex's operator-observed automatic-recharge setting expires after at most one hour; its capacity and paid-credit balance are still machine-probed afresh before every dispatch. Claude UI evidence expires after at most 15 minutes. The command replaces the selected runner's record atomically, preserves other current strict records, and enforces a non-symlinked mode-`0700` parent plus a mode-`0600` file. Run `doctor` afterward; successful creation alone does not make the runner eligible.
+The supported lifecycle command is `ordomata billing-attest --runner codex|claude`. It is terminal-interactive only, exposes no `--yes` or noninteractive bypass, probes an adapter configured without prior file evidence, and requires the operator to type the exact provider-specific statement shown. Codex's operator-observed automatic-recharge setting expires after at most one hour; its capacity and paid-credit balance are still machine-probed afresh before every dispatch. Claude UI evidence expires after at most 15 minutes. The command replaces the selected runner's record atomically, preserves other current strict records, and enforces a non-symlinked mode-`0700` parent plus a mode-`0600` file. Run `doctor` afterward; successful creation alone does not make the runner eligible.
 
 The six-trial Class 0 comparison applies a uniform two-minute trial timeout and reserves an additional one-minute evidence margin. All selected attestations and capacity windows must cover that full envelope before any comparison record is created, and every individual dispatch checks them again.
 

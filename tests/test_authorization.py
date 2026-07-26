@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError, replace
 import unittest
 
-from agentops.approval import ApprovalPolicy
-from agentops.authorization import (
+from ordomata.approval import ApprovalPolicy
+from ordomata.authorization import (
     ActionAttributes,
     ActionReceipt,
     ActionVerb,
@@ -35,7 +35,7 @@ from agentops.authorization import (
     canonical_digest,
     derive_permission_class,
 )
-from agentops.models import (
+from ordomata.models import (
     BillingRoute,
     CapacityState,
     PaidContinuationProtection,

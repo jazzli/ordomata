@@ -35,9 +35,10 @@ from .models import (
     PaidContinuationProtection,
     PaidCreditBalance,
 )
+from .paths import STATE_DIRECTORY_NAME, resolve_state_directory_name
 
 
-ATTESTATION_RELATIVE_PATH = Path(".agentops") / "billing-attestations.json"
+ATTESTATION_RELATIVE_PATH = Path(STATE_DIRECTORY_NAME) / "billing-attestations.json"
 CODEX_ATTESTATION_TTL_SECONDS = 60 * 60
 CLAUDE_ATTESTATION_TTL_SECONDS = 15 * 60
 ATTESTATION_FILE_MAX_BYTES = 64 * 1024
@@ -97,6 +98,11 @@ async def refresh_billing_attestation(
     that invariant independently enforceable, any assessment already carrying
     an attestation is rejected rather than being used to refresh itself.
     """
+
+    # Fail on an ambiguous or unsafe state root before terminal interaction or
+    # a first-party account/billing probe. The writer checks again immediately
+    # before opening the directory to narrow the creation race.
+    resolve_state_directory_name(project_root)
 
     source = sys.stdin
     destination = sys.stdout
@@ -317,6 +323,7 @@ def _write_private_attestation(
         raise ConfigurationError(
             "project root must be an existing non-symlink directory"
         )
+    state_directory_name = resolve_state_directory_name(root)
 
     root_descriptor: int | None = None
     parent_descriptor: int | None = None
@@ -325,10 +332,12 @@ def _write_private_attestation(
         root_descriptor = _open_directory(root)
         _require_owner(os.fstat(root_descriptor), role="project root")
         try:
-            os.mkdir(".agentops", mode=0o700, dir_fd=root_descriptor)
+            os.mkdir(state_directory_name, mode=0o700, dir_fd=root_descriptor)
         except FileExistsError:
             pass
-        parent_descriptor = _open_directory(".agentops", dir_fd=root_descriptor)
+        parent_descriptor = _open_directory(
+            state_directory_name, dir_fd=root_descriptor
+        )
         parent_metadata = os.fstat(parent_descriptor)
         _require_owner(parent_metadata, role="attestation directory")
         os.fchmod(parent_descriptor, 0o700)
@@ -405,7 +414,7 @@ def _write_private_attestation(
             os.close(parent_descriptor)
         if root_descriptor is not None:
             os.close(root_descriptor)
-    return root / ATTESTATION_RELATIVE_PATH
+    return root / state_directory_name / ATTESTATION_RELATIVE_PATH.name
 
 
 def _open_directory(path: str | Path, *, dir_fd: int | None = None) -> int:

@@ -1,6 +1,6 @@
 import unittest
 
-from agentops.improvement import (
+from ordomata.improvement import (
     BenchmarkOutcome,
     ImprovementPolicy,
     ImprovementProposal,
@@ -39,7 +39,7 @@ class ImprovementPolicyTests(unittest.TestCase):
             baseline_version="1",
             candidate_version="2",
             changed_paths=(
-                "src/agentops/billing.py",
+                "src/ordomata/billing.py",
                 "fixtures/held_out/answers.json",
             ),
             development_outcomes=(),
@@ -67,6 +67,24 @@ class ImprovementPolicyTests(unittest.TestCase):
         )
         self.assertFalse(assessment.promotable)
         self.assertTrue(any("safety regression" in item for item in assessment.reasons))
+
+    def test_legacy_protected_path_remains_protected_after_rename(self) -> None:
+        proposal = ImprovementProposal(
+            proposal_id="p4",
+            baseline_version="1",
+            candidate_version="2",
+            changed_paths=("src/agentops/billing.py",),
+            development_outcomes=(),
+            held_out_outcomes=(outcome(),),
+            rollback_version="1",
+        )
+        assessment = ImprovementPolicy().assess(
+            proposal, {"held-out-1": outcome()}
+        )
+        self.assertFalse(assessment.promotable)
+        self.assertTrue(
+            any("protected target" in reason for reason in assessment.reasons)
+        )
 
 
 if __name__ == "__main__":

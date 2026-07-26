@@ -23,7 +23,7 @@ from typing import Any, Iterator
 from uuid import uuid4
 
 from .billing import BillingDispatchReservation
-from .errors import AgentOpsError, BillingRouteBlocked, ValidationError
+from .errors import OrdomataError, BillingRouteBlocked, ValidationError
 from .models import (
     BillingRouteAssessment,
     CapacityState,
@@ -34,7 +34,7 @@ from .models import (
 )
 
 
-class StateStoreError(AgentOpsError):
+class StateStoreError(OrdomataError):
     """The local state store could not satisfy an operation."""
 
 

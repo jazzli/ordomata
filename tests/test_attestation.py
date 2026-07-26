@@ -10,15 +10,15 @@ import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from agentops.attestation import (
+from ordomata.attestation import (
     CONFIRMATION_PHRASES,
     BillingAttestationRefresh,
     refresh_billing_attestation,
 )
-from agentops.billing import FileBillingAttestationLoader
-from agentops.cli import build_parser, main
-from agentops.errors import ConfigurationError
-from agentops.models import (
+from ordomata.billing import FileBillingAttestationLoader
+from ordomata.cli import build_parser, main
+from ordomata.errors import ConfigurationError
+from ordomata.models import (
     AssessmentConfidence,
     BillingRoute,
     BillingRouteAssessment,
@@ -97,8 +97,8 @@ class BillingAttestationWorkflowTests(unittest.IsolatedAsyncioTestCase):
     ) -> tuple[BillingAttestationRefresh, str]:
         output = TTYStringIO()
         with (
-            patch("agentops.attestation.sys.stdin", TTYStringIO(phrase + "\n")),
-            patch("agentops.attestation.sys.stdout", output),
+            patch("ordomata.attestation.sys.stdin", TTYStringIO(phrase + "\n")),
+            patch("ordomata.attestation.sys.stdout", output),
         ):
             result = await refresh_billing_attestation(
                 root,
@@ -118,7 +118,7 @@ class BillingAttestationWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 CONFIRMATION_PHRASES["codex"],
             )
 
-            path = root / ".agentops" / "billing-attestations.json"
+            path = root / ".ordomata" / "billing-attestations.json"
             self.assertEqual(result.path, path)
             self.assertEqual(result.maximum_validity_seconds, 3600)
             self.assertEqual(runner.inspections, 1)
@@ -148,6 +148,39 @@ class BillingAttestationWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
 
+    async def test_legacy_state_root_is_written_in_place(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / ".agentops").mkdir()
+            runner = FakeBillingRunner("codex", codex_assessment())
+
+            result, _ = await self._refresh(
+                root,
+                runner,
+                CONFIRMATION_PHRASES["codex"],
+            )
+
+            self.assertEqual(
+                result.path, root / ".agentops" / "billing-attestations.json"
+            )
+            self.assertFalse((root / ".ordomata").exists())
+
+    async def test_dual_state_roots_block_before_account_inspection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / ".ordomata").mkdir()
+            (root / ".agentops").mkdir()
+            runner = FakeBillingRunner("codex", codex_assessment())
+
+            with self.assertRaisesRegex(ConfigurationError, "both .ordomata"):
+                await self._refresh(
+                    root,
+                    runner,
+                    CONFIRMATION_PHRASES["codex"],
+                )
+
+            self.assertEqual(runner.inspections, 0)
+
     async def test_claude_confirmation_sets_both_required_codes_and_preserves_codex(
         self,
     ) -> None:
@@ -168,7 +201,7 @@ class BillingAttestationWorkflowTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.maximum_validity_seconds, 900)
             self.assertIn("extra usage is disabled", prompt)
             self.assertIn("included subscription capacity", prompt)
-            path = root / ".agentops" / "billing-attestations.json"
+            path = root / ".ordomata" / "billing-attestations.json"
             document = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(
                 {record["runner_id"] for record in document["attestations"]},
@@ -201,10 +234,10 @@ class BillingAttestationWorkflowTests(unittest.IsolatedAsyncioTestCase):
             runner = FakeBillingRunner("codex", codex_assessment())
             with (
                 patch(
-                    "agentops.attestation.sys.stdin",
+                    "ordomata.attestation.sys.stdin",
                     StringIO(CONFIRMATION_PHRASES["codex"] + "\n"),
                 ),
-                patch("agentops.attestation.sys.stdout", TTYStringIO()),
+                patch("ordomata.attestation.sys.stdout", TTYStringIO()),
                 self.assertRaisesRegex(ConfigurationError, "interactive terminal"),
             ):
                 await refresh_billing_attestation(
@@ -213,7 +246,7 @@ class BillingAttestationWorkflowTests(unittest.IsolatedAsyncioTestCase):
                     clock=lambda: NOW,
                 )
             self.assertEqual(runner.inspections, 0)
-            self.assertFalse((root / ".agentops").exists())
+            self.assertFalse((root / ".ordomata").exists())
 
     async def test_confirmation_must_match_exactly(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -221,10 +254,10 @@ class BillingAttestationWorkflowTests(unittest.IsolatedAsyncioTestCase):
             runner = FakeBillingRunner("codex", codex_assessment())
             with (
                 patch(
-                    "agentops.attestation.sys.stdin",
+                    "ordomata.attestation.sys.stdin",
                     TTYStringIO(CONFIRMATION_PHRASES["codex"] + " \n"),
                 ),
-                patch("agentops.attestation.sys.stdout", TTYStringIO()),
+                patch("ordomata.attestation.sys.stdout", TTYStringIO()),
                 self.assertRaisesRegex(ConfigurationError, "was not accepted"),
             ):
                 await refresh_billing_attestation(
@@ -233,7 +266,7 @@ class BillingAttestationWorkflowTests(unittest.IsolatedAsyncioTestCase):
                     clock=lambda: NOW,
                 )
             self.assertEqual(runner.inspections, 1)
-            self.assertFalse((root / ".agentops").exists())
+            self.assertFalse((root / ".ordomata").exists())
 
     async def test_codex_machine_evidence_fails_closed_before_prompt(self) -> None:
         unsafe_assessments = (
@@ -250,12 +283,12 @@ class BillingAttestationWorkflowTests(unittest.IsolatedAsyncioTestCase):
                     output = TTYStringIO()
                     with (
                         patch(
-                            "agentops.attestation.sys.stdin",
+                            "ordomata.attestation.sys.stdin",
                             TTYStringIO(
                                 CONFIRMATION_PHRASES["codex"] + "\n"
                             ),
                         ),
-                        patch("agentops.attestation.sys.stdout", output),
+                        patch("ordomata.attestation.sys.stdout", output),
                         self.assertRaises(ConfigurationError),
                     ):
                         await refresh_billing_attestation(
@@ -264,7 +297,7 @@ class BillingAttestationWorkflowTests(unittest.IsolatedAsyncioTestCase):
                             clock=lambda: NOW,
                         )
                     self.assertEqual(output.getvalue(), "")
-                    self.assertFalse((Path(temporary) / ".agentops").exists())
+                    self.assertFalse((Path(temporary) / ".ordomata").exists())
 
     async def test_claude_requires_paid_route_identity_and_no_contradiction(
         self,
@@ -283,13 +316,13 @@ class BillingAttestationWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 with tempfile.TemporaryDirectory() as temporary:
                     with (
                         patch(
-                            "agentops.attestation.sys.stdin",
+                            "ordomata.attestation.sys.stdin",
                             TTYStringIO(
                                 CONFIRMATION_PHRASES["claude"] + "\n"
                             ),
                         ),
                         patch(
-                            "agentops.attestation.sys.stdout",
+                            "ordomata.attestation.sys.stdout",
                             TTYStringIO(),
                         ),
                         self.assertRaises(ConfigurationError),
@@ -299,7 +332,7 @@ class BillingAttestationWorkflowTests(unittest.IsolatedAsyncioTestCase):
                             FakeBillingRunner("claude", assessment),
                             clock=lambda: NOW,
                         )
-                    self.assertFalse((Path(temporary) / ".agentops").exists())
+                    self.assertFalse((Path(temporary) / ".ordomata").exists())
 
     async def test_assessment_loaded_from_an_attestation_cannot_self_refresh(
         self,
@@ -316,10 +349,10 @@ class BillingAttestationWorkflowTests(unittest.IsolatedAsyncioTestCase):
             )
             with (
                 patch(
-                    "agentops.attestation.sys.stdin",
+                    "ordomata.attestation.sys.stdin",
                     TTYStringIO(CONFIRMATION_PHRASES["codex"] + "\n"),
                 ),
-                patch("agentops.attestation.sys.stdout", TTYStringIO()),
+                patch("ordomata.attestation.sys.stdout", TTYStringIO()),
                 self.assertRaisesRegex(ConfigurationError, "not independent"),
             ):
                 await refresh_billing_attestation(
@@ -333,7 +366,7 @@ class BillingAttestationWorkflowTests(unittest.IsolatedAsyncioTestCase):
             root = Path(temporary)
             target = root / "private-target"
             target.mkdir()
-            (root / ".agentops").symlink_to(target, target_is_directory=True)
+            (root / ".ordomata").symlink_to(target, target_is_directory=True)
             with self.assertRaisesRegex(ConfigurationError, "symlink"):
                 await self._refresh(
                     root,
@@ -350,10 +383,10 @@ class BillingAttestationWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 FakeBillingRunner("codex", codex_assessment()),
                 CONFIRMATION_PHRASES["codex"],
             )
-            path = root / ".agentops" / "billing-attestations.json"
+            path = root / ".ordomata" / "billing-attestations.json"
             previous = path.read_bytes()
             with patch(
-                "agentops.attestation.os.replace",
+                "ordomata.attestation.os.replace",
                 side_effect=OSError("simulated replace failure"),
             ):
                 with self.assertRaisesRegex(ConfigurationError, "stored safely"):
@@ -382,7 +415,7 @@ class BillingAttestationParserTests(unittest.TestCase):
             root = Path(temporary)
             result = BillingAttestationRefresh(
                 runner_id="codex",
-                path=root / ".agentops" / "billing-attestations.json",
+                path=root / ".ordomata" / "billing-attestations.json",
                 maximum_validity_seconds=300,
             )
             refresh = AsyncMock(return_value=result)
@@ -390,7 +423,7 @@ class BillingAttestationParserTests(unittest.TestCase):
             stderr = StringIO()
             with (
                 patch(
-                    "agentops.cli.refresh_billing_attestation",
+                    "ordomata.cli.refresh_billing_attestation",
                     new=refresh,
                 ),
                 redirect_stdout(stdout),

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import unittest
 
-from agentops.context import (
+from ordomata.context import (
     LocalContextIndex,
     SourceDocument,
     build_context_pack,
@@ -12,8 +12,8 @@ from agentops.context import (
     normalize_content,
     render_synthesis_prompt,
 )
-from agentops.contracts import ContextSelectionRules, load_task_contract
-from agentops.errors import ValidationError
+from ordomata.contracts import ContextSelectionRules, load_task_contract
+from ordomata.errors import ValidationError
 
 
 ROOT = Path(__file__).resolve().parents[1]

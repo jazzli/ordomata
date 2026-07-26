@@ -1,4 +1,4 @@
-"""Subscription-only local agent orchestration."""
+"""Ordomata: a local control plane for governed autonomous work."""
 
 from .models import BillingRoute, PermissionClass
 

@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import time
 
-from agentops.models import (
+from ordomata.models import (
     AssessmentConfidence,
     BillingRoute,
     BillingRouteAssessment,
@@ -14,7 +14,7 @@ from agentops.models import (
     PaidCreditBalance,
     PermissionClass,
 )
-from agentops.routing import (
+from ordomata.routing import (
     ExecutionProfile,
     ProfileRouter,
     RuntimeProfileState,
@@ -23,7 +23,7 @@ from agentops.routing import (
     load_execution_profiles,
     runner_overrides_for_profile,
 )
-from agentops.errors import ConfigurationError, ValidationError
+from ordomata.errors import ConfigurationError, ValidationError
 
 
 def candidate(

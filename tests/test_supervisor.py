@@ -8,9 +8,9 @@ import sqlite3
 import tempfile
 import unittest
 
-from agentops.errors import ConfigurationError
-from agentops.models import PermissionClass
-from agentops.supervisor import (
+from ordomata.errors import ConfigurationError
+from ordomata.models import PermissionClass
+from ordomata.supervisor import (
     AdmissionConflictError,
     ClaimLostError,
     FlowSpec,
@@ -117,9 +117,16 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
             migrations = connection.execute(
                 "SELECT version, name FROM state_schema_migrations ORDER BY version"
             ).fetchall()
+            baseline_digest = connection.execute(
+                "SELECT script_sha256 FROM state_schema_migrations WHERE version = 1"
+            ).fetchone()[0]
         self.assertEqual(
             migrations,
             [(1, "baseline_state"), (2, "supervisor_control_plane")],
+        )
+        self.assertEqual(
+            baseline_digest,
+            "6076ff9c09a329bc60f1bdc79fd61d3251990219047005691eff8bbd9e9178e6",
         )
 
     def test_reopen_fails_closed_when_an_invariant_trigger_is_missing(self) -> None:

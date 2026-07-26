@@ -23,6 +23,7 @@ from typing import Any
 from .billing import (
     BillingPolicy,
     FileBillingAttestationLoader,
+    LEGACY_LIVE_RUN_ENVIRONMENT_NAME,
     LIVE_RUN_ENVIRONMENT_NAME,
 )
 from .environment import inspect_risky_environment, is_sensitive_environment_name
@@ -39,6 +40,7 @@ from .models import (
     RunRequest,
     RunnerCapabilities,
 )
+from .paths import resolve_state_root
 from .redaction import Redactor
 from .runners import AgentRunner, ClaudeRunner, CodexRunner, MockRunner
 
@@ -266,8 +268,9 @@ async def collect_doctor_report(
 
     parent_environment = dict(os.environ if environment is None else environment)
     workspace_path = Path.cwd() if workspace is None else Path(workspace)
+    state_root = resolve_state_root(workspace_path)
     run_root_path = (
-        workspace_path / ".agentops" / "runs"
+        state_root / "runs"
         if run_root is None
         else Path(run_root)
     )
@@ -283,7 +286,7 @@ async def collect_doctor_report(
     selected_runners: Sequence[AgentRunner]
     if runners is None:
         loader = FileBillingAttestationLoader(
-            workspace_path / ".agentops" / "billing-attestations.json"
+            state_root / "billing-attestations.json"
         )
         selected_runners = (
             CodexRunner(
@@ -699,7 +702,8 @@ def _safe_environment_diagnostic(
         name
         for name in sanitized_names
         if is_sensitive_environment_name(name)
-        or name.upper() == LIVE_RUN_ENVIRONMENT_NAME
+        or name.upper()
+        in {LIVE_RUN_ENVIRONMENT_NAME, LEGACY_LIVE_RUN_ENVIRONMENT_NAME}
     )
     if prohibited_child_names:
         errors.append(
@@ -717,12 +721,7 @@ def _safe_environment_diagnostic(
 
 
 def _live_gate_diagnostic(environment: Mapping[str, str]) -> LiveGateDiagnostic:
-    if LIVE_RUN_ENVIRONMENT_NAME not in environment:
-        state = "unset"
-    elif environment.get(LIVE_RUN_ENVIRONMENT_NAME) == "1":
-        state = "enabled_exactly"
-    else:
-        state = "set_but_not_exactly_enabled"
+    state = BillingPolicy.live_run_gate_state(environment)
     return LiveGateDiagnostic(
         environment_name=LIVE_RUN_ENVIRONMENT_NAME,
         enabled=BillingPolicy.live_run_enabled(environment),
@@ -806,12 +805,12 @@ def _sqlite_health() -> SQLiteHealth:
             "CREATE VIRTUAL TABLE doctor_fts USING fts5(content, tokenize='unicode61')"
         )
         connection.execute(
-            "INSERT INTO doctor_fts(content) VALUES (?)", ("agentops diagnostic",)
+            "INSERT INTO doctor_fts(content) VALUES (?)", ("ordomata diagnostic",)
         )
         match = connection.execute(
             "SELECT content FROM doctor_fts WHERE doctor_fts MATCH ?", ("diagnostic",)
         ).fetchone()
-        fts5_available = match is not None and match[0] == "agentops diagnostic"
+        fts5_available = match is not None and match[0] == "ordomata diagnostic"
         row = connection.execute("PRAGMA integrity_check").fetchone()
         integrity = str(row[0]) if row is not None else None
         if not fts5_available:

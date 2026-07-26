@@ -1,8 +1,8 @@
 import unittest
 
-from agentops.approval import ApprovalPolicy
-from agentops.errors import ValidationError
-from agentops.models import PermissionClass
+from ordomata.approval import ApprovalPolicy
+from ordomata.errors import ValidationError
+from ordomata.models import PermissionClass
 
 
 class ApprovalPolicyTests(unittest.TestCase):

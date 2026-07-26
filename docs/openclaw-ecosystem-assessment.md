@@ -17,7 +17,7 @@ The project must retain these non-negotiable boundaries:
 - AI inference runs only through a first-party coding harness with verified included-subscription capacity and verified protection against purchased-credit or overage continuation.
 - There is no API-key fallback, metered AI API SDK, or cloud-model route.
 - Deterministic code owns authorization, scheduling, evaluation, state transitions, and promotion.
-- Live harness execution remains opt-in through `AGENTOPS_ALLOW_SUBSCRIPTION_RUNS=1`, which is necessary but never sufficient.
+- Live harness execution remains opt-in through `ORDOMATA_ALLOW_SUBSCRIPTION_RUNS=1`, which is necessary but never sufficient.
 - Only work inside the current Class 0/1 ceiling is enabled at this stage; the
   target authorization model derives those labels rather than treating them as
   grants. The target permits exactly bounded Class 3 standing envelopes, but
