@@ -1,0 +1,256 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agentops://schemas/chief-of-staff-lite-output/1",
+  "title": "Chief of Staff Lite structured report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "metadata",
+    "executive_summary",
+    "priorities",
+    "commitments",
+    "deadlines",
+    "conflicts",
+    "decisions",
+    "waiting_on",
+    "next_actions",
+    "drafts",
+    "uncertainties",
+    "source_references",
+    "safety"
+  ],
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_id", "task_version", "prompt_version", "snapshot_hash"],
+      "properties": {
+        "task_id": {"const": "chief-of-staff.lite"},
+        "task_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "prompt_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "snapshot_hash": {"type": "string", "format": "sha256"}
+      }
+    },
+    "executive_summary": {"type": "string", "minLength": 1, "maxLength": 3000},
+    "priorities": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {"$ref": "#/$defs/priority"}
+    },
+    "commitments": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {"$ref": "#/$defs/commitment"}
+    },
+    "deadlines": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {"$ref": "#/$defs/deadline"}
+    },
+    "conflicts": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {"$ref": "#/$defs/conflict"}
+    },
+    "decisions": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {"$ref": "#/$defs/decision"}
+    },
+    "waiting_on": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {"$ref": "#/$defs/waitingOn"}
+    },
+    "next_actions": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {"$ref": "#/$defs/nextAction"}
+    },
+    "drafts": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {"$ref": "#/$defs/localDraft"}
+    },
+    "uncertainties": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {"$ref": "#/$defs/uncertaintyItem"}
+    },
+    "source_references": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 100,
+      "items": {"$ref": "#/$defs/sourceReference"}
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["highest_permission_class", "external_actions_executed", "notes"],
+      "properties": {
+        "highest_permission_class": {"type": "integer", "enum": [0, 1]},
+        "external_actions_executed": {"const": false},
+        "notes": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {"type": "string", "minLength": 1, "maxLength": 500}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$", "maxLength": 100},
+    "sourceRefArray": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$", "maxLength": 200}
+    },
+    "uncertainty": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level", "note"],
+      "properties": {
+        "level": {"type": "string", "enum": ["none", "low", "medium", "high"]},
+        "note": {"type": ["string", "null"], "maxLength": 1000}
+      }
+    },
+    "priority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "summary", "rationale", "urgency", "source_refs", "uncertainty"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "rationale": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "urgency": {"type": "string", "enum": ["now", "soon", "later"]},
+        "source_refs": {"$ref": "#/$defs/sourceRefArray"},
+        "uncertainty": {"$ref": "#/$defs/uncertainty"}
+      }
+    },
+    "commitment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "owner", "commitment", "due_at", "status", "source_refs", "uncertainty"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "owner": {"type": "string", "minLength": 1, "maxLength": 300},
+        "commitment": {"type": "string", "minLength": 1, "maxLength": 1500},
+        "due_at": {"type": ["string", "null"], "format": "date-time"},
+        "status": {"type": "string", "enum": ["open", "done", "unclear"]},
+        "source_refs": {"$ref": "#/$defs/sourceRefArray"},
+        "uncertainty": {"$ref": "#/$defs/uncertainty"}
+      }
+    },
+    "deadline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "due_at", "source_refs", "uncertainty"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "description": {"type": "string", "minLength": 1, "maxLength": 1500},
+        "due_at": {"type": "string", "format": "date-time"},
+        "source_refs": {"$ref": "#/$defs/sourceRefArray"},
+        "uncertainty": {"$ref": "#/$defs/uncertainty"}
+      }
+    },
+    "conflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "affected_items", "source_refs", "uncertainty"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "description": {"type": "string", "minLength": 1, "maxLength": 1500},
+        "affected_items": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 500}
+        },
+        "source_refs": {"$ref": "#/$defs/sourceRefArray"},
+        "uncertainty": {"$ref": "#/$defs/uncertainty"}
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "decision", "status", "source_refs", "uncertainty"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "decision": {"type": "string", "minLength": 1, "maxLength": 1500},
+        "status": {"type": "string", "enum": ["made", "pending", "proposed"]},
+        "source_refs": {"$ref": "#/$defs/sourceRefArray"},
+        "uncertainty": {"$ref": "#/$defs/uncertainty"}
+      }
+    },
+    "waitingOn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "item", "owner", "since", "source_refs", "uncertainty"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "item": {"type": "string", "minLength": 1, "maxLength": 1500},
+        "owner": {"type": ["string", "null"], "maxLength": 300},
+        "since": {"type": ["string", "null"], "format": "date-time"},
+        "source_refs": {"$ref": "#/$defs/sourceRefArray"},
+        "uncertainty": {"$ref": "#/$defs/uncertainty"}
+      }
+    },
+    "nextAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "action", "owner", "when", "output_kind", "permission_class", "source_refs", "uncertainty"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "action": {"type": "string", "minLength": 1, "maxLength": 1500},
+        "owner": {"type": "string", "minLength": 1, "maxLength": 300},
+        "when": {"type": ["string", "null"], "maxLength": 300},
+        "output_kind": {"type": "string", "enum": ["recommendation", "local_draft"]},
+        "permission_class": {"type": "integer", "enum": [0, 1]},
+        "source_refs": {"$ref": "#/$defs/sourceRefArray"},
+        "uncertainty": {"$ref": "#/$defs/uncertainty"}
+      }
+    },
+    "localDraft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "title", "content", "permission_class", "source_refs"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "kind": {"type": "string", "enum": ["email", "calendar_proposal", "note", "plan"]},
+        "title": {"type": "string", "minLength": 1, "maxLength": 500},
+        "content": {"type": "string", "minLength": 1, "maxLength": 10000},
+        "permission_class": {"const": 1},
+        "source_refs": {"$ref": "#/$defs/sourceRefArray"}
+      }
+    },
+    "uncertaintyItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "recommended_check", "source_refs"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "description": {"type": "string", "minLength": 1, "maxLength": 1500},
+        "recommended_check": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "source_refs": {"$ref": "#/$defs/sourceRefArray"}
+      }
+    },
+    "sourceReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "used_for"],
+      "properties": {
+        "source_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$", "maxLength": 200},
+        "used_for": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 200}
+        }
+      }
+    }
+  }
+}

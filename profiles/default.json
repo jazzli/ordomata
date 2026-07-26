@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "profiles": [
+    {
+      "profile_id": "codex.subscription.local-draft-synthesis",
+      "version": "1",
+      "runner_id": "codex",
+      "model_id": null,
+      "role": "synthesis",
+      "settings": {
+        "reasoning_effort": "high"
+      },
+      "capabilities": ["structured_output", "local_draft", "isolated_workspace"],
+      "task_kinds": ["chief_of_staff", "repository_audit"],
+      "allowed_billing_routes": ["subscription_included"],
+      "max_permission_class": 1,
+      "quality_prior": 0.7,
+      "latency_prior_seconds": 90
+    },
+    {
+      "profile_id": "claude.subscription.local-draft-synthesis",
+      "version": "1",
+      "runner_id": "claude",
+      "model_id": null,
+      "role": "synthesis",
+      "settings": {
+        "effort": "high",
+        "max_turns": 3
+      },
+      "capabilities": ["structured_output", "local_draft", "isolated_workspace"],
+      "task_kinds": ["chief_of_staff", "repository_audit"],
+      "allowed_billing_routes": ["subscription_included"],
+      "max_permission_class": 1,
+      "quality_prior": 0.7,
+      "latency_prior_seconds": 90
+    },
+    {
+      "profile_id": "mock.deterministic.local-draft",
+      "version": "1",
+      "runner_id": "mock",
+      "model_id": null,
+      "role": "test",
+      "settings": {
+        "fixture": "chief_of_staff.valid"
+      },
+      "capabilities": ["structured_output", "local_draft", "isolated_workspace"],
+      "task_kinds": ["chief_of_staff", "repository_audit"],
+      "allowed_billing_routes": ["mock"],
+      "max_permission_class": 1,
+      "quality_prior": 1.0,
+      "latency_prior_seconds": 0.01
+    }
+  ]
+}

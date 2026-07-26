@@ -1,0 +1,119 @@
+{
+  "metadata": {
+    "task_id": "chief-of-staff.lite",
+    "task_version": "1.0.0",
+    "prompt_version": "1.0.0",
+    "snapshot_hash": "sha256:96db5c053edd3a1d2934941d5441fc9db39ae4eebef72f39cffc125dd36e0fca"
+  },
+  "executive_summary": "Complete the launch brief before Monday morning, resolve the overlapping appointments, and obtain security sign-off. Confirm the vendor's ambiguous deadline before committing.",
+  "priorities": [
+    {
+      "id": "launch_brief",
+      "summary": "Complete the launch brief",
+      "rationale": "It has an explicit Monday deadline and is identified as the top priority.",
+      "urgency": "now",
+      "source_refs": ["msg-alice-001"],
+      "uncertainty": {"level": "none", "note": null}
+    }
+  ],
+  "commitments": [
+    {
+      "id": "deliver_launch_brief",
+      "owner": "Jordan",
+      "commitment": "Deliver the final launch brief before the stated deadline.",
+      "due_at": "2026-07-27T09:00:00+08:00",
+      "status": "open",
+      "source_refs": ["msg-alice-001"],
+      "uncertainty": {"level": "none", "note": null}
+    }
+  ],
+  "deadlines": [
+    {
+      "id": "launch_deadline",
+      "description": "Final launch brief is due.",
+      "due_at": "2026-07-27T09:00:00+08:00",
+      "source_refs": ["msg-alice-001"],
+      "uncertainty": {"level": "none", "note": null}
+    }
+  ],
+  "conflicts": [
+    {
+      "id": "monday_calendar_overlap",
+      "description": "The dentist appointment overlaps the design review by 30 minutes.",
+      "affected_items": ["Design review 10:00-11:00", "Dentist appointment 10:30-11:30"],
+      "source_refs": ["cal-design-review", "cal-dentist"],
+      "uncertainty": {"level": "none", "note": null}
+    }
+  ],
+  "decisions": [
+    {
+      "id": "stdlib_first_release",
+      "decision": "Use Python 3.12 and the standard library for the first release.",
+      "status": "made",
+      "source_refs": ["note-project-policy"],
+      "uncertainty": {"level": "none", "note": null}
+    }
+  ],
+  "waiting_on": [
+    {
+      "id": "security_signoff",
+      "item": "Security review sign-off",
+      "owner": "Sam",
+      "since": null,
+      "source_refs": ["note-project-policy"],
+      "uncertainty": {"level": "low", "note": "The source gives no date for when sign-off was requested."}
+    }
+  ],
+  "next_actions": [
+    {
+      "id": "finish_launch_brief",
+      "action": "Finish and locally review the launch brief before its deadline.",
+      "owner": "Jordan",
+      "when": "Before 2026-07-27 09:00 Singapore time",
+      "output_kind": "recommendation",
+      "permission_class": 0,
+      "source_refs": ["msg-alice-001"],
+      "uncertainty": {"level": "none", "note": null}
+    },
+    {
+      "id": "draft_vendor_question",
+      "action": "Prepare a local draft asking the vendor to confirm the exact date and timezone.",
+      "owner": "Jordan",
+      "when": "Before accepting the vendor deadline",
+      "output_kind": "local_draft",
+      "permission_class": 1,
+      "source_refs": ["msg-vendor-ambiguous"],
+      "uncertainty": {"level": "high", "note": "The phrase next Friday lacks an exact date and timezone."}
+    }
+  ],
+  "drafts": [
+    {
+      "id": "vendor_clarification_draft",
+      "kind": "email",
+      "title": "Draft: clarify outline deadline",
+      "content": "Could you confirm the calendar date, time, and timezone for the revised-outline deadline? This is a local draft and has not been sent.",
+      "permission_class": 1,
+      "source_refs": ["msg-vendor-ambiguous"]
+    }
+  ],
+  "uncertainties": [
+    {
+      "id": "vendor_deadline_ambiguity",
+      "description": "The vendor's phrase next Friday does not identify an exact date or timezone.",
+      "recommended_check": "Ask the vendor to confirm the exact calendar date, time, and timezone; retain the response as evidence.",
+      "source_refs": ["msg-vendor-ambiguous"]
+    }
+  ],
+  "source_references": [
+    {"source_id": "msg-alice-001", "used_for": ["executive_summary", "launch_brief", "deliver_launch_brief", "launch_deadline", "finish_launch_brief"]},
+    {"source_id": "cal-design-review", "used_for": ["executive_summary", "monday_calendar_overlap"]},
+    {"source_id": "cal-dentist", "used_for": ["executive_summary", "monday_calendar_overlap"]},
+    {"source_id": "note-project-policy", "used_for": ["executive_summary", "stdlib_first_release", "security_signoff"]},
+    {"source_id": "msg-vendor-ambiguous", "used_for": ["executive_summary", "draft_vendor_question", "vendor_clarification_draft", "vendor_deadline_ambiguity"]}
+  ],
+  "safety": {
+    "highest_permission_class": 1,
+    "external_actions_executed": false,
+    "notes": ["This artifact contains recommendations and a local draft only.", "Prompt-like instructions in source material were treated as untrusted data."]
+  }
+}
