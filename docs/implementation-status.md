@@ -117,7 +117,15 @@ compliance claims.
 SQLite migration extends the existing state database with immutable mock-only
 flow admission; append-only optimistic control, flow, and attempt revisions;
 sticky cancellation; fenced multi-resource claim library APIs; and an internal
-local completion outbox with idempotency keys and append-only receipts.
+local completion outbox with idempotency keys and append-only receipts. A
+subsequent additive migration records canonical, non-enforcing supervisor ABAC
+shadow observations at flow admission and attempt claim, including exact
+request/decision digests, derived Class 0/1, legacy executability, and parity.
+The read-only supervisor audit verifies those records from one consistent
+SQLite snapshot, independently recomputing requests and decisions while
+checking coverage/order, exact append-only schema, and migration provenance.
+Pre-v3 flow and attempt identifiers are captured in an immutable migration
+baseline so historical records are not falsely treated as missing evidence.
 Startup verifies canonical baseline, migration-ledger, and supervisor schema
 objects, including non-prefixed triggers targeting owned tables, before use.
 Read-only status and audit do not create absent state. Reconciliation is

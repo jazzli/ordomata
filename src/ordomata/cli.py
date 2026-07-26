@@ -61,6 +61,7 @@ from .supervisor import (
     SupervisorMode,
     inspect_pending_completions,
     inspect_reconciliation,
+    inspect_supervisor_audit,
     inspect_supervisor_status,
 )
 
@@ -252,7 +253,8 @@ def build_parser() -> argparse.ArgumentParser:
     cancel.add_argument("--json", action="store_true")
 
     audit = supervisor_commands.add_parser(
-        "audit", help="read-only audit of stale, lost, and undelivered state"
+        "audit",
+        help="read-only audit of recovery state and authorization shadows",
     )
     audit.add_argument("--now", type=float)
     audit.add_argument("--json", action="store_true")
@@ -583,16 +585,22 @@ def _dispatch_supervisor_command(
         return 0
 
     if command == "audit":
-        plan = inspect_reconciliation(state_path, now=arguments.now)
+        plan, authorization = inspect_supervisor_audit(
+            state_path, now=arguments.now
+        )
+        payload = plan.to_mapping()
+        payload["authorization"] = authorization.to_mapping()
         _emit(
-            plan.to_mapping(),
+            payload,
             json_output=arguments.json,
             human=(
                 f"supervisor audit: findings={len(plan.findings)} "
-                f"actionable={plan.actionable_count}; plan={plan.plan_digest}"
+                f"actionable={plan.actionable_count}; "
+                f"authorization_findings={len(authorization.findings)}; "
+                f"plan={plan.plan_digest}"
             ),
         )
-        return 0 if not plan.findings else 1
+        return 0 if not plan.findings and authorization.clean else 1
 
     if command == "completions":
         completions = inspect_pending_completions(state_path)

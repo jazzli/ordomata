@@ -60,10 +60,14 @@ records.
 - a versioned additive SQLite migration for a durable supervisor control-plane
   tracer: immutable mock-only flow admission, append-only optimistic control/
   flow/attempt revisions, sticky cancellation, fenced multi-resource claim
-  library APIs, and an internal local completion outbox with receipts;
-- read-only supervisor status/audit, digest-bound reconciliation preview/apply,
-  explicit control commands, and a foreground `ordomata supervise` loop whose
-  worker dispatch is deliberately disabled;
+  library APIs, an internal local completion outbox with receipts, and
+  append-only non-enforcing ABAC shadow observations at flow admission and
+  attempt claim;
+- read-only supervisor status/audit, including independent shadow-digest,
+  parity, coverage, ordering, schema, and migration-ledger verification;
+  digest-bound reconciliation preview/apply; explicit control commands; and a
+  foreground `ordomata supervise` loop whose worker dispatch is deliberately
+  disabled;
 - post-run billing assessment that quarantines paid or unknown outcomes, suppresses promotion, and opens a durable circuit when required;
 - optional typed task-effect authorization intent, independent of the legacy
   numeric class, plus three non-enforcing Chief-of-Staff shadow decisions at

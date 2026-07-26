@@ -1,8 +1,9 @@
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import closing, redirect_stderr, redirect_stdout
 from io import StringIO
 import json
 from pathlib import Path
 import shutil
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -64,6 +65,18 @@ class SupervisorCLITests(unittest.TestCase):
             self.assertEqual(audit["finding_count"], 0)
             self.assertEqual(audit["actionable_count"], 0)
             self.assertEqual(audit["findings"], [])
+            self.assertEqual(
+                audit["authorization"],
+                {
+                    "clean": True,
+                    "database_present": False,
+                    "expected_observation_count": 0,
+                    "finding_count": 0,
+                    "findings": [],
+                    "observation_count": 0,
+                    "schema_present": False,
+                },
+            )
             self.assertFalse((root / ".ordomata").exists())
 
     def test_status_reads_a_sole_legacy_state_root_in_place(self) -> None:
@@ -119,6 +132,57 @@ class SupervisorCLITests(unittest.TestCase):
 
             status = self._invoke_json(root, "supervisor", "status")
             self.assertEqual(status["flow_counts"], {"queued": 1})
+            audit = self._invoke_json(root, "supervisor", "audit", "--now", "1000")
+            self.assertTrue(audit["authorization"]["clean"])
+            self.assertEqual(audit["authorization"]["observation_count"], 1)
+            self.assertEqual(
+                audit["authorization"]["expected_observation_count"], 1
+            )
+
+    def test_audit_returns_nonzero_for_authorization_integrity_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            self._invoke_json(
+                root,
+                "supervisor",
+                "enqueue",
+                "--admission-key",
+                "cli-audit-integrity-key",
+            )
+            database = root / ".ordomata" / "state.sqlite3"
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute(
+                    "DROP TRIGGER supervisor_authorization_observations_no_update"
+                )
+                connection.execute(
+                    """
+                    UPDATE supervisor_authorization_observations
+                    SET decision_digest = ?
+                    """,
+                    ("sha256:" + "0" * 64,),
+                )
+                connection.commit()
+
+            status, output, errors = self._invoke(
+                "--project-root",
+                str(root),
+                "supervisor",
+                "audit",
+                "--now",
+                "1000",
+                "--json",
+            )
+            self.assertEqual(status, 1)
+            self.assertEqual(errors, "")
+            payload = json.loads(output)
+            self.assertEqual(payload["finding_count"], 0)
+            self.assertFalse(payload["authorization"]["clean"])
+            codes = {
+                finding["code"]
+                for finding in payload["authorization"]["findings"]
+            }
+            self.assertIn("authorization_schema_mismatch", codes)
+            self.assertIn("decision_digest_mismatch", codes)
 
     def test_control_commands_persist_optimistic_mode_transitions(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

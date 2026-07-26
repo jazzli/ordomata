@@ -93,8 +93,13 @@ additive SQLite migration, immutable flow admission, append-only optimistic
 control/flow/attempt state, sticky cancellation, fenced multi-resource claim
 library APIs, an internal local completion outbox and receipts, read-only
 status/audit, digest-bound reconciliation, operator control commands, and a
-foreground `ordomata supervise` loop. Worker dispatch is deliberately disabled
-until runtime ABAC enforcement exists. This does not implement a repository
+foreground `ordomata supervise` loop. Flow admission and the otherwise
+library-only attempt-claim boundary now append typed, non-enforcing ABAC shadow
+observations with legacy parity. Worker dispatch is deliberately disabled
+until runtime ABAC enforcement exists. The read-only supervisor audit
+independently recomputes those observations and checks coverage, order, exact
+schema guards, and migration provenance without altering reconciliation plan
+digests. This does not implement a repository
 worker, live model loop, subprocess execution, network access, Class 2/3
 actions, or OS scheduling, so Phase 2 is not complete.
 
