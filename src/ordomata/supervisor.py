@@ -30,8 +30,35 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from .errors import OrdomataError, ConfigurationError, ValidationError
-from .models import PermissionClass
+from .authorization import (
+    ActionAttributes,
+    ActionVerb,
+    AttributeEvidence,
+    AuthorizationRequest,
+    BlastRadius,
+    CircuitState,
+    ConsequenceVector,
+    EnvironmentAttributes,
+    EvidenceSource,
+    ImpactLevel,
+    IsolationState,
+    NetworkState,
+    PolicyBundle,
+    Reach,
+    ResourceAttributes,
+    Role,
+    ShadowAuthorizationEvaluator,
+    SubjectAttributes,
+    canonical_digest,
+)
+from .models import (
+    BillingRoute,
+    CapacityState,
+    PaidContinuationProtection,
+    PermissionClass,
+)
 from .state import SQLiteStateStore, _canonical_json
+from .schema import parse_json_document
 
 
 class SupervisorError(OrdomataError):
@@ -149,7 +176,7 @@ _REASON_CODE = re.compile(r"[a-z0-9_]{1,100}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _RESOURCE_KEY = re.compile(r"[a-z0-9][a-z0-9._:/-]{0,199}")
 _MAX_JSON_BYTES = 262_144
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 _FOREGROUND_LEASE_KEY = "supervisor:foreground"
 
 
@@ -213,6 +240,62 @@ class FlowRevision:
     active_attempt_id: str | None
     reason_code: str
     occurred_at: float
+
+
+@dataclass(frozen=True, slots=True)
+class SupervisorAuthorizationObservation:
+    sequence: int
+    observation_id: str
+    boundary: str
+    flow_id: str
+    request_digest: str
+    decision_digest: str
+    effect: str
+    derived_permission_class: PermissionClass
+    legacy_executable: bool
+    execution_parity: bool
+    payload: Mapping[str, Any]
+    observed_at: float
+
+
+@dataclass(frozen=True, slots=True)
+class SupervisorAuthorizationFinding:
+    code: str
+    flow_id: str | None
+    boundary: str | None
+    observation_sequence: int | None
+
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "flow_id": self.flow_id,
+            "boundary": self.boundary,
+            "observation_sequence": self.observation_sequence,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SupervisorAuthorizationAudit:
+    database_present: bool
+    schema_present: bool
+    observation_count: int
+    expected_observation_count: int
+    findings: tuple[SupervisorAuthorizationFinding, ...]
+
+    @property
+    def clean(self) -> bool:
+        return not self.findings
+
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            "database_present": self.database_present,
+            "schema_present": self.schema_present,
+            "observation_count": self.observation_count,
+            "expected_observation_count": self.expected_observation_count,
+            "finding_count": len(self.findings),
+            "clean": self.clean,
+            "findings": [finding.to_mapping() for finding in self.findings],
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -698,6 +781,56 @@ END;
 """
 
 
+_SCHEMA_V3 = """
+CREATE TABLE supervisor_authorization_shadow_baseline (
+    entity_type TEXT NOT NULL CHECK (entity_type IN ('flow', 'attempt')),
+    entity_id TEXT NOT NULL,
+    PRIMARY KEY(entity_type, entity_id)
+);
+INSERT INTO supervisor_authorization_shadow_baseline (entity_type, entity_id)
+    SELECT 'flow', flow_id FROM supervisor_flows;
+INSERT INTO supervisor_authorization_shadow_baseline (entity_type, entity_id)
+    SELECT 'attempt', attempt_id FROM supervisor_attempts;
+
+CREATE TABLE supervisor_authorization_observations (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    observation_id TEXT NOT NULL UNIQUE,
+    boundary TEXT NOT NULL CHECK (boundary IN ('flow_admission', 'attempt_claim')),
+    flow_id TEXT NOT NULL REFERENCES supervisor_flows(flow_id),
+    request_digest TEXT NOT NULL CHECK (length(request_digest) = 71),
+    decision_digest TEXT NOT NULL CHECK (length(decision_digest) = 71),
+    effect TEXT NOT NULL CHECK (effect IN ('permit', 'defer', 'deny', 'indeterminate')),
+    derived_permission_class INTEGER NOT NULL CHECK (derived_permission_class IN (0, 1)),
+    legacy_executable INTEGER NOT NULL CHECK (legacy_executable IN (0, 1)),
+    execution_parity INTEGER NOT NULL CHECK (execution_parity IN (0, 1)),
+    payload_json TEXT NOT NULL CHECK (length(payload_json) <= 262144),
+    observed_at REAL NOT NULL CHECK (observed_at >= 0)
+);
+CREATE INDEX supervisor_authorization_observations_flow
+    ON supervisor_authorization_observations(flow_id, sequence);
+CREATE TRIGGER supervisor_authorization_observations_no_update
+BEFORE UPDATE ON supervisor_authorization_observations BEGIN
+    SELECT RAISE(ABORT, 'supervisor authorization observations are append-only');
+END;
+CREATE TRIGGER supervisor_authorization_observations_no_delete
+BEFORE DELETE ON supervisor_authorization_observations BEGIN
+    SELECT RAISE(ABORT, 'supervisor authorization observations are append-only');
+END;
+CREATE TRIGGER supervisor_authorization_shadow_baseline_no_update
+BEFORE UPDATE ON supervisor_authorization_shadow_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor authorization baseline is append-only');
+END;
+CREATE TRIGGER supervisor_authorization_shadow_baseline_no_delete
+BEFORE DELETE ON supervisor_authorization_shadow_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor authorization baseline is append-only');
+END;
+CREATE TRIGGER supervisor_authorization_shadow_baseline_no_insert
+BEFORE INSERT ON supervisor_authorization_shadow_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor authorization baseline is frozen');
+END;
+"""
+
+
 class SQLiteSupervisorStore:
     """Supervisor-specific event store sharing the existing local SQLite file."""
 
@@ -860,6 +993,24 @@ class SQLiteSupervisorStore:
                 }
                 if not required.issubset(present):
                     raise ConfigurationError("supervisor schema is incomplete")
+            migration_v3_digest = _sha256_text(_SCHEMA_V3)
+            if 3 not in versions:
+                escaped_digest = migration_v3_digest.replace("'", "''")
+                self._connection.executescript(
+                    "BEGIN IMMEDIATE;\n"
+                    + _SCHEMA_V3
+                    + "\nINSERT INTO state_schema_migrations "
+                    "(version, name, script_sha256, applied_at) VALUES "
+                    f"(3, 'supervisor_authorization_shadow', '{escaped_digest}', {now!r});\n"
+                    "COMMIT;"
+                )
+            elif (
+                versions[3]["name"] != "supervisor_authorization_shadow"
+                or versions[3]["script_sha256"] != migration_v3_digest
+            ):
+                raise ConfigurationError(
+                    "supervisor authorization schema migration digest mismatch"
+                )
             _verify_supervisor_schema(self._connection)
 
     def current_control(self) -> SupervisorControlRevision:
@@ -980,6 +1131,18 @@ class SQLiteSupervisorStore:
                 reason_code="admitted",
                 occurred_at=spec.created_at,
             )
+            try:
+                self._append_authorization_observation(
+                    connection,
+                    boundary="flow_admission",
+                    spec=spec,
+                    observed_at=spec.created_at,
+                    legacy_executable=True,
+                )
+            except Exception:
+                # Shadow evidence is deliberately non-authoritative. The
+                # existing validated admission remains the compatibility gate.
+                pass
         return spec, True
 
     def get_flow(self, flow_id: str) -> FlowSpec:
@@ -1017,6 +1180,20 @@ class SQLiteSupervisorStore:
                 (flow_id,),
             ).fetchall()
         return tuple(_flow_revision_from_row(row) for row in rows)
+
+    def list_authorization_observations(
+        self, flow_id: str
+    ) -> tuple[SupervisorAuthorizationObservation, ...]:
+        _validate_text(flow_id, "flow_id")
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT * FROM supervisor_authorization_observations
+                WHERE flow_id = ? ORDER BY sequence
+                """,
+                (flow_id,),
+            ).fetchall()
+        return tuple(_authorization_observation_from_row(row) for row in rows)
 
     def flow_state_counts(self) -> dict[str, int]:
         """Return the current event-sourced flow projection on this connection."""
@@ -1247,12 +1424,70 @@ class SQLiteSupervisorStore:
                     reason_code="attempt_claimed",
                     occurred_at=timestamp,
                 )
+                try:
+                    self._append_authorization_observation(
+                        connection,
+                        boundary="attempt_claim",
+                        spec=spec,
+                        observed_at=timestamp,
+                        legacy_executable=True,
+                        attempt_id=attempt_id,
+                    )
+                except Exception:
+                    # A shadow evaluator or evidence-write failure cannot
+                    # change the legacy claim outcome.
+                    pass
                 attempt = AttemptRecord(
                     attempt_id, spec.flow_id, attempt_number, run_id, revision,
                     lease_owner, lease_keys, input_digest, hard_deadline, timestamp,
                 )
                 return AttemptClaim(spec, flow_revision, attempt)
         return None
+
+    def _append_authorization_observation(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        boundary: str,
+        spec: FlowSpec,
+        observed_at: float,
+        legacy_executable: bool,
+        attempt_id: str | None = None,
+    ) -> None:
+        request, policy = _supervisor_authorization_request(
+            boundary=boundary,
+            spec=spec,
+            observed_at=observed_at,
+            attempt_id=attempt_id,
+        )
+        decision = ShadowAuthorizationEvaluator().evaluate(request, policy)
+        parity = (decision.effect.value == "permit") == legacy_executable
+        payload = {
+            "mode": "shadow",
+            "boundary": boundary,
+            "request": request.to_canonical(),
+            "request_digest": request.digest,
+            "decision": decision.to_canonical(),
+            "decision_digest": decision.digest,
+            "legacy_executable": legacy_executable,
+            "execution_parity": parity,
+        }
+        connection.execute(
+            """
+            INSERT INTO supervisor_authorization_observations (
+                observation_id, boundary, flow_id, request_digest,
+                decision_digest, effect, derived_permission_class,
+                legacy_executable, execution_parity, payload_json, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                self._new_id("authorization"), boundary, spec.flow_id,
+                request.digest, decision.digest, decision.effect.value,
+                int(decision.derived_permission_class), int(legacy_executable),
+                int(parity), _bounded_json(payload, "authorization payload"),
+                observed_at,
+            ),
+        )
 
     def mark_attempt_dispatching(
         self,
@@ -2057,6 +2292,195 @@ def inspect_reconciliation(
         raise ConfigurationError("supervisor state is unreadable or malformed") from error
 
 
+def inspect_supervisor_authorization(
+    database_path: str | Path,
+) -> SupervisorAuthorizationAudit:
+    """Independently verify supervisor shadow evidence without changing state."""
+
+    path = Path(database_path)
+    if not path.is_file():
+        return SupervisorAuthorizationAudit(False, False, 0, 0, ())
+    try:
+        with _read_only_connection(path) as connection:
+            return _inspect_supervisor_authorization_connection(connection)
+    except Exception as error:
+        raise ConfigurationError(
+            "supervisor authorization state is unreadable or malformed"
+        ) from error
+
+
+def inspect_supervisor_audit(
+    database_path: str | Path,
+    *,
+    now: float | None = None,
+) -> tuple[ReconciliationPlan, SupervisorAuthorizationAudit]:
+    """Inspect recovery and authorization through one read-only snapshot."""
+
+    timestamp = _timestamp(time.time() if now is None else now, "timestamp")
+    path = Path(database_path)
+    if not path.is_file():
+        return (
+            _make_plan(False, timestamp, ()),
+            SupervisorAuthorizationAudit(False, False, 0, 0, ()),
+        )
+    try:
+        with _read_only_connection(path) as connection:
+            tables = _table_names(connection)
+            plan = (
+                _make_plan(True, timestamp, ())
+                if "supervisor_flows" not in tables
+                else _make_plan(
+                    True, timestamp, _audit_connection(connection, timestamp)
+                )
+            )
+            authorization = _inspect_supervisor_authorization_connection(connection)
+            return plan, authorization
+    except Exception as error:
+        raise ConfigurationError("supervisor state is unreadable or malformed") from error
+
+
+def _inspect_supervisor_authorization_connection(
+    connection: sqlite3.Connection,
+) -> SupervisorAuthorizationAudit:
+    tables = _table_names(connection)
+    if "supervisor_flows" not in tables:
+        return SupervisorAuthorizationAudit(True, False, 0, 0, ())
+    flow_rows = connection.execute(
+        "SELECT * FROM supervisor_flows ORDER BY created_at, flow_id"
+    ).fetchall()
+    attempt_rows = connection.execute(
+        """
+        SELECT * FROM supervisor_attempts
+        ORDER BY flow_id, attempt_number, attempt_id
+        """
+    ).fetchall()
+    baseline = (
+        {
+            (row["entity_type"], row["entity_id"])
+            for row in connection.execute(
+                "SELECT entity_type, entity_id FROM "
+                "supervisor_authorization_shadow_baseline"
+            ).fetchall()
+        }
+        if "supervisor_authorization_shadow_baseline" in tables
+        else set()
+    )
+    expected_count = sum(
+        ("flow", row["flow_id"]) not in baseline for row in flow_rows
+    ) + sum(
+        ("attempt", row["attempt_id"]) not in baseline for row in attempt_rows
+    )
+    if "supervisor_authorization_observations" not in tables:
+        findings = (
+            SupervisorAuthorizationFinding(
+                "authorization_schema_missing", None, None, None
+            ),
+        )
+        return SupervisorAuthorizationAudit(True, False, 0, expected_count, findings)
+    observation_rows = connection.execute(
+        """
+        SELECT * FROM supervisor_authorization_observations
+        ORDER BY sequence
+        """
+    ).fetchall()
+    findings = list(_authorization_guard_findings(connection))
+    attempts_by_flow: dict[str, list[sqlite3.Row]] = {}
+    for row in attempt_rows:
+        attempts_by_flow.setdefault(row["flow_id"], []).append(row)
+    observations_by_flow: dict[str, list[sqlite3.Row]] = {}
+    for row in observation_rows:
+        observations_by_flow.setdefault(row["flow_id"], []).append(row)
+    known_flow_ids = {row["flow_id"] for row in flow_rows}
+    for flow_id in sorted(set(observations_by_flow) - known_flow_ids):
+        for row in observations_by_flow[flow_id]:
+            findings.append(_authorization_finding("observation_without_flow", row=row))
+    for flow_row in flow_rows:
+        spec = _flow_from_row(flow_row)
+        if flow_row["request_digest"] != spec.request_digest:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "flow_request_digest_mismatch", spec.flow_id, None, None
+                )
+            )
+        expected = [
+            *(
+                [("flow_admission", spec.created_at, None)]
+                if ("flow", spec.flow_id) not in baseline
+                else []
+            ),
+            *[
+                ("attempt_claim", row["created_at"], row["attempt_id"])
+                for row in attempts_by_flow.get(spec.flow_id, [])
+                if ("attempt", row["attempt_id"]) not in baseline
+            ],
+        ]
+        actual = observations_by_flow.get(spec.flow_id, [])
+        expected_with_ids = [
+            (
+                boundary,
+                observed_at,
+                attempt_id,
+                _supervisor_authorization_request(
+                    boundary=boundary,
+                    spec=spec,
+                    observed_at=observed_at,
+                    attempt_id=attempt_id,
+                )[0].request_id,
+            )
+            for boundary, observed_at, attempt_id in expected
+        ]
+        actual_ids = [_observation_request_id(row) for row in actual]
+        expected_ids = [item[3] for item in expected_with_ids]
+        if actual_ids != expected_ids:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "boundary_coverage_or_order_mismatch", spec.flow_id, None, None
+                )
+            )
+        used: set[int] = set()
+        for boundary, observed_at, attempt_id, request_id in expected_with_ids:
+            matches = [
+                index
+                for index, row in enumerate(actual)
+                if index not in used
+                and row["boundary"] == boundary
+                and actual_ids[index] == request_id
+            ]
+            if len(matches) != 1:
+                findings.append(
+                    SupervisorAuthorizationFinding(
+                        (
+                            "observation_missing"
+                            if not matches
+                            else "observation_duplicated"
+                        ),
+                        spec.flow_id,
+                        boundary,
+                        None,
+                    )
+                )
+                continue
+            index = matches[0]
+            used.add(index)
+            findings.extend(
+                _verify_authorization_observation(
+                    actual[index],
+                    spec=spec,
+                    boundary=boundary,
+                    observed_at=observed_at,
+                    attempt_id=attempt_id,
+                )
+            )
+        for index, row in enumerate(actual):
+            if index not in used:
+                findings.append(
+                    _authorization_finding("observation_unexpected", row=row)
+                )
+    return SupervisorAuthorizationAudit(
+        True, True, len(observation_rows), expected_count, tuple(findings)
+    )
+
+
 def inspect_pending_completions(
     database_path: str | Path,
 ) -> tuple[CompletionIntent, ...]:
@@ -2081,6 +2505,170 @@ def inspect_pending_completions(
         raise ConfigurationError("supervisor state is unreadable or malformed") from error
 
 
+def _authorization_guard_findings(
+    connection: sqlite3.Connection,
+) -> tuple[SupervisorAuthorizationFinding, ...]:
+    findings: list[SupervisorAuthorizationFinding] = []
+    expected = {
+        name: value
+        for name, value in _expected_supervisor_schema().items()
+        if name.startswith("supervisor_authorization_")
+        or value[1].startswith("supervisor_authorization_")
+    }
+    objects = _schema_objects(connection)
+    actual = {
+        name: value
+        for name, value in objects.items()
+        if name.startswith("supervisor_authorization_")
+        or value[1].startswith("supervisor_authorization_")
+    }
+    if actual != expected:
+        findings.append(
+            SupervisorAuthorizationFinding(
+                "authorization_schema_mismatch", None, None, None
+            )
+        )
+    migration = connection.execute(
+        "SELECT name, script_sha256 FROM state_schema_migrations WHERE version = 3"
+    ).fetchone()
+    if (
+        migration is None
+        or migration["name"] != "supervisor_authorization_shadow"
+        or migration["script_sha256"] != _sha256_text(_SCHEMA_V3)
+    ):
+        findings.append(
+            SupervisorAuthorizationFinding(
+                "authorization_migration_ledger_mismatch", None, None, None
+            )
+        )
+    return tuple(findings)
+
+
+def _verify_authorization_observation(
+    row: sqlite3.Row,
+    *,
+    spec: FlowSpec,
+    boundary: str,
+    observed_at: float,
+    attempt_id: str | None,
+) -> tuple[SupervisorAuthorizationFinding, ...]:
+    findings: list[SupervisorAuthorizationFinding] = []
+
+    def add(code: str) -> None:
+        findings.append(_authorization_finding(code, row=row))
+
+    try:
+        payload_text = row["payload_json"]
+        if (
+            not isinstance(payload_text, str)
+            or len(payload_text.encode("utf-8")) > _MAX_JSON_BYTES
+        ):
+            raise ValidationError("authorization payload exceeds its bound")
+        payload = parse_json_document(payload_text)
+    except (RecursionError, TypeError, UnicodeError, ValidationError):
+        add("payload_invalid")
+        return tuple(findings)
+    if not isinstance(payload, dict):
+        add("payload_invalid")
+        return tuple(findings)
+    expected_request, expected_policy = _supervisor_authorization_request(
+        boundary=boundary,
+        spec=spec,
+        observed_at=observed_at,
+        attempt_id=attempt_id,
+    )
+    expected_decision = ShadowAuthorizationEvaluator().evaluate(
+        expected_request, expected_policy
+    )
+    expected_payload = {
+        "mode": "shadow",
+        "boundary": boundary,
+        "request": expected_request.to_canonical(),
+        "request_digest": expected_request.digest,
+        "decision": expected_decision.to_canonical(),
+        "decision_digest": expected_decision.digest,
+        "legacy_executable": True,
+        "execution_parity": expected_decision.effect.value == "permit",
+    }
+    if payload != expected_payload:
+        add("payload_recomputation_mismatch")
+    request_value = payload.get("request")
+    decision_value = payload.get("decision")
+    try:
+        payload_request_digest = canonical_digest(request_value)
+    except (TypeError, ValueError):
+        payload_request_digest = None
+    try:
+        payload_decision_digest = canonical_digest(decision_value)
+    except (TypeError, ValueError):
+        payload_decision_digest = None
+    if (
+        payload_request_digest is None
+        or payload.get("request_digest") != payload_request_digest
+        or row["request_digest"] != payload_request_digest
+        or row["request_digest"] != expected_request.digest
+    ):
+        add("request_digest_mismatch")
+    if (
+        payload_decision_digest is None
+        or payload.get("decision_digest") != payload_decision_digest
+        or row["decision_digest"] != payload_decision_digest
+        or row["decision_digest"] != expected_decision.digest
+    ):
+        add("decision_digest_mismatch")
+    if not isinstance(decision_value, dict) or (
+        decision_value.get("request_digest") != row["request_digest"]
+    ):
+        add("decision_request_lineage_mismatch")
+    expected_permit = expected_decision.effect.value == "permit"
+    if (
+        row["effect"] != expected_decision.effect.value
+        or row["derived_permission_class"]
+        != int(expected_decision.derived_permission_class)
+    ):
+        add("decision_projection_mismatch")
+    if not bool(row["legacy_executable"]):
+        add("legacy_executability_mismatch")
+    if bool(row["execution_parity"]) != expected_permit:
+        add("execution_parity_mismatch")
+    if row["observed_at"] != observed_at:
+        add("observation_time_mismatch")
+    return tuple(findings)
+
+
+def _observation_request_id(row: sqlite3.Row) -> str | None:
+    try:
+        payload_text = row["payload_json"]
+        if (
+            not isinstance(payload_text, str)
+            or len(payload_text.encode("utf-8")) > _MAX_JSON_BYTES
+        ):
+            return None
+        payload = parse_json_document(payload_text)
+    except (RecursionError, TypeError, UnicodeError, ValidationError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    request = payload.get("request")
+    if not isinstance(request, dict):
+        return None
+    request_id = request.get("request_id")
+    return request_id if isinstance(request_id, str) else None
+
+
+def _authorization_finding(
+    code: str,
+    *,
+    row: sqlite3.Row,
+) -> SupervisorAuthorizationFinding:
+    return SupervisorAuthorizationFinding(
+        code=code,
+        flow_id=row["flow_id"],
+        boundary=row["boundary"],
+        observation_sequence=int(row["sequence"]),
+    )
+
+
 @contextmanager
 def _read_only_connection(path: Path) -> Iterator[sqlite3.Connection]:
     absolute = path.resolve()
@@ -2103,9 +2691,11 @@ def _read_only_connection(path: Path) -> Iterator[sqlite3.Connection]:
     connection = sqlite3.connect(uri, uri=True, isolation_level=None)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA query_only = ON")
+    connection.execute("BEGIN")
     try:
         yield connection
     finally:
+        connection.rollback()
         connection.close()
 
 
@@ -2362,7 +2952,7 @@ def _expected_supervisor_schema() -> dict[str, tuple[str, str, str]]:
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
     try:
-        connection.executescript(_SCHEMA_V2)
+        connection.executescript(_SCHEMA_V2 + "\n" + _SCHEMA_V3)
         objects = _schema_objects(connection)
         return {
             name: value
@@ -2398,7 +2988,7 @@ def _verify_supervisor_schema(connection: sqlite3.Connection) -> None:
         or value[1].startswith("supervisor_")
     }
     if actual != _expected_supervisor_schema():
-        raise ConfigurationError("supervisor schema objects do not match migration v2")
+        raise ConfigurationError("supervisor schema objects do not match migrations")
 
 
 @cache
@@ -2588,6 +3178,151 @@ def _flow_revision_from_row(row: sqlite3.Row) -> FlowRevision:
     )
 
 
+def _supervisor_authorization_request(
+    *,
+    boundary: str,
+    spec: FlowSpec,
+    observed_at: float,
+    attempt_id: str | None,
+) -> tuple[AuthorizationRequest, PolicyBundle]:
+    if boundary not in {"flow_admission", "attempt_claim"}:
+        raise ValidationError("unsupported supervisor authorization boundary")
+    operation = (
+        "supervisor.flow_admit"
+        if boundary == "flow_admission"
+        else "supervisor.attempt_claim"
+    )
+    verb = ActionVerb.CREATE if boundary == "flow_admission" else ActionVerb.EXECUTE
+    flow_state = "admission_proposed" if boundary == "flow_admission" else "claim_proposed"
+    request = AuthorizationRequest(
+        request_id=f"supervisor:{boundary}:{spec.flow_id}:{attempt_id or 'initial'}",
+        subject=SubjectAttributes(
+            principal_id="controller:local",
+            controller_id="agentops:local-controller",
+            role=Role.CONTROLLER,
+            role_version="1",
+            profile_id=canonical_digest({"profile_id": spec.profile_id}),
+            runner_id=spec.runner_id,
+            session_id=None,
+        ),
+        action=ActionAttributes(
+            verb=verb,
+            operation=operation,
+            parameters_digest=canonical_digest(
+                {
+                    "attempt_id": attempt_id,
+                    "flow_request_digest": spec.request_digest,
+                    "resource_keys": list(spec.resource_keys),
+                }
+            ),
+            intended_effect="append_local_control_plane_state",
+        ),
+        resource=ResourceAttributes(
+            resource_type="supervisor_flow",
+            identifier=canonical_digest({"flow_id": spec.flow_id}),
+            version=spec.request_digest,
+            owner="operator:local",
+            trust_boundary="local_control_plane",
+            protected=False,
+            sensitivity=ImpactLevel.LOW,
+            content_digest=canonical_digest(spec.immutable_mapping()),
+        ),
+        environment=EnvironmentAttributes(
+            evaluated_at=observed_at,
+            isolation_state=IsolationState.VERIFIED,
+            network_state=NetworkState.DISABLED,
+            billing_route=BillingRoute.MOCK,
+            capacity_state=CapacityState.NOT_APPLICABLE,
+            paid_continuation_protection=PaidContinuationProtection.NOT_APPLICABLE,
+            circuit_state=CircuitState.CLOSED,
+            flow_state=flow_state,
+        ),
+        consequences=ConsequenceVector(
+            confidentiality=ImpactLevel.LOW,
+            integrity=ImpactLevel.LOW,
+            availability=ImpactLevel.LOW,
+            reach=Reach.LOCAL,
+            destructive=False,
+            reversible=True,
+            sensitivity=ImpactLevel.LOW,
+            blast_radius=BlastRadius.SINGLE_RESOURCE,
+        ),
+    )
+    sources = {
+        "subject": EvidenceSource.CONTROLLER,
+        "action": EvidenceSource.CONTROLLER,
+        "resource": EvidenceSource.LOCAL_REGISTRY,
+        "environment": EvidenceSource.CONTROLLER,
+        "consequences": EvidenceSource.LOCAL_REGISTRY,
+    }
+    evidence = tuple(
+        AttributeEvidence.bind(
+            evidence_id=f"supervisor:{boundary}:{attribute}",
+            attribute=attribute,
+            value=request.attribute_value(attribute),
+            source=source,
+            source_id=f"agentops:{source.value}",
+            observed_at=observed_at,
+            expires_at=observed_at + 60.0,
+            authenticated=True,
+        )
+        for attribute, source in sources.items()
+    )
+    request = AuthorizationRequest(
+        request.request_id,
+        request.subject,
+        request.action,
+        request.resource,
+        request.environment,
+        request.consequences,
+        evidence,
+    )
+    base = PolicyBundle.current_stage(issued_at=observed_at)
+    policy = PolicyBundle(
+        bundle_id=base.bundle_id,
+        version=base.version,
+        issued_at=base.issued_at,
+        evidence_requirements=base.evidence_requirements,
+        enabled_classes=base.enabled_classes,
+        allowed_verbs=base.allowed_verbs,
+        allowed_roles=tuple(dict.fromkeys((*base.allowed_roles, Role.CONTROLLER))),
+        allowed_operations=tuple(dict.fromkeys((*base.allowed_operations, operation))),
+        allowed_resource_types=tuple(
+            dict.fromkeys((*base.allowed_resource_types, "supervisor_flow"))
+        ),
+        allowed_trust_boundaries=tuple(
+            dict.fromkeys((*base.allowed_trust_boundaries, "local_control_plane"))
+        ),
+        allowed_flow_states=tuple(
+            dict.fromkeys((*base.allowed_flow_states, flow_state))
+        ),
+        allowed_network_states=base.allowed_network_states,
+        allowed_billing_routes=base.allowed_billing_routes,
+        approval_requirements=base.approval_requirements,
+        decision_ttl_seconds=base.decision_ttl_seconds,
+    )
+    return request, policy
+
+
+def _authorization_observation_from_row(
+    row: sqlite3.Row,
+) -> SupervisorAuthorizationObservation:
+    return SupervisorAuthorizationObservation(
+        sequence=row["sequence"],
+        observation_id=row["observation_id"],
+        boundary=row["boundary"],
+        flow_id=row["flow_id"],
+        request_digest=row["request_digest"],
+        decision_digest=row["decision_digest"],
+        effect=row["effect"],
+        derived_permission_class=PermissionClass(row["derived_permission_class"]),
+        legacy_executable=bool(row["legacy_executable"]),
+        execution_parity=bool(row["execution_parity"]),
+        payload=json.loads(row["payload_json"]),
+        observed_at=row["observed_at"],
+    )
+
+
 def _control_from_row(row: sqlite3.Row) -> SupervisorControlRevision:
     return SupervisorControlRevision(
         sequence=row["sequence"],
@@ -2670,10 +3405,15 @@ __all__ = [
     "StaleReconciliationPlanError",
     "StaleRevisionError",
     "SupervisorControlRevision",
+    "SupervisorAuthorizationObservation",
+    "SupervisorAuthorizationAudit",
+    "SupervisorAuthorizationFinding",
     "SupervisorError",
     "SupervisorMode",
     "SupervisorStatus",
     "inspect_reconciliation",
     "inspect_pending_completions",
+    "inspect_supervisor_authorization",
+    "inspect_supervisor_audit",
     "inspect_supervisor_status",
 ]

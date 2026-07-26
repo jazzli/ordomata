@@ -7,6 +7,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from ordomata.errors import ConfigurationError
 from ordomata.models import PermissionClass
@@ -22,6 +23,8 @@ from ordomata.supervisor import (
     SupervisorMode,
     inspect_pending_completions,
     inspect_reconciliation,
+    inspect_supervisor_audit,
+    inspect_supervisor_authorization,
     inspect_supervisor_status,
 )
 
@@ -122,12 +125,97 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(
             migrations,
-            [(1, "baseline_state"), (2, "supervisor_control_plane")],
+            [
+                (1, "baseline_state"),
+                (2, "supervisor_control_plane"),
+                (3, "supervisor_authorization_shadow"),
+            ],
         )
         self.assertEqual(
             baseline_digest,
             "6076ff9c09a329bc60f1bdc79fd61d3251990219047005691eff8bbd9e9178e6",
         )
+
+    def test_v3_migration_baselines_preexisting_supervisor_history(self) -> None:
+        spec = self._flow()
+        self.store.admit_flow(spec)
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.executescript(
+                """
+                DROP TRIGGER supervisor_authorization_observations_no_update;
+                DROP TRIGGER supervisor_authorization_observations_no_delete;
+                DROP TRIGGER supervisor_authorization_shadow_baseline_no_update;
+                DROP TRIGGER supervisor_authorization_shadow_baseline_no_delete;
+                DROP TRIGGER supervisor_authorization_shadow_baseline_no_insert;
+                DROP TABLE supervisor_authorization_observations;
+                DROP TABLE supervisor_authorization_shadow_baseline;
+                DROP TRIGGER state_schema_migrations_no_delete;
+                DELETE FROM state_schema_migrations WHERE version = 3;
+                CREATE TRIGGER state_schema_migrations_no_delete
+                BEFORE DELETE ON state_schema_migrations BEGIN
+                    SELECT RAISE(ABORT, 'schema migrations are append-only');
+                END;
+                """
+            )
+
+        self.store = self._open_store()
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean)
+        self.assertEqual(audit.observation_count, 0)
+        self.assertEqual(audit.expected_observation_count, 0)
+        with closing(sqlite3.connect(self.database)) as connection:
+            baseline = connection.execute(
+                """
+                SELECT entity_type, entity_id
+                FROM supervisor_authorization_shadow_baseline
+                """
+            ).fetchall()
+        self.assertEqual(baseline, [("flow", spec.flow_id)])
+
+    def test_missing_v3_schema_is_a_finding_even_without_flows(self) -> None:
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.executescript(
+                """
+                DROP TRIGGER supervisor_authorization_observations_no_update;
+                DROP TRIGGER supervisor_authorization_observations_no_delete;
+                DROP TRIGGER supervisor_authorization_shadow_baseline_no_update;
+                DROP TRIGGER supervisor_authorization_shadow_baseline_no_delete;
+                DROP TRIGGER supervisor_authorization_shadow_baseline_no_insert;
+                DROP TABLE supervisor_authorization_observations;
+                DROP TABLE supervisor_authorization_shadow_baseline;
+                DROP TRIGGER state_schema_migrations_no_delete;
+                DELETE FROM state_schema_migrations WHERE version = 3;
+                CREATE TRIGGER state_schema_migrations_no_delete
+                BEFORE DELETE ON state_schema_migrations BEGIN
+                    SELECT RAISE(ABORT, 'schema migrations are append-only');
+                END;
+                """
+            )
+
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertEqual(audit.expected_observation_count, 0)
+        self.assertEqual(audit.findings[0].code, "authorization_schema_missing")
+
+    def test_combined_audit_holds_one_read_transaction(self) -> None:
+        self.store.admit_flow(self._flow())
+
+        def assert_snapshot(connection, now):
+            self.assertTrue(connection.in_transaction)
+            return ()
+
+        with patch(
+            "ordomata.supervisor._audit_connection",
+            side_effect=assert_snapshot,
+        ):
+            plan, authorization = inspect_supervisor_audit(
+                self.database, now=100.0
+            )
+
+        self.assertEqual(plan.findings, ())
+        self.assertTrue(authorization.clean)
 
     def test_reopen_fails_closed_when_an_invariant_trigger_is_missing(self) -> None:
         self.store.close()
@@ -168,7 +256,33 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         self.assertFalse(replay_created)
         self.assertEqual(admitted, replayed)
         self.assertEqual(len(self.store.list_flow_revisions(spec.flow_id)), 1)
-
+        observations = self.store.list_authorization_observations(spec.flow_id)
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0].boundary, "flow_admission")
+        self.assertEqual(observations[0].effect, "permit")
+        self.assertEqual(
+            observations[0].derived_permission_class,
+            PermissionClass.LOCAL_DRAFT,
+        )
+        self.assertTrue(observations[0].legacy_executable)
+        self.assertTrue(observations[0].execution_parity)
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean)
+        self.assertEqual(audit.observation_count, 1)
+        self.assertEqual(audit.expected_observation_count, 1)
+        with closing(sqlite3.connect(self.database)) as connection:
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "append-only"):
+                connection.execute(
+                    "UPDATE supervisor_authorization_observations SET effect = 'deny'"
+                )
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "frozen"):
+                connection.execute(
+                    """
+                    INSERT INTO supervisor_authorization_shadow_baseline (
+                        entity_type, entity_id
+                    ) VALUES ('flow', 'forged-exemption')
+                    """
+                )
         with self.assertRaises(AdmissionConflictError):
             self.store.admit_flow(replace(spec, profile_id="different-profile"))
         with self.assertRaises(AdmissionConflictError):
@@ -176,6 +290,47 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
                 replace(spec, admission_key="admit:different-request")
             )
         self.assertEqual(len(self.store.list_flow_revisions(spec.flow_id)), 1)
+
+    def test_shadow_failure_cannot_block_legacy_supervisor_admission(self) -> None:
+        spec = self._flow()
+        with patch(
+            "ordomata.supervisor.ShadowAuthorizationEvaluator.evaluate",
+            side_effect=RuntimeError("sensitive diagnostic"),
+        ):
+            admitted, created = self.store.admit_flow(spec)
+
+        self.assertTrue(created)
+        self.assertEqual(admitted, spec)
+        self.assertEqual(self.store.get_flow(spec.flow_id), spec)
+        self.assertEqual(self.store.list_authorization_observations(spec.flow_id), ())
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertIn(
+            "observation_missing", {finding.code for finding in audit.findings}
+        )
+
+    def test_authorization_inspector_detects_tampering_and_missing_guards(self) -> None:
+        spec = self._flow()
+        self.store.admit_flow(spec)
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                "DROP TRIGGER supervisor_authorization_observations_no_update"
+            )
+            connection.execute(
+                """
+                UPDATE supervisor_authorization_observations
+                SET request_digest = ?
+                """,
+                ("sha256:" + "0" * 64,),
+            )
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+        codes = {finding.code for finding in audit.findings}
+        self.assertIn("authorization_schema_mismatch", codes)
+        self.assertIn("request_digest_mismatch", codes)
+        self.assertFalse(audit.clean)
 
     def test_control_updates_require_current_revision_and_noop_does_not_grow(self) -> None:
         initial = self.store.current_control()
@@ -221,6 +376,13 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
 
     def test_claim_cancellation_completion_and_outbox_are_sticky(self) -> None:
         claim = self._start_and_claim()
+        observations = self.store.list_authorization_observations(claim.flow.flow_id)
+        self.assertEqual(
+            [observation.boundary for observation in observations],
+            ["flow_admission", "attempt_claim"],
+        )
+        self.assertTrue(all(item.effect == "permit" for item in observations))
+        self.assertTrue(all(item.execution_parity for item in observations))
         dispatch = self.store.mark_attempt_dispatching(claim, now=101.0)
         self.assertEqual(dispatch.state.value, "dispatching")
 
@@ -402,6 +564,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
 
         status = inspect_supervisor_status(absent, now=100.0)
         plan = inspect_reconciliation(absent, now=100.0)
+        authorization = inspect_supervisor_authorization(absent)
         pending = inspect_pending_completions(absent)
 
         self.assertFalse(status.database_present)
@@ -410,6 +573,8 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         self.assertFalse(status.dispatch_enabled)
         self.assertFalse(plan.database_present)
         self.assertEqual(plan.findings, ())
+        self.assertTrue(authorization.clean)
+        self.assertFalse(authorization.database_present)
         self.assertEqual(pending, ())
         self.assertFalse(absent.exists())
 
@@ -420,6 +585,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
 
         self.assertTrue(inspect_supervisor_status(self.database, now=100.0).schema_present)
         self.assertEqual(inspect_reconciliation(self.database, now=100.0).findings, ())
+        self.assertTrue(inspect_supervisor_authorization(self.database).clean)
         self.assertEqual(inspect_pending_completions(self.database), ())
 
         after = {path.name: path.stat().st_mtime_ns for path in self.database.parent.iterdir()}
