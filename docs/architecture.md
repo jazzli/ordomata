@@ -294,13 +294,31 @@ The `compare-run` workflow is a controller-owned experiment, not a second execut
 
 Every trial receives the exact same immutable sanitized Class 0 task/context snapshot, schema, two-minute timeout ceiling, and empty workspace. The six-trial plan also requires a one-minute whole-run evidence margin, so its maximum envelope fits inside the current 15-minute Claude attestation window. Order is randomized within repetition blocks, while each adapter and session is fresh. Trial output is kept in an owner-private review artifact and is never fed to another trial. The report preserves raw automated dimensions and a separate human-review template; it contains no aggregate score, winner, or automatic promotion. Partial outcomes are retained if a billing or capacity stop prevents the remaining trials. The workflow is implemented, but no live Codex-versus-Claude comparison has been completed.
 
-The comparison path is a separate `runner.execute` caller and currently has no
-durable per-trial `RunRecord`/`run_events` stream. Its private report files are
-not treated as authorization receipts. Admission, dispatch, and publication
-shadow coverage for comparison trials remains deferred until that audit model
-is designed. Reports record this state as
-`authorization_shadow_coverage=deferred_not_covered`; the three implemented
-boundary observations apply only to the Chief-of-Staff run path.
+The comparison path is a separate `runner.execute` caller, so every started
+trial now receives its own durable Class 0 `RunRecord` and ordered `run_events`
+stream. A digest-only controller binding covers the plan, snapshot, controls,
+profile version/configuration, runner settings, current billing assessment, and
+trial cell. Schema-v3 non-enforcing shadows observe Class 0 admission and the
+immediate pre-dispatch boundary; model-controlled events are reduced to
+ordinals, and bounded accounting plus review-artifact intent/observation facts
+complete the lifecycle stream. The read-only inspector independently verifies
+binding cardinality, digests, source-event agreement, boundary ordering, and
+the two comparison request projections.
+
+The comparison controller reuses the normal run path's deterministic post-run
+billing reconciliation. Missing or changed evidence, interrupted execution, or
+failed durable billing accounting is never accepted from adapter flags: the
+trial is quarantined, remaining cells stop, usable review output is withheld,
+and account/profile plus runner-wide circuits are opened where identity is
+unknown. A report is never returned unless the trial has durable terminal state.
+
+The owner-private review artifact remains a distinct controller-owned Class 1
+effect. Its intent/observation markers are neither authorization decisions nor
+action receipts, and publication shadow coverage remains deliberately deferred.
+Successful or artifact-producing comparison trials therefore retain an explicit
+`local_candidate_publication_only` inspection gap. Reports describe the bounded
+implemented scope as
+`authorization_shadow_coverage=partial_admission_dispatch_shadow`.
 
 ## Scheduling
 

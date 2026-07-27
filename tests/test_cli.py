@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 from ordomata.authorization import canonical_digest
 from ordomata.cli import main
+from ordomata.comparison import COMPARISON_AUTHORIZATION_SHADOW_COVERAGE
 from ordomata.models import (
     AssessmentConfidence,
     BillingRoute,
@@ -490,7 +491,7 @@ class CLITests(unittest.TestCase):
             self.assertFalse(report["controls"]["external_actions_allowed"])
             self.assertEqual(
                 report["authorization_shadow_coverage"],
-                "deferred_not_covered",
+                COMPARISON_AUTHORIZATION_SHADOW_COVERAGE,
             )
             self.assertEqual(
                 {trial["profile_id"] for trial in report["trials"]},
