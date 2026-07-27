@@ -86,10 +86,13 @@ and confidentiality/integrity/availability impact, then appends canonical
 policy/evidence digests, legacy-result parity, and
 independent authority-ceiling parity. These observations
 are not permits or enforcement receipts and cannot affect execution or
-publication; even their persistence is best-effort. There is still no central
-enforcing policy-decision point, per-command/tool mediation,
-approval-resumption path, or runtime action receipt. Existing gates remain in
-force, and migration must not widen the Class 0/1 ceiling.
+publication; shadow-decision persistence remains best-effort. New task attempts
+add a required digest-only controller binding and non-enforcing publication
+receipts, but those records only prove what the existing Class 0/1 gate did.
+There is still no central enforcing policy-decision point, per-command/tool
+mediation, approval-resumption path, or enforcing runtime action receipt.
+Existing gates remain in force, and migration must not widen the Class 0/1
+ceiling.
 
 The target separates operator-controlled policy administration, authoritative
 attribute collection, pure policy evaluation, and controller-owned enforcement
@@ -287,6 +290,41 @@ and network closes after fetch unless independently authorized. A verified,
 content-addressed dependency cache is read-only to workers, with private
 staging before controller promotion. Registered exact commands remain the
 authoritative acceptance checks.
+
+## Ordinary local-candidate publication
+
+Every new Chief-of-Staff attempt records a schema-v1 digest-only binding before
+its admission shadow. The binding covers the controller-resolved typed
+authorization intent as well as immutable run inputs, and dispatch binds the
+persisted preflight billing assessment. After runner execution, schema-v2
+accounting projects the identity and billing disposition fields needed to
+recompute one sanitized billing digest. Runner-provided version text is reduced
+to a content reference, execution mode is restricted to controller-known
+labels, and billing/accounting events are content-addressed for exact ambiguous
+write reconciliation. An accepted, credential-clean candidate then receives a
+schema-v5 non-enforcing publication shadow and a required schema-v2 pre-effect
+receipt before the first artifact-directory mutation.
+
+The controller stages owner-private bytes under a deterministic name, opens the
+parent chain without following mutable symlinks, and retains verified parent
+and inode descriptors through receipt reconciliation. It fsyncs the file and
+namespace, reconciles immutable artifact metadata by exact readback, promotes
+without overwrite, and verifies the final bytes, mode, size, inode, parent
+identity, and expected hard-link count. A deterministic schema-v2 action
+receipt records succeeded, failed, cancelled, or unknown outcome. Proven
+missing receipts roll back only the owned final inode; an unexpected surviving
+link or any unprovable metadata, staging, final-name, directory-sync, receipt,
+or terminal state quarantines the attempt. An artifact metadata row alone is
+proposed evidence, not proof of publication. Historical ordinary attempts
+without the binding retain their prior shadow-only interpretation.
+For both bound paths, billing or accounting evidence without a later
+controller-owned terminal record is an attention-required incomplete history;
+a bound attempt that has not reached billing may still be legitimately in
+progress.
+
+This chain does not authorize the write. The existing Class 0/1 gate remains
+authoritative, the shadow can still expose an authority-ceiling mismatch, and
+no shared, remote, promotion, deployment, or Class 2/3 effect is enabled.
 
 ## Controlled comparison
 

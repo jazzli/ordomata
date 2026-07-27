@@ -46,7 +46,10 @@ of Staff task contract has explicit typed action/resource/consequence intent,
 and the run path records non-authoritative observations at admission, dispatch
 intent, and local-candidate publication. A read-only inspector recomputes
 digests, authenticated evidence freshness, legacy and authority-ceiling parity,
-and boundary coverage/order. Controlled comparisons now add a schema-v2 trial
+and boundary coverage/order. New ordinary attempts also bind schema-v2
+execution accounting to a schema-v5 publication shadow and schema-v2
+pre-effect/action receipts; unresolved local publication state is quarantined.
+Controlled comparisons add a schema-v2 trial
 binding, schema-v3 Class 0 admission/dispatch shadows, and a separate schema-v4
 Class 1 private-publication shadow with schema-v2 pre-effect/action receipts.
 Runtime ABAC
@@ -72,9 +75,10 @@ parallel because it cannot exercise worker authority.
   and receipt coverage remains non-enforcing.
   Re-evaluate when relevant identity, approval, isolation, billing, capacity,
   network, or circuit state changes.
-- Extend the comparison path's durable pre-effect/action-receipt pattern to
-  other artifact and mediated-effect boundaries before relying on audit order
-  as proof of their exact mutation boundary.
+- Continue extending the durable pre-effect/action-receipt pattern, now used by
+  comparison review artifacts and ordinary Chief-of-Staff candidates, to every
+  mediated command/tool and later effect boundary before relying on audit order
+  as proof of its exact mutation boundary.
 - Treat the existing numeric permission class as a compatibility gate during
   migration, then derive it conservatively for operator display only.
 - Define versioned RBAC roles and separation-of-duty constraints before

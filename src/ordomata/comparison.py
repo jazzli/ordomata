@@ -17,11 +17,20 @@ import os
 from pathlib import Path
 import random
 import re
-import stat
 import time
 from typing import Any
 from uuid import uuid4
 
+from .artifact_filesystem import (
+    ARTIFACT_ABSENT as _ARTIFACT_ABSENT,
+    ARTIFACT_MATCHES as _ARTIFACT_MATCHES,
+    ARTIFACT_UNVERIFIABLE as _ARTIFACT_UNVERIFIABLE,
+    StagedArtifact as _ComparisonArtifactStage,
+    fsync_artifact_parent as _fsync_artifact_parent,
+    published_artifact_state as _published_artifact_state,
+    remove_owned_published_artifact as _remove_owned_published_artifact,
+    stage_artifact as _stage_artifact,
+)
 from .billing import BillingPolicy, BillingPostRunDisposition
 from .contracts import TaskContract
 from .errors import (
@@ -1605,14 +1614,85 @@ def _terminalize_comparison_run(
         RunStatus.RUNNING,
     }:
         raise ValidationError("comparison run cannot be terminalized from its state")
-    state.append_event(
+    payload = {"phase": phase, **dict(details or {})}
+    _append_required_comparison_event(
+        state,
         run_id,
         "status",
-        {"phase": phase, **dict(details or {})},
+        payload,
+        event_id=_comparison_controller_event_id(
+            run_id,
+            "status",
+            payload,
+            status=status,
+        ),
         status=status,
     )
     if state.current_status(run_id) is not status:
         raise ConfigurationError("comparison terminal status was not persisted")
+
+
+def _comparison_controller_event_id(
+    run_id: str,
+    event_type: str,
+    payload: Mapping[str, Any],
+    *,
+    status: RunStatus | None = None,
+) -> str:
+    material: dict[str, Any] = {
+        "event_type": event_type,
+        "payload": dict(payload),
+        "run_id": run_id,
+    }
+    if status is not None:
+        material["status"] = status.value
+    return _canonical_digest(material)
+
+
+def _append_required_comparison_event(
+    state: SQLiteStateStore,
+    run_id: str,
+    event_type: str,
+    payload: Mapping[str, Any],
+    *,
+    event_id: str,
+    status: RunStatus | None = None,
+) -> None:
+    """Append one content-addressed event with exact ambiguous-write readback."""
+
+    normalized_payload = dict(payload)
+    try:
+        state.append_event(
+            run_id,
+            event_type,
+            normalized_payload,
+            status=status,
+            event_id=event_id,
+        )
+    except BaseException as append_error:
+        try:
+            matches = tuple(
+                event
+                for event in state.list_events(run_id)
+                if event.event_id == event_id
+            )
+        except BaseException as readback_error:
+            raise ConfigurationError(
+                "required comparison evidence persistence is uncertain"
+            ) from readback_error
+        persisted = bool(
+            len(matches) == 1
+            and matches[0].event_type == event_type
+            and matches[0].status is status
+            and matches[0].payload == normalized_payload
+        )
+        if persisted and isinstance(append_error, Exception):
+            return
+        if matches:
+            raise ConfigurationError(
+                "required comparison evidence persistence is uncertain"
+            ) from append_error
+        raise
 
 
 def _record_unknown_comparison_billing(
@@ -1841,10 +1921,12 @@ async def run_controlled_comparison(
                 context_digest=prepared.context_pack.snapshot_hash,
             )
             try:
-                state.append_event(
+                _append_required_comparison_event(
+                    state,
                     run_id,
                     COMPARISON_TRIAL_BINDING_EVENT_TYPE,
                     binding_event,
+                    event_id=binding_digest,
                 )
                 _best_effort_comparison_shadow(
                     state,
@@ -1866,15 +1948,29 @@ async def run_controlled_comparison(
                         legacy_executable=True,
                     ),
                 )
-                state.append_event(
+                _append_required_comparison_event(
+                    state,
                     run_id,
                     "billing_assessment",
                     billing_metadata,
+                    event_id=_comparison_controller_event_id(
+                        run_id,
+                        "billing_assessment",
+                        billing_metadata,
+                    ),
                 )
-                state.append_event(
+                running_payload = {"phase": "comparison_trial_execution"}
+                _append_required_comparison_event(
+                    state,
                     run_id,
                     "status",
-                    {"phase": "comparison_trial_execution"},
+                    running_payload,
+                    event_id=_comparison_controller_event_id(
+                        run_id,
+                        "status",
+                        running_payload,
+                        status=RunStatus.RUNNING,
+                    ),
                     status=RunStatus.RUNNING,
                 )
             except BaseException:
@@ -1959,16 +2055,23 @@ async def run_controlled_comparison(
                         ),
                     )
                     subscription_billing_recorded = True
+                accounting_payload = _comparison_execution_accounting(
+                    result,
+                    identity_matches=identity_matches,
+                    billing_matches=billing_matches,
+                    runner_event_count=events_seen,
+                    billing_disposition=billing_disposition,
+                )
                 try:
-                    state.append_event(
+                    _append_required_comparison_event(
+                        state,
                         run_id,
                         "execution_accounting",
-                        _comparison_execution_accounting(
-                            result,
-                            identity_matches=identity_matches,
-                            billing_matches=billing_matches,
-                            runner_event_count=events_seen,
-                            billing_disposition=billing_disposition,
+                        accounting_payload,
+                        event_id=_comparison_controller_event_id(
+                            run_id,
+                            "execution_accounting",
+                            accounting_payload,
                         ),
                     )
                 except BaseException:
@@ -2168,17 +2271,24 @@ async def run_controlled_comparison(
                 accounting_recovery_error: BaseException | None = None
                 if not accounting_recorded:
                     try:
-                        state.append_event(
+                        accounting_payload = _comparison_execution_accounting(
+                            result,
+                            identity_matches=identity_matches,
+                            billing_matches=billing_matches,
+                            runner_event_count=events_seen,
+                            billing_disposition=billing_disposition,
+                            failure_code=failure_type,
+                            billing_unknown=subscription_billing_unknown,
+                        )
+                        _append_required_comparison_event(
+                            state,
                             run_id,
                             "execution_accounting",
-                            _comparison_execution_accounting(
-                                result,
-                                identity_matches=identity_matches,
-                                billing_matches=billing_matches,
-                                runner_event_count=events_seen,
-                                billing_disposition=billing_disposition,
-                                failure_code=failure_type,
-                                billing_unknown=subscription_billing_unknown,
+                            accounting_payload,
+                            event_id=_comparison_controller_event_id(
+                                run_id,
+                                "execution_accounting",
+                                accounting_payload,
                             ),
                         )
                         accounting_recorded = True
@@ -2283,19 +2393,26 @@ async def run_controlled_comparison(
                 accounting_cleanup_error: BaseException | None = None
                 if not accounting_recorded:
                     try:
-                        state.append_event(
+                        accounting_payload = _comparison_execution_accounting(
+                            result,
+                            identity_matches=identity_matches,
+                            billing_matches=billing_matches,
+                            runner_event_count=events_seen,
+                            billing_disposition=billing_disposition,
+                            failure_code="billing_execution_unknown"
+                            if subscription_interrupted
+                            else "runner_execution_interrupted",
+                            billing_unknown=subscription_interrupted,
+                        )
+                        _append_required_comparison_event(
+                            state,
                             run_id,
                             "execution_accounting",
-                            _comparison_execution_accounting(
-                                result,
-                                identity_matches=identity_matches,
-                                billing_matches=billing_matches,
-                                runner_event_count=events_seen,
-                                billing_disposition=billing_disposition,
-                                failure_code="billing_execution_unknown"
-                                if subscription_interrupted
-                                else "runner_execution_interrupted",
-                                billing_unknown=subscription_interrupted,
+                            accounting_payload,
+                            event_id=_comparison_controller_event_id(
+                                run_id,
+                                "execution_accounting",
+                                accounting_payload,
                             ),
                         )
                     except BaseException as accounting_exc:
@@ -2459,155 +2576,6 @@ def _canonical_json_bytes(payload: Mapping[str, Any]) -> bytes:
     return document.encode("utf-8")
 
 
-_ARTIFACT_ABSENT = "absent"
-_ARTIFACT_MATCHES = "matches"
-_ARTIFACT_UNVERIFIABLE = "unverifiable"
-
-
-@dataclass(slots=True)
-class _ComparisonArtifactStage:
-    path: Path
-    identity: tuple[int, int] | None = None
-
-
-def _stage_artifact(
-    path: Path,
-    content: bytes,
-    *,
-    stage: _ComparisonArtifactStage,
-) -> None:
-    """Stage bytes while leaving all cleanup to the caller's reconciliation."""
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists() or path.is_symlink():
-        raise ValidationError("artifact destination already exists")
-    if stage.path.parent != path.parent or stage.path == path:
-        raise ConfigurationError("comparison artifact staging path is invalid")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    descriptor: int | None = None
-    try:
-        descriptor = os.open(stage.path, flags, 0o600)
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise ConfigurationError(
-                "comparison artifact staging entry is invalid"
-            )
-        stage.identity = (metadata.st_dev, metadata.st_ino)
-        handle = os.fdopen(descriptor, "wb")
-        descriptor = None
-        with handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-    finally:
-        if descriptor is not None:
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
-
-
-def _fsync_artifact_parent(path: Path) -> bool:
-    """Durably commit the current namespace state without following symlinks."""
-
-    flags = os.O_RDONLY
-    if hasattr(os, "O_DIRECTORY"):
-        flags |= os.O_DIRECTORY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    descriptor: int | None = None
-    try:
-        descriptor = os.open(path.parent, flags)
-        os.fsync(descriptor)
-    except OSError:
-        return False
-    finally:
-        if descriptor is not None:
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
-    return True
-
-
-def _published_artifact_state(path: Path, expected: bytes) -> str:
-    """Distinguish proven absence from an exact or uncertain final effect."""
-
-    try:
-        entry_metadata = os.lstat(path)
-    except FileNotFoundError:
-        return _ARTIFACT_ABSENT
-    except OSError:
-        return _ARTIFACT_UNVERIFIABLE
-    if not stat.S_ISREG(entry_metadata.st_mode):
-        return _ARTIFACT_UNVERIFIABLE
-
-    descriptor: int | None = None
-    try:
-        flags = os.O_RDONLY
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        descriptor = os.open(path, flags)
-        with os.fdopen(descriptor, "rb") as handle:
-            descriptor = None
-            metadata = os.fstat(handle.fileno())
-            observed = handle.read(len(expected) + 1)
-        if (
-            metadata.st_dev != entry_metadata.st_dev
-            or metadata.st_ino != entry_metadata.st_ino
-        ):
-            return _ARTIFACT_UNVERIFIABLE
-        matches = bool(
-            stat.S_ISREG(metadata.st_mode)
-            and metadata.st_size == len(expected)
-            and observed == expected
-            and metadata.st_mode & 0o077 == 0
-        )
-        return _ARTIFACT_MATCHES if matches else _ARTIFACT_UNVERIFIABLE
-    except OSError:
-        return _ARTIFACT_UNVERIFIABLE
-    finally:
-        if descriptor is not None:
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
-
-
-def _remove_owned_published_artifact(
-    path: Path,
-    *,
-    staged_identity: tuple[int, int] | None,
-) -> bool:
-    """Remove only the staged inode and prove that the final name is absent."""
-
-    try:
-        metadata = os.lstat(path)
-    except FileNotFoundError:
-        return _fsync_artifact_parent(path)
-    except OSError:
-        return False
-    if (
-        staged_identity is None
-        or not stat.S_ISREG(metadata.st_mode)
-        or (metadata.st_dev, metadata.st_ino) != staged_identity
-    ):
-        return False
-    try:
-        path.unlink()
-    except OSError:
-        return False
-    try:
-        os.lstat(path)
-    except FileNotFoundError:
-        return _fsync_artifact_parent(path)
-    except OSError:
-        return False
-    return False
-
-
 def _append_comparison_review_artifact_action_receipt(
     state: SQLiteStateStore,
     run_id: str,
@@ -2652,6 +2620,48 @@ def _comparison_review_artifact_action_receipt_persisted(
         return None
     except Exception:
         return None
+
+
+def _safe_comparison_published_state(
+    path: Path,
+    content: bytes,
+    *,
+    expected_identity: tuple[int, int] | None,
+    expected_parent_identity: tuple[int, int] | None,
+    stage: _ComparisonArtifactStage,
+) -> str:
+    """Classify a comparison effect conservatively under interruption."""
+
+    try:
+        return _published_artifact_state(
+            path,
+            content,
+            expected_identity=expected_identity,
+            expected_parent_identity=expected_parent_identity,
+            stage=stage,
+        )
+    except BaseException:
+        return _ARTIFACT_UNVERIFIABLE
+
+
+def _safe_remove_comparison_artifact(
+    path: Path,
+    *,
+    staged_identity: tuple[int, int] | None,
+    expected_parent_identity: tuple[int, int] | None,
+    stage: _ComparisonArtifactStage,
+) -> bool:
+    """Return false whenever owned cleanup cannot be proven complete."""
+
+    try:
+        return _remove_owned_published_artifact(
+            path,
+            staged_identity=staged_identity,
+            expected_parent_identity=expected_parent_identity,
+            stage=stage,
+        )
+    except BaseException:
+        return False
 
 
 def _publish_comparison_review_artifact(
@@ -2733,37 +2743,44 @@ def _publish_comparison_review_artifact(
             raise ConfigurationError(
                 "comparison review artifact staging verification failed"
             )
-        _promote_staged_artifact(staged_path, path)
+        _promote_staged_artifact(stage, path)
         if not _fsync_artifact_parent(path):
             raise ConfigurationError(
                 "comparison review artifact namespace sync failed"
             )
-        if _published_artifact_state(path, content) != _ARTIFACT_MATCHES:
+        if _safe_comparison_published_state(
+            path,
+            content,
+            expected_identity=staged_identity,
+            expected_parent_identity=stage.parent_identity,
+            stage=stage,
+        ) != _ARTIFACT_MATCHES:
             raise ConfigurationError(
                 "comparison review artifact verification failed"
             )
-        if not _remove_owned_published_artifact(
-            staged_path,
-            staged_identity=staged_identity,
-        ):
-            raise ConfigurationError(
-                "comparison artifact staging cleanup is uncertain"
-            )
+        # Publication already removes and verifies the staging name while the
+        # parent and inode descriptors are leased.  Keep those leases through
+        # action-receipt reconciliation; no second pathname cleanup is needed.
     except BaseException as publication_error:
-        final_effect_absent = _remove_owned_published_artifact(
+        final_effect_absent = _safe_remove_comparison_artifact(
             path,
             staged_identity=staged_identity,
+            expected_parent_identity=stage.parent_identity,
+            stage=stage,
         )
         staged_effect_absent = (
             staged_path is None
-            or _remove_owned_published_artifact(
+            or _safe_remove_comparison_artifact(
                 staged_path,
                 staged_identity=staged_identity,
+                expected_parent_identity=stage.parent_identity,
+                stage=stage,
             )
         )
         effect_unknown = not (
             final_effect_absent and staged_effect_absent
         )
+        stage.close()
         if effect_unknown:
             outcome = "unknown"
             failure_code = "artifact_publication_outcome_unknown"
@@ -2773,24 +2790,38 @@ def _publish_comparison_review_artifact(
         else:
             outcome = "cancelled"
             failure_code = "artifact_persistence_interrupted"
-        receipt = _comparison_review_artifact_action_receipt(
-            comparison_binding_digest=comparison_binding_digest,
-            pre_effect_receipt=pre_effect_receipt,
-            publication_shadow=publication_shadow,
-            publication_shadow_persisted=shadow_persisted,
-            artifact_kind=artifact_kind,
-            destination_digest=destination_digest,
-            intended_artifact_digest=artifact_digest,
-            intended_artifact_size_bytes=artifact_size_bytes,
-            output_withheld=output_withheld,
-            billing_disposition_digest=billing_disposition_digest,
-            started_at=started_at,
-            completed_at=time.time(),
-            outcome=outcome,
-            result_digest=None,
-            observed_artifact_size_bytes=None,
-            failure_code=failure_code,
-        )
+        try:
+            receipt = _comparison_review_artifact_action_receipt(
+                comparison_binding_digest=comparison_binding_digest,
+                pre_effect_receipt=pre_effect_receipt,
+                publication_shadow=publication_shadow,
+                publication_shadow_persisted=shadow_persisted,
+                artifact_kind=artifact_kind,
+                destination_digest=destination_digest,
+                intended_artifact_digest=artifact_digest,
+                intended_artifact_size_bytes=artifact_size_bytes,
+                output_withheld=output_withheld,
+                billing_disposition_digest=billing_disposition_digest,
+                started_at=started_at,
+                completed_at=time.time(),
+                outcome=outcome,
+                result_digest=None,
+                observed_artifact_size_bytes=None,
+                failure_code=failure_code,
+            )
+        except BaseException as receipt_build_error:
+            if effect_unknown:
+                uncertain = _ComparisonArtifactPublicationUncertain(
+                    "comparison artifact failure receipt is unavailable",
+                    artifact_observed=True,
+                )
+                if isinstance(receipt_build_error, Exception):
+                    raise uncertain from receipt_build_error
+                receipt_build_error.add_note(
+                    "Ordomata could not build the interruption receipt."
+                )
+                raise receipt_build_error from uncertain
+            raise
         try:
             _append_comparison_review_artifact_action_receipt(
                 state, run_id, receipt
@@ -2805,6 +2836,7 @@ def _publish_comparison_review_artifact(
                     )
                 )
             except BaseException as readback_error:
+                stage.close()
                 readback_error.add_note(
                     "Ordomata artifact receipt readback was interrupted."
                 )
@@ -2851,31 +2883,51 @@ def _publish_comparison_review_artifact(
             )
             raise publication_error from uncertain
         raise
-    finally:
-        if staged_path is not None:
-            _remove_owned_published_artifact(
-                staged_path,
-                staged_identity=staged_identity,
+    try:
+        receipt = _comparison_review_artifact_action_receipt(
+            comparison_binding_digest=comparison_binding_digest,
+            pre_effect_receipt=pre_effect_receipt,
+            publication_shadow=publication_shadow,
+            publication_shadow_persisted=shadow_persisted,
+            artifact_kind=artifact_kind,
+            destination_digest=destination_digest,
+            intended_artifact_digest=artifact_digest,
+            intended_artifact_size_bytes=artifact_size_bytes,
+            output_withheld=output_withheld,
+            billing_disposition_digest=billing_disposition_digest,
+            started_at=started_at,
+            completed_at=time.time(),
+            outcome="succeeded",
+            result_digest=artifact_digest,
+            observed_artifact_size_bytes=artifact_size_bytes,
+            failure_code=None,
+        )
+    except BaseException as receipt_build_error:
+        final_effect_absent = _safe_remove_comparison_artifact(
+            path,
+            staged_identity=staged_identity,
+            expected_parent_identity=stage.parent_identity,
+            stage=stage,
+        )
+        staged_effect_absent = _safe_remove_comparison_artifact(
+            staged_path,
+            staged_identity=staged_identity,
+            expected_parent_identity=stage.parent_identity,
+            stage=stage,
+        )
+        stage.close()
+        if not (final_effect_absent and staged_effect_absent):
+            uncertain = _ComparisonArtifactPublicationUncertain(
+                "comparison artifact receipt construction is uncertain",
+                artifact_observed=True,
             )
-
-    receipt = _comparison_review_artifact_action_receipt(
-        comparison_binding_digest=comparison_binding_digest,
-        pre_effect_receipt=pre_effect_receipt,
-        publication_shadow=publication_shadow,
-        publication_shadow_persisted=shadow_persisted,
-        artifact_kind=artifact_kind,
-        destination_digest=destination_digest,
-        intended_artifact_digest=artifact_digest,
-        intended_artifact_size_bytes=artifact_size_bytes,
-        output_withheld=output_withheld,
-        billing_disposition_digest=billing_disposition_digest,
-        started_at=started_at,
-        completed_at=time.time(),
-        outcome="succeeded",
-        result_digest=artifact_digest,
-        observed_artifact_size_bytes=artifact_size_bytes,
-        failure_code=None,
-    )
+            if isinstance(receipt_build_error, Exception):
+                raise uncertain from receipt_build_error
+            receipt_build_error.add_note(
+                "Ordomata could not reconcile the published artifact."
+            )
+            raise receipt_build_error from uncertain
+        raise
     try:
         _append_comparison_review_artifact_action_receipt(state, run_id, receipt)
     except BaseException as receipt_error:
@@ -2888,6 +2940,7 @@ def _publish_comparison_review_artifact(
                 )
             )
         except BaseException as readback_error:
+            stage.close()
             readback_error.add_note(
                 "Ordomata artifact action receipt readback was interrupted."
             )
@@ -2897,8 +2950,15 @@ def _publish_comparison_review_artifact(
             )
         receipt_persisted = receipt_persistence is True
         if receipt_persisted:
-            published_state = _published_artifact_state(path, content)
+            published_state = _safe_comparison_published_state(
+                path,
+                content,
+                expected_identity=staged_identity,
+                expected_parent_identity=stage.parent_identity,
+                stage=stage,
+            )
             if published_state != _ARTIFACT_MATCHES:
+                stage.close()
                 uncertain = _ComparisonArtifactPublicationUncertain(
                     "comparison artifact receipt and effect disagree",
                     artifact_observed=(published_state != _ARTIFACT_ABSENT),
@@ -2910,7 +2970,9 @@ def _publish_comparison_review_artifact(
                 )
                 raise receipt_error from uncertain
             if isinstance(receipt_error, Exception):
+                stage.close()
                 return artifact_digest.removeprefix("sha256:")
+            stage.close()
             receipt_error.add_note(
                 "Ordomata reconciled the interrupted artifact receipt."
             )
@@ -2918,21 +2980,32 @@ def _publish_comparison_review_artifact(
                 "comparison artifact committed before interruption"
             )
         if receipt_persistence is None:
-            published_state = _published_artifact_state(path, content)
+            published_state = _safe_comparison_published_state(
+                path,
+                content,
+                expected_identity=staged_identity,
+                expected_parent_identity=stage.parent_identity,
+                stage=stage,
+            )
             uncertain = _ComparisonArtifactPublicationUncertain(
                 "comparison artifact action receipt is uncertain",
                 artifact_observed=(published_state != _ARTIFACT_ABSENT),
             )
             if isinstance(receipt_error, Exception):
+                stage.close()
                 raise uncertain from receipt_error
+            stage.close()
             receipt_error.add_note(
                 "Ordomata artifact action receipt persistence is uncertain."
             )
             raise receipt_error from uncertain
-        removed = _remove_owned_published_artifact(
+        removed = _safe_remove_comparison_artifact(
             path,
             staged_identity=staged_identity,
+            expected_parent_identity=stage.parent_identity,
+            stage=stage,
         )
+        stage.close()
         recovery_error = ConfigurationError(
             "comparison artifact action receipt could not be persisted"
         )
@@ -2950,6 +3023,18 @@ def _publish_comparison_review_artifact(
             "Ordomata artifact action receipt was not persisted."
         )
         raise receipt_error from recovery_error
+    if _safe_comparison_published_state(
+        path,
+        content,
+        expected_identity=staged_identity,
+        expected_parent_identity=stage.parent_identity,
+        stage=stage,
+    ) != _ARTIFACT_MATCHES:
+        stage.close()
+        raise _ComparisonArtifactPublicationUncertain(
+            "comparison artifact changed after action receipt"
+        )
+    stage.close()
     return artifact_digest.removeprefix("sha256:")
 
 
