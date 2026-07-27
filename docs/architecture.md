@@ -296,14 +296,23 @@ Every trial receives the exact same immutable sanitized Class 0 task/context sna
 
 The comparison path is a separate `runner.execute` caller, so every started
 trial now receives its own durable Class 0 `RunRecord` and ordered `run_events`
-stream. A digest-only controller binding covers the plan, snapshot, controls,
-profile version/configuration, runner settings, current billing assessment, and
-trial cell. Schema-v3 non-enforcing shadows observe Class 0 admission and the
-immediate pre-dispatch boundary; model-controlled events are reduced to
-ordinals, and bounded accounting plus review-artifact intent/observation facts
-complete the lifecycle stream. The read-only inspector independently verifies
-binding cardinality, digests, source-event agreement, boundary ordering, and
-the two comparison request projections.
+stream. A schema-v2 digest-only controller binding covers the plan, snapshot,
+controls, profile version/configuration, runner settings, current billing
+assessment, and trial cell. Schema-v3 non-enforcing shadows observe Class 0
+admission and the immediate pre-dispatch boundary. After accounting, a
+schema-v4 non-enforcing shadow observes the separate Class 1 owner-private
+artifact publication; schema-v2 pre-effect and action-receipt events bind the
+exact proposed and observed artifact without retaining its content or path.
+Their sanitized billing-disposition digest is independently recomputed from
+the durable execution-accounting source facts before linkage is accepted.
+The controller stages and fsyncs the private bytes, promotes without overwrite,
+fsyncs the containing directory after promotion or reconciliation, and uses the
+receipt identifier as the append-only event identifier for exact readback after
+an ambiguous append result. Any unprovable staging, final-name, directory-sync,
+or receipt state becomes an unknown effect and quarantines the trial.
+Model-controlled events are reduced to ordinals. The read-only inspector
+independently verifies binding and receipt cardinality, digests, source-event
+agreement, and boundary ordering.
 
 The comparison controller reuses the normal run path's deterministic post-run
 billing reconciliation. Missing or changed evidence, interrupted execution, or
@@ -313,12 +322,17 @@ and account/profile plus runner-wide circuits are opened where identity is
 unknown. A report is never returned unless the trial has durable terminal state.
 
 The owner-private review artifact remains a distinct controller-owned Class 1
-effect. Its intent/observation markers are neither authorization decisions nor
-action receipts, and publication shadow coverage remains deliberately deferred.
-Successful or artifact-producing comparison trials therefore retain an explicit
-`local_candidate_publication_only` inspection gap. Reports describe the bounded
-implemented scope as
-`authorization_shadow_coverage=partial_admission_dispatch_shadow`.
+effect; it is not folded into or delegated through the trial's Class 0 runner
+authority. The publication shadow and receipts are non-enforcing migration
+evidence: legacy Class 0/1 gates still decide behavior, and no shared, external,
+promotion, Class 2, or Class 3 action becomes eligible. Historical schema-v1
+comparison bindings and artifact intent/observation records remain readable as
+valid partial admission/dispatch coverage with an explicit publication gap.
+Only schema-v2 bindings with the linked schema-v4 publication shadow and
+schema-v2 receipt pair claim complete comparison-boundary audit coverage.
+The coverage values in bindings and reports declare expected instrumentation,
+not observed completeness; the read-only inspector reports missing, malformed,
+misordered, or mismatched evidence.
 
 ## Scheduling
 

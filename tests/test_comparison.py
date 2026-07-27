@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import FrozenInstanceError, fields, replace
+from hashlib import sha256
 import json
+import os
 from pathlib import Path
 import shutil
+import stat
 import tempfile
 import time
 import unittest
 from unittest.mock import patch
 
+from ordomata.authorization import canonical_digest
 from ordomata.authorization_inspection import (
     ADMISSION_SCOPE,
     DISPATCH_SCOPE,
@@ -17,6 +21,7 @@ from ordomata.authorization_inspection import (
     inspect_authorization_shadows,
 )
 from ordomata.comparison import (
+    COMPARISON_ACTION_RECEIPT_COVERAGE,
     COMPARISON_AUTHORIZATION_SHADOW_COVERAGE,
     CONTROLLED_COMPARISON_TRIAL_TIMEOUT_SECONDS,
     ComparisonPlan,
@@ -49,6 +54,7 @@ from ordomata.models import (
     UsageObservation,
 )
 from ordomata.orchestrator import (
+    _promote_staged_artifact,
     load_mock_chief_of_staff_output,
     prepare_chief_of_staff,
 )
@@ -448,6 +454,26 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
             for profile_id in profile_ids
         )
 
+    def _artifact_recovery_setup(self, temporary: str, comparison_id: str):
+        root = self._project(temporary)
+        prepared = prepare_chief_of_staff(root)
+        profiles = self._mock_profiles(
+            root,
+            f"mock.{comparison_id}-a",
+            f"mock.{comparison_id}-b",
+        )
+        plan = ControlledComparisonPlan.create(
+            comparison_id=comparison_id,
+            snapshot=comparison_snapshot_from_prepared(prepared),
+            profiles=tuple(
+                ComparisonProfile.from_execution_profile(profile)
+                for profile in profiles
+            ),
+            repetitions=2,
+            random_seed=17,
+        )
+        return root, prepared, profiles, plan
+
     @staticmethod
     def _included_subscription_assessment(
         fingerprint: str,
@@ -590,6 +616,10 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                 payload["authorization_shadow_coverage"],
                 COMPARISON_AUTHORIZATION_SHADOW_COVERAGE,
             )
+            self.assertEqual(
+                payload["authorization_action_receipt_coverage"],
+                COMPARISON_ACTION_RECEIPT_COVERAGE,
+            )
             self.assertTrue(all(row.metrics.verification_passed for row in report.rows))
             self.assertTrue(payload["automated_checks_succeeded"])
             self.assertEqual(payload["human_review_status"], "pending")
@@ -703,12 +733,17 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                             ),
                             ("execution_accounting", None, None),
                             (
+                                "authorization_shadow_decision",
+                                None,
+                                PUBLICATION_SCOPE,
+                            ),
+                            (
                                 "comparison_review_artifact_intent",
                                 None,
                                 None,
                             ),
                             (
-                                "comparison_review_artifact_observed",
+                                "comparison_review_artifact_action_receipt",
                                 None,
                                 None,
                             ),
@@ -717,10 +752,16 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                     )
                     binding_payload = events[1].payload
                     binding_digest = binding_payload["binding_digest"]
-                    self.assertEqual(binding_payload["schema_version"], 1)
+                    self.assertEqual(binding_payload["schema_version"], 2)
                     self.assertEqual(
                         binding_payload["authorization_shadow_coverage"],
                         COMPARISON_AUTHORIZATION_SHADOW_COVERAGE,
+                    )
+                    self.assertEqual(
+                        binding_payload[
+                            "authorization_action_receipt_coverage"
+                        ],
+                        COMPARISON_ACTION_RECEIPT_COVERAGE,
                     )
                     self.assertRegex(
                         binding_digest,
@@ -730,16 +771,21 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                         binding_payload["binding"]["permission_class"],
                         0,
                     )
-                    shadows = (events[2].payload, events[5].payload)
+                    shadows = (
+                        events[2].payload,
+                        events[5].payload,
+                        events[7].payload,
+                    )
                     self.assertEqual(
                         [shadow["schema_version"] for shadow in shadows],
-                        [3, 3],
+                        [3, 3, 4],
                     )
                     self.assertEqual(
                         [shadow["intent_source"] for shadow in shadows],
                         [
                             "comparison_trial_projection",
                             "comparison_trial_projection",
+                            "comparison_review_artifact_projection",
                         ],
                     )
                     self.assertTrue(
@@ -756,22 +802,112 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                             ]
                             for shadow in shadows
                         ],
-                        ["read", "read"],
+                        ["read", "read", "create"],
                     )
                     self.assertEqual(
                         [shadow["derived_permission_class"] for shadow in shadows],
-                        [0, 0],
+                        [0, 0, 1],
                     )
                     self.assertEqual(
                         [shadow["requested_permission_class"] for shadow in shadows],
-                        [0, 0],
+                        [0, 0, 1],
                     )
+                    accounting = events[6].payload
+                    self.assertEqual(accounting["schema_version"], 2)
+                    self.assertEqual(
+                        accounting["billing_disposition_digest"],
+                        canonical_digest(
+                            {
+                                "identity_matches": (
+                                    accounting["identity_matches"] is True
+                                ),
+                                "billing_matches": (
+                                    accounting["billing_matches"] is True
+                                ),
+                                "capacity_state": accounting[
+                                    "capacity_state"
+                                ],
+                                "paid_capacity_consumed": accounting[
+                                    "paid_capacity_consumed"
+                                ],
+                                "incremental_ai_charge": accounting[
+                                    "incremental_ai_charge"
+                                ],
+                                "quarantine_required": accounting[
+                                    "billing_quarantine_required"
+                                ],
+                                "circuit_breaker_required": accounting[
+                                    "billing_circuit_breaker_required"
+                                ],
+                                "reason_codes": accounting[
+                                    "billing_disposition_reason_codes"
+                                ],
+                            }
+                        ),
+                    )
+                    pre_effect = events[8].payload
+                    action_receipt = events[9].payload
+                    self.assertEqual(
+                        accounting["billing_disposition_digest"],
+                        pre_effect["billing_disposition_digest"],
+                    )
+                    self.assertEqual(pre_effect["schema_version"], 2)
+                    self.assertEqual(pre_effect["receipt_kind"], "pre_effect")
+                    self.assertFalse(pre_effect["authorization_enforced"])
+                    self.assertTrue(pre_effect["publication_shadow_persisted"])
+                    self.assertEqual(
+                        pre_effect["publication_request_digest"],
+                        shadows[2]["request_digest"],
+                    )
+                    self.assertEqual(
+                        pre_effect["publication_decision_digest"],
+                        shadows[2]["decision_digest"],
+                    )
+                    pre_effect_body = dict(pre_effect)
+                    pre_effect_digest = pre_effect_body.pop("receipt_digest")
+                    self.assertEqual(
+                        pre_effect_digest,
+                        canonical_digest(pre_effect_body),
+                    )
+                    self.assertEqual(action_receipt["schema_version"], 2)
+                    self.assertEqual(action_receipt["receipt_kind"], "action")
+                    self.assertFalse(action_receipt["authorization_enforced"])
+                    self.assertEqual(action_receipt["outcome"], "succeeded")
+                    self.assertEqual(
+                        action_receipt["pre_effect_receipt_digest"],
+                        pre_effect_digest,
+                    )
+                    self.assertEqual(
+                        action_receipt["result_digest"],
+                        pre_effect["artifact_digest"],
+                    )
+                    self.assertEqual(
+                        action_receipt["billing_disposition_digest"],
+                        accounting["billing_disposition_digest"],
+                    )
+                    self.assertEqual(
+                        action_receipt["observed_artifact_size_bytes"],
+                        pre_effect["artifact_size_bytes"],
+                    )
+                    action_receipt_body = dict(action_receipt)
+                    action_receipt_digest = action_receipt_body.pop(
+                        "receipt_digest"
+                    )
+                    self.assertEqual(
+                        action_receipt_digest,
+                        canonical_digest(action_receipt_body),
+                    )
+                    persisted_events = "\n".join(
+                        event.payload_json for event in events
+                    )
+                    self.assertNotIn(prepared.prompt, persisted_events)
+                    self.assertNotIn("executive_summary", persisted_events)
 
             inspection = inspect_authorization_shadows(state_path, now=time.time())
-            self.assertFalse(inspection.clean)
+            self.assertTrue(inspection.clean)
             self.assertEqual(inspection.inspected_run_count, 6)
-            self.assertEqual(inspection.inspected_event_count, 12)
-            self.assertEqual(inspection.coverage_gap_count, 6)
+            self.assertEqual(inspection.inspected_event_count, 18)
+            self.assertEqual(inspection.coverage_gap_count, 0)
             self.assertEqual(inspection.integrity_issue_count, 0)
             self.assertEqual(inspection.parity_mismatch_count, 0)
             for inspected_run in inspection.runs:
@@ -797,12 +933,13 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(
                     inspected_run.observed_scopes,
-                    tuple(sorted((ADMISSION_SCOPE, DISPATCH_SCOPE))),
+                    tuple(
+                        sorted(
+                            (ADMISSION_SCOPE, DISPATCH_SCOPE, PUBLICATION_SCOPE)
+                        )
+                    ),
                 )
-                self.assertEqual(
-                    inspected_run.missing_scopes,
-                    (PUBLICATION_SCOPE,),
-                )
+                self.assertEqual(inspected_run.missing_scopes, ())
                 self.assertEqual(inspected_run.integrity_issues, ())
                 self.assertTrue(
                     all(not event.integrity_issues for event in inspected_run.events)
@@ -1056,6 +1193,1018 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("private shadow diagnostic", persisted_report)
             self.assertNotIn("private shadow diagnostic", persisted_review)
 
+    async def test_artifact_write_failure_records_a_sanitized_failed_receipt(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            prepared = prepare_chief_of_staff(root)
+            profiles = self._mock_profiles(
+                root,
+                "mock.artifact-write-a",
+                "mock.artifact-write-b",
+            )
+            plan = ControlledComparisonPlan.create(
+                comparison_id="artifact-write-failure",
+                snapshot=comparison_snapshot_from_prepared(prepared),
+                profiles=tuple(
+                    ComparisonProfile.from_execution_profile(profile)
+                    for profile in profiles
+                ),
+                repetitions=2,
+                random_seed=17,
+            )
+
+            with patch(
+                "ordomata.comparison._stage_artifact",
+                side_effect=OSError("private artifact write diagnostic"),
+            ):
+                report = await run_controlled_comparison(
+                    root,
+                    prepared=prepared,
+                    plan=plan,
+                    profiles=profiles,
+                    runner_factory=lambda _profile: RecordingMockRunner(
+                        requests=[],
+                        output=load_mock_chief_of_staff_output(root, prepared),
+                    ),
+                )
+
+            self.assertEqual(len(report.rows), 1)
+            self.assertIs(report.rows[0].status, RunStatus.FAILED)
+            self.assertIsNone(report.rows[0].review_artifact_path)
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                events = state.list_events(report.rows[0].run_id)
+            receipt = next(
+                event.payload
+                for event in events
+                if event.event_type
+                == "comparison_review_artifact_action_receipt"
+            )
+            self.assertEqual(receipt["outcome"], "failed")
+            self.assertEqual(
+                receipt["failure_code"],
+                "artifact_persistence_failed",
+            )
+            self.assertIsNone(receipt["result_digest"])
+            self.assertIsNone(receipt["observed_artifact_size_bytes"])
+            persisted = "\n".join(event.payload_json for event in events)
+            self.assertNotIn("private artifact write diagnostic", persisted)
+            self.assertFalse(
+                (
+                    root
+                    / ".ordomata/comparisons/artifact-write-failure/trials/001/review-output.json"
+                ).exists()
+            )
+
+    async def test_pre_effect_receipt_failure_prevents_artifact_mutation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            prepared = prepare_chief_of_staff(root)
+            profiles = self._mock_profiles(
+                root,
+                "mock.pre-effect-a",
+                "mock.pre-effect-b",
+            )
+            plan = ControlledComparisonPlan.create(
+                comparison_id="pre-effect-failure",
+                snapshot=comparison_snapshot_from_prepared(prepared),
+                profiles=tuple(
+                    ComparisonProfile.from_execution_profile(profile)
+                    for profile in profiles
+                ),
+                repetitions=2,
+                random_seed=17,
+            )
+            original_append_event = SQLiteStateStore.append_event
+
+            def reject_pre_effect(store, run_id, event_type, payload=None, **kwargs):
+                if event_type == "comparison_review_artifact_intent":
+                    raise RuntimeError("private pre-effect diagnostic")
+                return original_append_event(
+                    store,
+                    run_id,
+                    event_type,
+                    payload,
+                    **kwargs,
+                )
+
+            with (
+                patch.object(
+                    SQLiteStateStore,
+                    "append_event",
+                    new=reject_pre_effect,
+                ),
+                patch("ordomata.comparison._stage_artifact") as stage_artifact,
+            ):
+                report = await run_controlled_comparison(
+                    root,
+                    prepared=prepared,
+                    plan=plan,
+                    profiles=profiles,
+                    runner_factory=lambda _profile: RecordingMockRunner(
+                        requests=[],
+                        output=load_mock_chief_of_staff_output(root, prepared),
+                    ),
+                )
+
+            stage_artifact.assert_not_called()
+            self.assertEqual(len(report.rows), 1)
+            self.assertIs(report.rows[0].status, RunStatus.FAILED)
+            self.assertIsNone(report.rows[0].review_artifact_path)
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                events = state.list_events(report.rows[0].run_id)
+            event_types = [event.event_type for event in events]
+            self.assertNotIn("comparison_review_artifact_intent", event_types)
+            self.assertNotIn(
+                "comparison_review_artifact_action_receipt",
+                event_types,
+            )
+            self.assertNotIn(
+                "private pre-effect diagnostic",
+                "\n".join(event.payload_json for event in events),
+            )
+
+    async def test_action_receipt_failure_rolls_back_private_artifact(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            prepared = prepare_chief_of_staff(root)
+            profiles = self._mock_profiles(
+                root,
+                "mock.receipt-failure-a",
+                "mock.receipt-failure-b",
+            )
+            plan = ControlledComparisonPlan.create(
+                comparison_id="action-receipt-failure",
+                snapshot=comparison_snapshot_from_prepared(prepared),
+                profiles=tuple(
+                    ComparisonProfile.from_execution_profile(profile)
+                    for profile in profiles
+                ),
+                repetitions=2,
+                random_seed=17,
+            )
+            original_append_event = SQLiteStateStore.append_event
+
+            def reject_action_receipt(
+                store, run_id, event_type, payload=None, **kwargs
+            ):
+                if event_type == "comparison_review_artifact_action_receipt":
+                    raise RuntimeError("private action receipt diagnostic")
+                return original_append_event(
+                    store,
+                    run_id,
+                    event_type,
+                    payload,
+                    **kwargs,
+                )
+
+            with patch.object(
+                SQLiteStateStore,
+                "append_event",
+                new=reject_action_receipt,
+            ):
+                report = await run_controlled_comparison(
+                    root,
+                    prepared=prepared,
+                    plan=plan,
+                    profiles=profiles,
+                    runner_factory=lambda _profile: RecordingMockRunner(
+                        requests=[],
+                        output=load_mock_chief_of_staff_output(root, prepared),
+                    ),
+                )
+
+            self.assertEqual(len(report.rows), 1)
+            self.assertIs(report.rows[0].status, RunStatus.BLOCKED)
+            self.assertIsNone(report.rows[0].review_artifact_path)
+            artifact_path = (
+                root
+                / ".ordomata/comparisons/action-receipt-failure/trials/001/review-output.json"
+            )
+            self.assertFalse(artifact_path.exists())
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                events = state.list_events(report.rows[0].run_id)
+            self.assertIn(
+                "comparison_review_artifact_intent",
+                [event.event_type for event in events],
+            )
+            self.assertNotIn(
+                "comparison_review_artifact_action_receipt",
+                [event.event_type for event in events],
+            )
+            persisted = "\n".join(event.payload_json for event in events)
+            self.assertNotIn("private action receipt diagnostic", persisted)
+
+    async def test_committed_action_receipt_is_reconciled_after_append_error(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, prepared, profiles, plan = self._artifact_recovery_setup(
+                temporary,
+                "committed-action-receipt",
+            )
+            original_append_event = SQLiteStateStore.append_event
+            append_failed_after_commit = False
+
+            def commit_action_receipt_then_raise(
+                store, run_id, event_type, payload=None, **kwargs
+            ):
+                nonlocal append_failed_after_commit
+                record = original_append_event(
+                    store,
+                    run_id,
+                    event_type,
+                    payload,
+                    **kwargs,
+                )
+                if (
+                    event_type
+                    == "comparison_review_artifact_action_receipt"
+                    and not append_failed_after_commit
+                ):
+                    append_failed_after_commit = True
+                    raise RuntimeError("private post-commit receipt diagnostic")
+                return record
+
+            with patch.object(
+                SQLiteStateStore,
+                "append_event",
+                new=commit_action_receipt_then_raise,
+            ):
+                report = await run_controlled_comparison(
+                    root,
+                    prepared=prepared,
+                    plan=plan,
+                    profiles=profiles,
+                    runner_factory=lambda _profile: RecordingMockRunner(
+                        requests=[],
+                        output=load_mock_chief_of_staff_output(root, prepared),
+                    ),
+                )
+
+            self.assertTrue(append_failed_after_commit)
+            first = report.rows[0]
+            self.assertIs(first.status, RunStatus.SUCCEEDED)
+            self.assertIsNotNone(first.review_artifact_path)
+            artifact_path = Path(first.review_artifact_path or "")
+            self.assertTrue(artifact_path.is_file())
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                events = state.list_events(first.run_id)
+            receipts = [
+                event.payload
+                for event in events
+                if event.event_type
+                == "comparison_review_artifact_action_receipt"
+            ]
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(receipts[0]["outcome"], "succeeded")
+            self.assertEqual(
+                receipts[0]["result_digest"],
+                receipts[0]["intended_artifact_digest"],
+            )
+            self.assertNotIn(
+                "private post-commit receipt diagnostic",
+                "\n".join(event.payload_json for event in events),
+            )
+            inspection = inspect_authorization_shadows(
+                root / ".ordomata/state.sqlite3",
+                now=time.time(),
+            )
+            inspected = next(
+                item for item in inspection.runs if item.run_id == first.run_id
+            )
+            self.assertEqual(inspected.integrity_issues, ())
+
+    async def test_ambiguous_committed_action_receipt_preserves_artifact(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, prepared, profiles, plan = self._artifact_recovery_setup(
+                temporary,
+                "ambiguous-committed-action-receipt",
+            )
+            original_append_event = SQLiteStateStore.append_event
+            append_failed_after_commit = False
+
+            def commit_action_receipt_then_raise(
+                store, run_id, event_type, payload=None, **kwargs
+            ):
+                nonlocal append_failed_after_commit
+                record = original_append_event(
+                    store,
+                    run_id,
+                    event_type,
+                    payload,
+                    **kwargs,
+                )
+                if (
+                    event_type
+                    == "comparison_review_artifact_action_receipt"
+                    and not append_failed_after_commit
+                ):
+                    append_failed_after_commit = True
+                    raise RuntimeError("private ambiguous receipt diagnostic")
+                return record
+
+            with (
+                patch.object(
+                    SQLiteStateStore,
+                    "append_event",
+                    new=commit_action_receipt_then_raise,
+                ),
+                patch(
+                    "ordomata.comparison."
+                    "_comparison_review_artifact_action_receipt_persisted",
+                    return_value=None,
+                ),
+            ):
+                report = await run_controlled_comparison(
+                    root,
+                    prepared=prepared,
+                    plan=plan,
+                    profiles=profiles,
+                    runner_factory=lambda _profile: RecordingMockRunner(
+                        requests=[],
+                        output=load_mock_chief_of_staff_output(root, prepared),
+                    ),
+                )
+
+            self.assertTrue(append_failed_after_commit)
+            self.assertEqual(len(report.rows), 1)
+            first = report.rows[0]
+            self.assertIs(first.status, RunStatus.QUARANTINED)
+            self.assertIsNone(first.review_artifact_path)
+            artifact_path = (
+                root
+                / ".ordomata/comparisons/"
+                "ambiguous-committed-action-receipt/trials/001/"
+                "review-output.json"
+            )
+            artifact_bytes = artifact_path.read_bytes()
+            self.assertEqual(artifact_path.stat().st_mode & 0o077, 0)
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                events = state.list_events(first.run_id)
+            receipt = next(
+                event.payload
+                for event in events
+                if event.event_type
+                == "comparison_review_artifact_action_receipt"
+            )
+            self.assertEqual(receipt["outcome"], "succeeded")
+            self.assertEqual(
+                receipt["result_digest"],
+                "sha256:" + sha256(artifact_bytes).hexdigest(),
+            )
+            terminal = [
+                event
+                for event in events
+                if event.status is RunStatus.QUARANTINED
+            ][-1]
+            self.assertIs(terminal.payload["artifact_observed"], True)
+            self.assertNotIn(
+                "private ambiguous receipt diagnostic",
+                "\n".join(event.payload_json for event in events),
+            )
+            inspection = inspect_authorization_shadows(
+                root / ".ordomata/state.sqlite3",
+                now=time.time(),
+            )
+            inspected = next(
+                item for item in inspection.runs if item.run_id == first.run_id
+            )
+            self.assertEqual(inspected.integrity_issues, ())
+
+    async def test_action_receipt_readback_interruption_quarantines_effect(
+        self,
+    ) -> None:
+        for commit_first in (False, True):
+            with (
+                self.subTest(commit_first=commit_first),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                comparison_id = (
+                    "postcommit-readback-interruption"
+                    if commit_first
+                    else "precommit-readback-interruption"
+                )
+                root, prepared, profiles, plan = self._artifact_recovery_setup(
+                    temporary,
+                    comparison_id,
+                )
+                original_append_event = SQLiteStateStore.append_event
+                interruption = asyncio.CancelledError(
+                    "private receipt readback interruption diagnostic"
+                )
+
+                def append_action_receipt_then_raise(
+                    store, run_id, event_type, payload=None, **kwargs
+                ):
+                    if (
+                        event_type
+                        != "comparison_review_artifact_action_receipt"
+                    ):
+                        return original_append_event(
+                            store,
+                            run_id,
+                            event_type,
+                            payload,
+                            **kwargs,
+                        )
+                    if commit_first:
+                        original_append_event(
+                            store,
+                            run_id,
+                            event_type,
+                            payload,
+                            **kwargs,
+                        )
+                    raise RuntimeError(
+                        "private receipt append interruption diagnostic"
+                    )
+
+                with (
+                    patch.object(
+                        SQLiteStateStore,
+                        "append_event",
+                        new=append_action_receipt_then_raise,
+                    ),
+                    patch(
+                        "ordomata.comparison."
+                        "_comparison_review_artifact_action_receipt_persisted",
+                        side_effect=interruption,
+                    ),
+                    self.assertRaises(asyncio.CancelledError) as caught,
+                ):
+                    await run_controlled_comparison(
+                        root,
+                        prepared=prepared,
+                        plan=plan,
+                        profiles=profiles,
+                        runner_factory=lambda _profile: RecordingMockRunner(
+                            requests=[],
+                            output=load_mock_chief_of_staff_output(
+                                root,
+                                prepared,
+                            ),
+                        ),
+                    )
+
+                self.assertIs(caught.exception, interruption)
+                cause = caught.exception.__cause__
+                self.assertIsInstance(cause, ConfigurationError)
+                self.assertEqual(
+                    str(cause),
+                    "comparison artifact action receipt readback is uncertain",
+                )
+                artifact_path = (
+                    root
+                    / ".ordomata/comparisons"
+                    / comparison_id
+                    / "trials/001/review-output.json"
+                )
+                self.assertTrue(artifact_path.is_file())
+                self.assertEqual(artifact_path.stat().st_mode & 0o077, 0)
+                with SQLiteStateStore(
+                    root / ".ordomata/state.sqlite3"
+                ) as state:
+                    runs = state.list_runs()
+                    self.assertEqual(len(runs), 1)
+                    run = runs[0]
+                    self.assertIs(
+                        state.current_status(run.run_id),
+                        RunStatus.QUARANTINED,
+                    )
+                    events = state.list_events(run.run_id)
+                receipts = [
+                    event
+                    for event in events
+                    if event.event_type
+                    == "comparison_review_artifact_action_receipt"
+                ]
+                self.assertEqual(len(receipts), int(commit_first))
+                terminal = [
+                    event
+                    for event in events
+                    if event.status is RunStatus.QUARANTINED
+                ][-1]
+                self.assertIs(terminal.payload["artifact_observed"], True)
+                persisted = "\n".join(event.payload_json for event in events)
+                self.assertNotIn(
+                    "private receipt readback interruption diagnostic",
+                    persisted,
+                )
+                self.assertNotIn(
+                    "private receipt append interruption diagnostic",
+                    persisted,
+                )
+                inspection = inspect_authorization_shadows(
+                    root / ".ordomata/state.sqlite3",
+                    now=time.time(),
+                )
+                inspected = next(
+                    item
+                    for item in inspection.runs
+                    if item.run_id == run.run_id
+                )
+                if commit_first:
+                    self.assertEqual(inspected.integrity_issues, ())
+                else:
+                    self.assertIn(
+                        "comparison_publication_action_receipt_missing",
+                        inspected.integrity_issues,
+                    )
+
+    async def test_internal_staging_cleanup_failure_is_quarantined(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, prepared, profiles, plan = self._artifact_recovery_setup(
+                temporary,
+                "internal-staging-cleanup",
+            )
+            original_unlink = Path.unlink
+
+            def reject_staging_unlink(path, *args, **kwargs):
+                if (
+                    path.name.startswith(".review-output.json.")
+                    and path.name.endswith(".tmp")
+                ):
+                    raise OSError("private staging cleanup diagnostic")
+                return original_unlink(path, *args, **kwargs)
+
+            with (
+                patch(
+                    "ordomata.orchestrator.os.fsync",
+                    side_effect=OSError("private staging fsync diagnostic"),
+                ),
+                patch.object(Path, "unlink", new=reject_staging_unlink),
+            ):
+                report = await run_controlled_comparison(
+                    root,
+                    prepared=prepared,
+                    plan=plan,
+                    profiles=profiles,
+                    runner_factory=lambda _profile: RecordingMockRunner(
+                        requests=[],
+                        output=load_mock_chief_of_staff_output(root, prepared),
+                    ),
+                )
+
+            self.assertEqual(len(report.rows), 1)
+            row = report.rows[0]
+            self.assertIs(row.status, RunStatus.QUARANTINED)
+            self.assertIsNone(row.review_artifact_path)
+            self.assertIsNone(row.review_artifact_sha256)
+            trial_directory = (
+                root
+                / ".ordomata/comparisons/internal-staging-cleanup/trials/001"
+            )
+            self.assertFalse((trial_directory / "review-output.json").exists())
+            self.assertEqual(
+                len(tuple(trial_directory.glob(".review-output.json.*.tmp"))),
+                1,
+            )
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                events = state.list_events(row.run_id)
+            receipt = next(
+                event.payload
+                for event in events
+                if event.event_type
+                == "comparison_review_artifact_action_receipt"
+            )
+            self.assertEqual(receipt["outcome"], "unknown")
+            self.assertEqual(
+                receipt["failure_code"],
+                "artifact_publication_outcome_unknown",
+            )
+            persisted = "\n".join(event.payload_json for event in events)
+            self.assertNotIn("private staging cleanup diagnostic", persisted)
+            self.assertNotIn("private staging fsync diagnostic", persisted)
+
+    async def test_parent_directory_fsync_failure_is_quarantined(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, prepared, profiles, plan = self._artifact_recovery_setup(
+                temporary,
+                "directory-fsync-failure",
+            )
+            original_fsync = os.fsync
+            directory_fsync_attempted = False
+
+            def reject_directory_fsync(descriptor):
+                nonlocal directory_fsync_attempted
+                if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                    directory_fsync_attempted = True
+                    raise OSError("private directory fsync diagnostic")
+                return original_fsync(descriptor)
+
+            with patch(
+                "ordomata.orchestrator.os.fsync",
+                new=reject_directory_fsync,
+            ):
+                report = await run_controlled_comparison(
+                    root,
+                    prepared=prepared,
+                    plan=plan,
+                    profiles=profiles,
+                    runner_factory=lambda _profile: RecordingMockRunner(
+                        requests=[],
+                        output=load_mock_chief_of_staff_output(root, prepared),
+                    ),
+                )
+
+            self.assertTrue(directory_fsync_attempted)
+            self.assertEqual(len(report.rows), 1)
+            row = report.rows[0]
+            self.assertIs(row.status, RunStatus.QUARANTINED)
+            self.assertIsNone(row.review_artifact_path)
+            self.assertIsNone(row.review_artifact_sha256)
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                events = state.list_events(row.run_id)
+            receipt = next(
+                event.payload
+                for event in events
+                if event.event_type
+                == "comparison_review_artifact_action_receipt"
+            )
+            self.assertEqual(receipt["outcome"], "unknown")
+            self.assertEqual(
+                receipt["failure_code"],
+                "artifact_publication_outcome_unknown",
+            )
+            self.assertNotIn(
+                "private directory fsync diagnostic",
+                "\n".join(event.payload_json for event in events),
+            )
+
+    async def test_promote_then_raise_removes_exact_private_artifact(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, prepared, profiles, plan = self._artifact_recovery_setup(
+                temporary,
+                "promote-then-raise",
+            )
+
+            def expose_then_raise(staged_path, artifact_path):
+                _promote_staged_artifact(staged_path, artifact_path)
+                raise OSError("private post-promotion diagnostic")
+
+            with patch(
+                "ordomata.comparison._promote_staged_artifact",
+                new=expose_then_raise,
+            ):
+                report = await run_controlled_comparison(
+                    root,
+                    prepared=prepared,
+                    plan=plan,
+                    profiles=profiles,
+                    runner_factory=lambda _profile: RecordingMockRunner(
+                        requests=[],
+                        output=load_mock_chief_of_staff_output(root, prepared),
+                    ),
+                )
+
+            self.assertEqual(len(report.rows), 1)
+            self.assertIs(report.rows[0].status, RunStatus.FAILED)
+            self.assertIsNone(report.rows[0].review_artifact_path)
+            artifact_path = (
+                root
+                / ".ordomata/comparisons/promote-then-raise/trials/001/review-output.json"
+            )
+            self.assertFalse(artifact_path.exists())
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                events = state.list_events(report.rows[0].run_id)
+            receipt = next(
+                event.payload
+                for event in events
+                if event.event_type
+                == "comparison_review_artifact_action_receipt"
+            )
+            self.assertEqual(receipt["outcome"], "failed")
+            self.assertEqual(
+                receipt["failure_code"],
+                "artifact_persistence_failed",
+            )
+            self.assertNotIn(
+                "private post-promotion diagnostic",
+                "\n".join(event.payload_json for event in events),
+            )
+
+    async def test_post_promotion_readback_mismatch_is_removed(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, prepared, profiles, plan = self._artifact_recovery_setup(
+                temporary,
+                "readback-mismatch",
+            )
+
+            def corrupt_after_promotion(staged_path, artifact_path):
+                _promote_staged_artifact(staged_path, artifact_path)
+                artifact_path.write_bytes(b"unexpected private bytes")
+
+            with patch(
+                "ordomata.comparison._promote_staged_artifact",
+                new=corrupt_after_promotion,
+            ):
+                report = await run_controlled_comparison(
+                    root,
+                    prepared=prepared,
+                    plan=plan,
+                    profiles=profiles,
+                    runner_factory=lambda _profile: RecordingMockRunner(
+                        requests=[],
+                        output=load_mock_chief_of_staff_output(root, prepared),
+                    ),
+                )
+
+            self.assertEqual(len(report.rows), 1)
+            self.assertIs(report.rows[0].status, RunStatus.BLOCKED)
+            self.assertIsNone(report.rows[0].review_artifact_path)
+            artifact_path = (
+                root
+                / ".ordomata/comparisons/readback-mismatch/trials/001/review-output.json"
+            )
+            self.assertFalse(artifact_path.exists())
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                events = state.list_events(report.rows[0].run_id)
+            receipt = next(
+                event.payload
+                for event in events
+                if event.event_type
+                == "comparison_review_artifact_action_receipt"
+            )
+            self.assertEqual(receipt["outcome"], "failed")
+            self.assertEqual(
+                receipt["failure_code"],
+                "artifact_persistence_failed",
+            )
+
+    async def test_unremovable_publication_effect_is_quarantined(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, prepared, profiles, plan = self._artifact_recovery_setup(
+                temporary,
+                "unremovable-publication",
+            )
+            original_unlink = Path.unlink
+
+            def expose_then_raise(staged_path, artifact_path):
+                _promote_staged_artifact(staged_path, artifact_path)
+                raise OSError("private post-promotion diagnostic")
+
+            def reject_final_unlink(path, *args, **kwargs):
+                if path.name == "review-output.json":
+                    raise OSError("private unlink diagnostic")
+                return original_unlink(path, *args, **kwargs)
+
+            with (
+                patch(
+                    "ordomata.comparison._promote_staged_artifact",
+                    new=expose_then_raise,
+                ),
+                patch.object(Path, "unlink", new=reject_final_unlink),
+            ):
+                report = await run_controlled_comparison(
+                    root,
+                    prepared=prepared,
+                    plan=plan,
+                    profiles=profiles,
+                    runner_factory=lambda _profile: RecordingMockRunner(
+                        requests=[],
+                        output=load_mock_chief_of_staff_output(root, prepared),
+                    ),
+                )
+
+            self.assertEqual(len(report.rows), 1)
+            self.assertIs(report.rows[0].status, RunStatus.QUARANTINED)
+            self.assertIsNone(report.rows[0].review_artifact_path)
+            artifact_path = (
+                root
+                / ".ordomata/comparisons/unremovable-publication/trials/001/review-output.json"
+            )
+            self.assertTrue(artifact_path.exists())
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                events = state.list_events(report.rows[0].run_id)
+            receipt = next(
+                event.payload
+                for event in events
+                if event.event_type
+                == "comparison_review_artifact_action_receipt"
+            )
+            self.assertEqual(receipt["outcome"], "unknown")
+            self.assertEqual(
+                receipt["failure_code"],
+                "artifact_publication_outcome_unknown",
+            )
+            persisted = "\n".join(event.payload_json for event in events)
+            self.assertNotIn("private post-promotion diagnostic", persisted)
+            self.assertNotIn("private unlink diagnostic", persisted)
+
+    async def test_unremovable_staging_effect_is_quarantined(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, prepared, profiles, plan = self._artifact_recovery_setup(
+                temporary,
+                "unremovable-staging",
+            )
+            original_unlink = Path.unlink
+
+            def retain_staging_name(staged_path, artifact_path):
+                os.link(staged_path, artifact_path, follow_symlinks=False)
+
+            def reject_staging_unlink(path, *args, **kwargs):
+                if path.name.startswith(".review-output.json."):
+                    raise OSError("private staging unlink diagnostic")
+                return original_unlink(path, *args, **kwargs)
+
+            with (
+                patch(
+                    "ordomata.comparison._promote_staged_artifact",
+                    new=retain_staging_name,
+                ),
+                patch.object(Path, "unlink", new=reject_staging_unlink),
+            ):
+                report = await run_controlled_comparison(
+                    root,
+                    prepared=prepared,
+                    plan=plan,
+                    profiles=profiles,
+                    runner_factory=lambda _profile: RecordingMockRunner(
+                        requests=[],
+                        output=load_mock_chief_of_staff_output(root, prepared),
+                    ),
+                )
+
+            self.assertEqual(len(report.rows), 1)
+            self.assertIs(report.rows[0].status, RunStatus.QUARANTINED)
+            self.assertIsNone(report.rows[0].review_artifact_path)
+            trial_directory = (
+                root
+                / ".ordomata/comparisons/unremovable-staging/trials/001"
+            )
+            self.assertFalse((trial_directory / "review-output.json").exists())
+            self.assertEqual(
+                len(tuple(trial_directory.glob(".review-output.json.*.tmp"))),
+                1,
+            )
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                events = state.list_events(report.rows[0].run_id)
+            receipt = next(
+                event.payload
+                for event in events
+                if event.event_type
+                == "comparison_review_artifact_action_receipt"
+            )
+            self.assertEqual(receipt["outcome"], "unknown")
+            self.assertEqual(
+                receipt["failure_code"],
+                "artifact_publication_outcome_unknown",
+            )
+            self.assertNotIn(
+                "private staging unlink diagnostic",
+                "\n".join(event.payload_json for event in events),
+            )
+
+    async def test_cancellation_after_promotion_removes_effect_and_reraises(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, prepared, profiles, plan = self._artifact_recovery_setup(
+                temporary,
+                "cancel-after-promotion",
+            )
+            interruption = asyncio.CancelledError(
+                "private post-promotion cancellation diagnostic"
+            )
+
+            def expose_then_cancel(staged_path, artifact_path):
+                _promote_staged_artifact(staged_path, artifact_path)
+                raise interruption
+
+            with (
+                patch(
+                    "ordomata.comparison._promote_staged_artifact",
+                    new=expose_then_cancel,
+                ),
+                self.assertRaises(asyncio.CancelledError) as caught,
+            ):
+                await run_controlled_comparison(
+                    root,
+                    prepared=prepared,
+                    plan=plan,
+                    profiles=profiles,
+                    runner_factory=lambda _profile: RecordingMockRunner(
+                        requests=[],
+                        output=load_mock_chief_of_staff_output(root, prepared),
+                    ),
+                )
+
+            self.assertIs(caught.exception, interruption)
+            artifact_path = (
+                root
+                / ".ordomata/comparisons/cancel-after-promotion/trials/001/review-output.json"
+            )
+            self.assertFalse(artifact_path.exists())
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                runs = state.list_runs()
+                self.assertEqual(len(runs), 1)
+                self.assertIs(
+                    state.current_status(runs[0].run_id),
+                    RunStatus.CANCELLED,
+                )
+                events = state.list_events(runs[0].run_id)
+            receipt = next(
+                event.payload
+                for event in events
+                if event.event_type
+                == "comparison_review_artifact_action_receipt"
+            )
+            self.assertEqual(receipt["outcome"], "cancelled")
+            self.assertEqual(
+                receipt["failure_code"],
+                "artifact_persistence_interrupted",
+            )
+            self.assertNotIn(
+                "private post-promotion cancellation diagnostic",
+                "\n".join(event.payload_json for event in events),
+            )
+
+    async def test_missing_action_receipt_with_unremovable_effect_quarantines(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, prepared, profiles, plan = self._artifact_recovery_setup(
+                temporary,
+                "unremovable-receipt-gap",
+            )
+            original_append_event = SQLiteStateStore.append_event
+            original_unlink = Path.unlink
+
+            def reject_action_receipt(
+                store, run_id, event_type, payload=None, **kwargs
+            ):
+                if event_type == "comparison_review_artifact_action_receipt":
+                    raise RuntimeError("private receipt diagnostic")
+                return original_append_event(
+                    store,
+                    run_id,
+                    event_type,
+                    payload,
+                    **kwargs,
+                )
+
+            def reject_final_unlink(path, *args, **kwargs):
+                if path.name == "review-output.json":
+                    raise OSError("private unlink diagnostic")
+                return original_unlink(path, *args, **kwargs)
+
+            with (
+                patch.object(
+                    SQLiteStateStore,
+                    "append_event",
+                    new=reject_action_receipt,
+                ),
+                patch.object(Path, "unlink", new=reject_final_unlink),
+            ):
+                report = await run_controlled_comparison(
+                    root,
+                    prepared=prepared,
+                    plan=plan,
+                    profiles=profiles,
+                    runner_factory=lambda _profile: RecordingMockRunner(
+                        requests=[],
+                        output=load_mock_chief_of_staff_output(root, prepared),
+                    ),
+                )
+
+            self.assertEqual(len(report.rows), 1)
+            self.assertIs(report.rows[0].status, RunStatus.QUARANTINED)
+            self.assertIsNone(report.rows[0].review_artifact_path)
+            artifact_path = (
+                root
+                / ".ordomata/comparisons/unremovable-receipt-gap/trials/001/review-output.json"
+            )
+            self.assertTrue(artifact_path.exists())
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                events = state.list_events(report.rows[0].run_id)
+            self.assertNotIn(
+                "comparison_review_artifact_action_receipt",
+                [event.event_type for event in events],
+            )
+            persisted = "\n".join(event.payload_json for event in events)
+            self.assertNotIn("private receipt diagnostic", persisted)
+            self.assertNotIn("private unlink diagnostic", persisted)
+
     async def test_billing_breaker_is_persisted_and_stops_remaining_trials(
         self,
     ) -> None:
@@ -1177,8 +2326,9 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                         "status",
                         "authorization_shadow_decision",
                         "execution_accounting",
+                        "authorization_shadow_decision",
                         "comparison_review_artifact_intent",
-                        "comparison_review_artifact_observed",
+                        "comparison_review_artifact_action_receipt",
                         "status",
                     ],
                 )
@@ -1198,12 +2348,13 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(inspection.inspected_run_count, 1)
             self.assertEqual(
                 inspection.runs[0].observed_scopes,
-                tuple(sorted((ADMISSION_SCOPE, DISPATCH_SCOPE))),
+                tuple(
+                    sorted(
+                        (ADMISSION_SCOPE, DISPATCH_SCOPE, PUBLICATION_SCOPE)
+                    )
+                ),
             )
-            self.assertEqual(
-                inspection.runs[0].missing_scopes,
-                (PUBLICATION_SCOPE,),
-            )
+            self.assertEqual(inspection.runs[0].missing_scopes, ())
 
             second = ControlledComparisonPlan.create(
                 comparison_id="breaker-second",
@@ -1436,7 +2587,7 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                     [event.event_type for event in events],
                 )
                 self.assertNotIn(
-                    "comparison_review_artifact_observed",
+                    "comparison_review_artifact_action_receipt",
                     [event.event_type for event in events],
                 )
                 accounting = next(
@@ -1542,16 +2693,93 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                         event_types,
                     )
                     self.assertIn(
-                        "comparison_review_artifact_observed",
+                        "comparison_review_artifact_action_receipt",
                         event_types,
                     )
-                    observed = next(
+                    receipt = next(
                         event.payload
                         for event in events
                         if event.event_type
-                        == "comparison_review_artifact_observed"
+                        == "comparison_review_artifact_action_receipt"
                     )
-                    self.assertTrue(observed["output_withheld"])
+                    self.assertTrue(receipt["output_withheld"])
+                    self.assertEqual(receipt["outcome"], "succeeded")
+
+    async def test_artifact_write_cancellation_records_receipt_and_reraises(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            prepared = prepare_chief_of_staff(root)
+            profiles = self._mock_profiles(
+                root,
+                "mock.artifact-cancel-a",
+                "mock.artifact-cancel-b",
+            )
+            plan = ControlledComparisonPlan.create(
+                comparison_id="artifact-write-cancelled",
+                snapshot=comparison_snapshot_from_prepared(prepared),
+                profiles=tuple(
+                    ComparisonProfile.from_execution_profile(profile)
+                    for profile in profiles
+                ),
+                repetitions=2,
+                random_seed=17,
+            )
+            interruption = asyncio.CancelledError(
+                "private artifact cancellation diagnostic"
+            )
+
+            with (
+                patch(
+                    "ordomata.comparison._stage_artifact",
+                    side_effect=interruption,
+                ),
+                self.assertRaises(asyncio.CancelledError) as caught,
+            ):
+                await run_controlled_comparison(
+                    root,
+                    prepared=prepared,
+                    plan=plan,
+                    profiles=profiles,
+                    runner_factory=lambda _profile: RecordingMockRunner(
+                        requests=[],
+                        output=load_mock_chief_of_staff_output(root, prepared),
+                    ),
+                )
+
+            self.assertIs(caught.exception, interruption)
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                runs = state.list_runs()
+                self.assertEqual(len(runs), 1)
+                self.assertIs(
+                    state.current_status(runs[0].run_id),
+                    RunStatus.CANCELLED,
+                )
+                events = state.list_events(runs[0].run_id)
+            receipt = next(
+                event.payload
+                for event in events
+                if event.event_type
+                == "comparison_review_artifact_action_receipt"
+            )
+            self.assertEqual(receipt["outcome"], "cancelled")
+            self.assertEqual(
+                receipt["failure_code"],
+                "artifact_persistence_interrupted",
+            )
+            self.assertIsNone(receipt["result_digest"])
+            persisted = "\n".join(event.payload_json for event in events)
+            self.assertNotIn(
+                "private artifact cancellation diagnostic",
+                persisted,
+            )
+            self.assertFalse(
+                (
+                    root
+                    / ".ordomata/comparisons/artifact-write-cancelled/trials/001/review-output.json"
+                ).exists()
+            )
 
     async def test_subscription_cancellation_recovers_unknown_billing_and_reraises(
         self,
@@ -1902,13 +3130,14 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("executive_summary", json.dumps(artifact))
                 with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
                     events = state.list_events(report.rows[0].run_id)
-                    observed = next(
+                    receipt = next(
                         event.payload
                         for event in events
                         if event.event_type
-                        == "comparison_review_artifact_observed"
+                        == "comparison_review_artifact_action_receipt"
                     )
-                    self.assertTrue(observed["output_withheld"])
+                    self.assertTrue(receipt["output_withheld"])
+                    self.assertEqual(receipt["outcome"], "succeeded")
 
     async def test_subscription_exception_quarantines_and_opens_circuits(
         self,
@@ -2007,7 +3236,7 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(
                     accounting,
                     {
-                        "schema_version": 1,
+                        "schema_version": 2,
                         "result_observed": False,
                         "identity_matches": None,
                         "billing_matches": None,
@@ -2018,6 +3247,9 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                         "subscription_capacity_consumed": None,
                         "paid_capacity_consumed": "unknown",
                         "incremental_ai_charge": "unknown",
+                        "capacity_state": "unknown",
+                        "billing_disposition_reason_codes": [],
+                        "billing_disposition_digest": None,
                         "usage_observation": "unavailable",
                         "billing_quarantine_required": True,
                         "billing_circuit_breaker_required": True,

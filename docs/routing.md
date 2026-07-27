@@ -80,6 +80,15 @@ Purchased product credit, subscription overage, API, cloud-provider, unknown, lo
 
 The controlled workflow fixes one immutable sanitized Class 0 task/context snapshot and output schema, randomizes profile order within each repetition block, and uses a fresh adapter, session, and empty workspace for every trial. Trial output is written to a private review artifact and is not shared with later trials. The generated report contains raw measurements and a separate human-review template; it deliberately performs no ranking, winner selection, or profile promotion. Any live comparison remains operator-gated, and none has yet been completed for Codex versus Claude in this repository.
 
+New comparison trials bind that Class 0 execution with a schema-v2 audit
+record and schema-v3 non-enforcing admission/dispatch shadows. The separate
+owner-private artifact write is a controller-owned Class 1 effect with a
+schema-v4 non-enforcing publication shadow and schema-v2 pre-effect/action
+receipts. This audit split does not raise the runner request, profile, snapshot,
+or `RunRecord` above Class 0 and grants no failover, promotion, shared, external,
+Class 2, or Class 3 authority. Historical schema-v1 trials remain readable as
+partial coverage with their original publication gap.
+
 ## Failover policy
 
 Recovery and failover must remain inside the original lane, immutable resource

@@ -76,7 +76,9 @@ non-enforcing code slice is also implemented: canonical value types, a pure
 current-stage evaluator, adversarial fixtures, typed Chief-of-Staff task-effect
 intent, three append-only boundary observations with legacy-result and
 authority-ceiling parity, and a strictly read-only parity/coverage/order
-inspector.
+inspector. Controlled comparisons now add a schema-v2 trial binding, schema-v3
+Class 0 admission/dispatch shadows, and a separate schema-v4 non-enforcing
+Class 1 private-publication shadow with schema-v2 pre-effect/action receipts.
 
 Runtime ABAC enforcement is **planned**, not implemented. Current code still makes
 `PermissionClass` authoritative across contracts, approval, routing, runner
@@ -85,7 +87,8 @@ distributed billing, identity, environment, profile, isolation, capacity, and
 circuit gates. Those controls remain active while the initial canonical shadow
 coverage is expanded beyond the Chief-of-Staff path, parity is proven across
 every decision path, the existing shadow boundaries become enforcement points,
-and approval/action receipts become operational.
+and approval/action receipts become operational. The comparison receipt is
+migration evidence only; it is not an executable authorization permit.
 
 The target semantics for Class 3 standing envelopes, irreversible actions,
 the non-delegable root-authority kernel, consequential outbox execution,
@@ -326,10 +329,12 @@ evidence payloads remain separate operational state.
   attributes, independently reports a derived class above persisted authority,
   and does not change a
   current allow or deny outcome. Chief-of-Staff admission, dispatch intent, and
-  local-candidate publication are observed and inspectable. Controlled
-  comparison trials now have digest-bound Class 0 admission/dispatch shadows;
-  their separate Class 1 private-artifact boundary, mediated commands/tools,
-  and complete legacy-path parity remain exit requirements.
+  local-candidate publication are observed and inspectable. New controlled
+  comparison trials have a schema-v2 digest-bound Class 0 binding, Class 0
+  admission/dispatch shadows, and a separately bounded non-enforcing Class 1
+  private-artifact publication shadow with pre-effect/action receipts. Legacy
+  schema-v1 trials remain valid partial evidence. Mediated commands/tools and
+  complete legacy-path parity remain exit requirements.
 - No live harness, schedule, repository, or external system is touched.
 
 ### Deferred

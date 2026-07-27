@@ -74,8 +74,10 @@ plus missing, duplicate, swapped, or controller-event-misordered boundaries
 without creating state.
 The inspector can prove ordering against persisted billing, running,
 runner-event, accounting, and terminal markers. Exact publication-before-first-
-filesystem-mutation placement is covered by orchestrator call-order tests but
-does not yet have a separate durable staging marker.
+filesystem-mutation placement in the ordinary Chief-of-Staff path is covered by
+orchestrator call-order tests but does not yet have a separate durable staging
+marker. The controlled comparison path now has its own durable pre-effect and
+post-effect receipt pair.
 
 **Adopted architecture and remaining runtime migration:** the
 [runtime authorization model](authorization-model.md) defines versioned
@@ -86,19 +88,26 @@ RBAC role constraints, adapted confidentiality/integrity/availability impact
 labels, untrusted MCP claim handling, and conservatively derived Class 0-3
 summaries. There is still no enforcing central PDP, RBAC separation-of-duty
 enforcement, approval resumption, mediated command/tool coverage, or persisted
-runtime action receipt. The controlled comparison path now records a durable
-Class 0 run/event stream for every started trial, including a digest-only trial
-binding, bounded billing/accounting facts, runner-event ordinals, and schema-v3
-non-enforcing admission and immediate pre-dispatch shadows. The read-only
-inspector cross-checks their binding, source evidence, request projection,
-cardinality, and order. Controller-derived post-run billing disposition governs
-quarantine, circuit scope, output withholding, and terminal reporting; adapter
-flags cannot make unknown or changed evidence succeed. The owner-private review
-artifact remains a separate Class 1 controller effect without a publication
-shadow or action receipt, so
-artifact-producing trials intentionally report that coverage gap and comparison
-reports state
-`authorization_shadow_coverage=partial_admission_dispatch_shadow`. Enforcement
+enforcing runtime action receipt. The controlled comparison path now records a
+durable Class 0 run/event stream for every started trial, including a schema-v2
+digest-only binding, bounded billing/accounting facts, runner-event ordinals,
+and schema-v3 non-enforcing admission and immediate pre-dispatch shadows. Its
+owner-private review artifact remains a separate controller-owned Class 1
+effect observed by a schema-v4 non-enforcing publication shadow and linked
+schema-v2 pre-effect/action-receipt events. The read-only inspector cross-checks
+their bindings, source evidence, independently recomputed billing-disposition
+digest, request projection, cardinality, and order. Coverage declarations name
+the expected instrumentation; the inspector, not the declaration, determines
+whether an observed history is complete.
+Private publication also has durable namespace reconciliation: staged bytes and
+directory entries are fsynced, action receipts use deterministic identifiers
+for exact post-error readback, and unresolved temp/final/receipt state is
+quarantined rather than reported as an ordinary failed write.
+Controller-derived post-run billing disposition governs quarantine, circuit
+scope, output withholding, and terminal reporting; adapter flags cannot make
+unknown or changed evidence succeed. Historical schema-v1 comparison evidence
+remains backward-compatible partial coverage with an explicit publication gap.
+None of these observations or receipts is an executable permit; enforcement
 follows only after broader parity evidence.
 
 **Adopted target design, not implemented:** revocable standing authorization
@@ -181,7 +190,7 @@ cells, runtime authorization enforcement, and soak evidence remain planned.
 - Post-run billing disposition: normalized capacity/paid/account-change evidence, typed paid-capacity and incremental-AI-charge accounting, quarantine before promotion, durable append-only capacity state, atomic capacity persistence before lease release, restart-safe capacity blocking, and account/profile circuit breakers.
 - `ordomata run --profile ...`: explicit live-adapter entry point guarded by diagnostics, current evidence, environment/profile/isolation checks, a closed durable circuit, and the exact live gate.
 - `ordomata compare-plan`: identical-snapshot, repeated, block-randomized, fresh-session plan creation without execution.
-- `ordomata compare-run`: preflight-all controlled execution for explicit named profiles using one immutable sanitized Class 0 snapshot, fresh adapters/sessions/empty workspaces, randomized repetition blocks, append-only digest-bound per-trial audit streams with non-enforcing admission/dispatch shadows, private review artifacts, raw reports, and a separate human-review template. It performs no ranking or promotion, retains partial results after a stop condition, and leaves the Class 1 artifact-publication authorization boundary explicit and deferred.
+- `ordomata compare-run`: preflight-all controlled execution for explicit named profiles using one immutable sanitized Class 0 snapshot, fresh adapters/sessions/empty workspaces, randomized repetition blocks, and append-only digest-bound per-trial audit streams. Schema-v3 admission/dispatch and schema-v4 Class 1 private-publication shadows remain non-enforcing; schema-v2 pre-effect/action receipts bind private review artifacts. Raw reports and a separate human-review template perform no ranking or promotion and retain partial results after a stop condition.
 - `ordomata schedule-inspect`: non-mutating run-once schedule inspection; atomic claims and leases are available as library primitives.
 - `ordomata supervisor ...`: mock-only immutable admission; append-only
   start/pause/resume/drain/stop and sticky cancel intent; read-only status,

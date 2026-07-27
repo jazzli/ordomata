@@ -74,9 +74,10 @@ records.
 - optional typed task-effect authorization intent, independent of the legacy
   numeric class, plus three non-enforcing Chief-of-Staff shadow decisions at
   admission, runner/model dispatch intent, and local-candidate publication;
-- append-only Class 0 comparison-trial bindings, lifecycle/accounting evidence,
-  and non-enforcing admission/dispatch shadows, with the separate Class 1
-  private review-artifact authorization boundary still explicit and deferred;
+- append-only schema-v2 Class 0 comparison-trial bindings, lifecycle/accounting
+  evidence, schema-v3 admission/dispatch shadows, and a separate schema-v4
+  non-enforcing Class 1 private review-artifact publication shadow with
+  schema-v2 pre-effect and action-receipt records;
 - a strictly read-only `auth-inspect` command that checks baseline schema and
   run-history integrity plus the frozen migration ledger, then recomputes
   legacy and authority-ceiling parity from persisted run state and independently
@@ -230,21 +231,36 @@ The command binds named, versioned profiles to the same immutable sanitized snap
 The workflow exists, but no live Codex-versus-Claude comparison has been completed or scored in this repository.
 
 Every started comparison trial now has an append-only Class 0 run/event stream.
-A digest-only binding ties its plan, snapshot, controls, profile configuration,
-runner settings, billing assessment, and trial identity to schema-v3
-non-enforcing admission and immediate pre-dispatch shadows. Runner events retain
-only ordinals; accounting and artifact-intent/observation markers retain bounded
-controller facts, never prompt, output, provider diagnostics, or raw account
-identity. `auth-inspect` independently checks those bindings and shadows. The
-private review artifact is a separate Class 1 controller effect and does not yet
-have a shadow decision or action receipt, so successful trials intentionally
-retain a publication coverage gap. Reports state this precisely as
-`authorization_shadow_coverage="partial_admission_dispatch_shadow"`.
+A schema-v2 digest-only binding ties its plan, snapshot, controls, profile
+configuration, runner settings, billing assessment, and trial identity to
+schema-v3 non-enforcing admission and immediate pre-dispatch shadows. The
+separate owner-private artifact write has a schema-v4 non-enforcing Class 1
+publication shadow followed by schema-v2 pre-effect and action-receipt records
+that bind the exact proposed and observed local artifact and its sanitized
+post-run billing-disposition digest back to durable execution accounting.
+Publication stages and fsyncs private bytes, durably syncs namespace changes,
+and reconciles the deterministic action-receipt identifier before treating an
+append error as missing evidence; unprovable cleanup or persistence quarantines
+the trial.
+Runner events retain only ordinals; these audit records retain bounded
+controller facts and digests, never prompt, output, provider diagnostics, raw
+paths, or raw account identity. `auth-inspect` independently checks their
+cardinality, bindings, source facts, and order. Binding and report coverage
+labels declare the expected instrumentation; only inspection of the observed
+event history establishes completeness or reports a gap.
+Historical schema-v1 bindings and artifact intent/observation records remain
+valid partial-coverage evidence and retain their explicit publication gap; they
+are not reinterpreted as the newer receipt contract.
 Post-run subscription evidence is reconciled by the controller before any
 review output is retained: unknown, changed, interrupted, or incompletely
 persisted billing state quarantines the trial, stops the comparison, withholds
 usable output, and opens the applicable account/profile and broad runner
 circuits.
+
+This is audit migration, not runtime ABAC enforcement. The runner request,
+comparison snapshot, profile ceiling, and `RunRecord` remain Class 0; only the
+controller-owned, local, reversible private-artifact effect derives Class 1.
+No Class 2/3, external, shared, promotion, or live-model authority is added.
 
 ## Verification
 
