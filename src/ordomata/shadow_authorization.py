@@ -1,9 +1,10 @@
 """Non-authoritative ABAC observations for the Phase 1C migration.
 
 The current :class:`~ordomata.approval.ApprovalPolicy` remains authoritative.
-This module evaluates a typed task effect at three Chief-of-Staff controller
-boundaries and returns bounded, secret-free audit payloads.  A shadow result
-can neither enable nor block execution or local candidate publication.
+This module evaluates typed task effects at Chief-of-Staff controller
+boundaries and at controlled-comparison admission and dispatch. It returns
+bounded, secret-free audit payloads. A shadow result can neither enable nor
+block execution or local candidate publication.
 """
 
 from __future__ import annotations
@@ -53,6 +54,7 @@ from .models import (
 
 
 SHADOW_EVENT_SCHEMA_VERSION = 2
+COMPARISON_SHADOW_EVENT_SCHEMA_VERSION = 3
 ADMISSION_ACTION_SCOPE = "task_attempt_admission_only"
 DISPATCH_ACTION_SCOPE = "runner_model_dispatch_only"
 PUBLICATION_ACTION_SCOPE = "local_candidate_publication_only"
@@ -150,6 +152,94 @@ def build_runner_model_dispatch_shadow_event(
     )
 
 
+def build_comparison_trial_admission_shadow_event(
+    *,
+    contract: TaskContract,
+    run_id: str,
+    runner_id: str,
+    profile_id: str | None,
+    project_root: Path,
+    comparison_binding_digest: str,
+    snapshot_digest: str,
+    context_digest: str,
+    billing_assessment: BillingRouteAssessment,
+    evaluated_at: float,
+    legacy_executable: bool,
+) -> dict[str, Any]:
+    """Observe admission of one immutable Class 0 comparison trial."""
+
+    return _build_shadow_event(
+        action_scope=ADMISSION_ACTION_SCOPE,
+        contract=contract,
+        intent_override=_comparison_trial_intent(contract),
+        intent_source_override="comparison_trial_projection",
+        run_id=run_id,
+        runner_id=runner_id,
+        profile_id=profile_id,
+        project_root=project_root,
+        evaluated_at=evaluated_at,
+        legacy_executable=legacy_executable,
+        resource_version=snapshot_digest,
+        content_digest=context_digest,
+        billing_assessment=billing_assessment,
+        local_only_environment=False,
+        apply_pre_run_approval=True,
+        parameters={
+            "comparison_binding_digest": comparison_binding_digest,
+            "context_digest": context_digest,
+            "snapshot_digest": snapshot_digest,
+        },
+        requested_permission_class=PermissionClass.READ_ONLY,
+        schema_version=COMPARISON_SHADOW_EVENT_SCHEMA_VERSION,
+        comparison_binding_digest=comparison_binding_digest,
+        use_comparison_policy=True,
+    )
+
+
+def build_comparison_trial_dispatch_shadow_event(
+    *,
+    contract: TaskContract,
+    run_id: str,
+    runner_id: str,
+    profile_id: str | None,
+    project_root: Path,
+    comparison_binding_digest: str,
+    snapshot_digest: str,
+    prompt_digest: str,
+    billing_assessment: BillingRouteAssessment,
+    evaluated_at: float,
+    legacy_executable: bool,
+) -> dict[str, Any]:
+    """Observe dispatch of one immutable Class 0 comparison trial."""
+
+    return _build_shadow_event(
+        action_scope=DISPATCH_ACTION_SCOPE,
+        contract=contract,
+        intent_override=_comparison_trial_intent(contract),
+        intent_source_override="comparison_trial_projection",
+        run_id=run_id,
+        runner_id=runner_id,
+        profile_id=profile_id,
+        project_root=project_root,
+        evaluated_at=evaluated_at,
+        legacy_executable=legacy_executable,
+        resource_version=snapshot_digest,
+        content_digest=prompt_digest,
+        billing_assessment=billing_assessment,
+        local_only_environment=False,
+        apply_pre_run_approval=True,
+        parameters={
+            "comparison_binding_digest": comparison_binding_digest,
+            "prompt_digest": prompt_digest,
+            "snapshot_digest": snapshot_digest,
+        },
+        requested_permission_class=PermissionClass.READ_ONLY,
+        schema_version=COMPARISON_SHADOW_EVENT_SCHEMA_VERSION,
+        comparison_binding_digest=comparison_binding_digest,
+        use_comparison_policy=True,
+    )
+
+
 def build_local_candidate_publication_shadow_event(
     *,
     contract: TaskContract,
@@ -220,9 +310,18 @@ def _build_shadow_event(
     parameters: Mapping[str, Any],
     intent_override: TaskAuthorizationIntent | None = None,
     intent_source_override: str | None = None,
+    requested_permission_class: PermissionClass | None = None,
+    schema_version: int = SHADOW_EVENT_SCHEMA_VERSION,
+    comparison_binding_digest: str | None = None,
+    use_comparison_policy: bool = False,
 ) -> dict[str, Any]:
     """Construct and evaluate one observation, sanitizing every failure."""
 
+    selected_permission_class = (
+        contract.permission_class
+        if requested_permission_class is None
+        else requested_permission_class
+    )
     request: AuthorizationRequest | None = None
     policy: PolicyBundle | None = None
     intent: TaskAuthorizationIntent | None = None
@@ -250,11 +349,13 @@ def _build_shadow_event(
             billing_assessment=billing_assessment,
             local_only_environment=local_only_environment,
             parameters=parameters,
+            requested_permission_class=selected_permission_class,
         )
         policy = _build_policy(
             contract,
             intent=intent,
             apply_pre_run_approval=apply_pre_run_approval,
+            use_comparison_policy=use_comparison_policy,
         )
     except Exception:
         return _failure_payload(
@@ -264,6 +365,9 @@ def _build_shadow_event(
             intent_source=intent_source,
             legacy_executable=legacy_executable,
             failure_stage="request_construction",
+            requested_permission_class=selected_permission_class,
+            schema_version=schema_version,
+            comparison_binding_digest=comparison_binding_digest,
         )
 
     try:
@@ -278,14 +382,17 @@ def _build_shadow_event(
             failure_stage="evaluation",
             request=request,
             policy=policy,
+            requested_permission_class=selected_permission_class,
+            schema_version=schema_version,
+            comparison_binding_digest=comparison_binding_digest,
         )
 
     shadow_executable = decision.effect is AuthorizationEffect.PERMIT
     authority_ceiling_parity = (
-        decision.derived_permission_class <= contract.permission_class
+        decision.derived_permission_class <= selected_permission_class
     )
-    return {
-        "schema_version": SHADOW_EVENT_SCHEMA_VERSION,
+    payload = {
+        "schema_version": schema_version,
         "mode": "shadow",
         "action_scope": action_scope,
         "intent_source": intent_source,
@@ -304,11 +411,14 @@ def _build_shadow_event(
         "evidence_refs": list(decision.evidence_refs),
         "obligations": [item.to_canonical() for item in decision.obligations],
         "derived_permission_class": int(decision.derived_permission_class),
-        "requested_permission_class": int(contract.permission_class),
+        "requested_permission_class": int(selected_permission_class),
         "legacy_executable": legacy_executable,
         "execution_parity": shadow_executable == legacy_executable,
         "authority_ceiling_parity": authority_ceiling_parity,
     }
+    if comparison_binding_digest is not None:
+        payload["comparison_binding_digest"] = comparison_binding_digest
+    return payload
 
 
 def _resolve_intent(
@@ -403,6 +513,35 @@ def _local_candidate_publication_intent(
     )
 
 
+def _comparison_trial_intent(contract: TaskContract) -> TaskAuthorizationIntent:
+    """Project the immutable comparison effect without lowering task impacts."""
+
+    task_intent, _ = _resolve_intent(contract)
+    return TaskAuthorizationIntent(
+        action=TaskActionIntent(
+            verb=ActionVerb.READ,
+            operation="comparison.evaluate_immutable_snapshot",
+            intended_effect="evaluate_immutable_comparison_snapshot",
+        ),
+        resource=TaskResourceIntent(
+            resource_type="comparison_snapshot",
+            trust_boundary="isolated_run_workspace",
+            protected=task_intent.resource.protected,
+            sensitivity=task_intent.resource.sensitivity,
+        ),
+        consequences=TaskConsequenceIntent(
+            confidentiality=task_intent.consequences.confidentiality,
+            integrity=task_intent.consequences.integrity,
+            availability=task_intent.consequences.availability,
+            reach=Reach.LOCAL,
+            destructive=False,
+            reversible=True,
+            sensitivity=task_intent.consequences.sensitivity,
+            blast_radius=BlastRadius.SINGLE_RESOURCE,
+        ),
+    )
+
+
 def _build_request(
     *,
     action_scope: str,
@@ -419,6 +558,7 @@ def _build_request(
     billing_assessment: BillingRouteAssessment | None,
     local_only_environment: bool,
     parameters: Mapping[str, Any],
+    requested_permission_class: PermissionClass,
 ) -> AuthorizationRequest:
     profile_ref = canonical_digest(
         {"profile_id": profile_id if profile_id is not None else "implicit"}
@@ -450,7 +590,7 @@ def _build_request(
                     "action_scope": action_scope,
                     "intent_digest": intent.digest,
                     "intent_source": intent_source,
-                    "legacy_permission_class": int(contract.permission_class),
+                    "legacy_permission_class": int(requested_permission_class),
                     "output_schema_digest": canonical_digest(contract.output_schema),
                     "parameters": parameters,
                     "profile_ref": profile_ref,
@@ -618,6 +758,7 @@ def _build_policy(
     *,
     intent: TaskAuthorizationIntent,
     apply_pre_run_approval: bool,
+    use_comparison_policy: bool = False,
 ) -> PolicyBundle:
     requirements: tuple[ApprovalRequirement, ...] = ()
     if (
@@ -632,9 +773,25 @@ def _build_policy(
                 allowed_approver_ids=(contract.approval_requirements.approver,),
             ),
         )
-    return PolicyBundle.current_stage(
+    policy = PolicyBundle.current_stage(
         issued_at=0.0,
         approval_requirements=requirements,
+    )
+    if not use_comparison_policy:
+        return policy
+    return replace(
+        policy,
+        bundle_id="agentops.phase-1c.comparison-shadow",
+        version="1.0.0",
+        enabled_classes=(PermissionClass.READ_ONLY,),
+        allowed_verbs=(ActionVerb.READ,),
+        allowed_operations=("comparison.evaluate_immutable_snapshot",),
+        allowed_resource_types=("comparison_snapshot",),
+        allowed_trust_boundaries=("isolated_run_workspace",),
+        allowed_flow_states=(
+            "admission_proposed",
+            "runner_dispatch_proposed",
+        ),
     )
 
 
@@ -646,12 +803,15 @@ def _failure_payload(
     intent_source: str | None,
     legacy_executable: bool,
     failure_stage: str,
+    requested_permission_class: PermissionClass,
+    schema_version: int,
+    comparison_binding_digest: str | None,
     request: AuthorizationRequest | None = None,
     policy: PolicyBundle | None = None,
 ) -> dict[str, Any]:
     shadow_executable = False
-    return {
-        "schema_version": SHADOW_EVENT_SCHEMA_VERSION,
+    payload = {
+        "schema_version": schema_version,
         "mode": "shadow",
         "action_scope": action_scope,
         "intent_source": intent_source,
@@ -672,20 +832,26 @@ def _failure_payload(
         "evidence_refs": [],
         "obligations": [],
         "derived_permission_class": None,
-        "requested_permission_class": int(contract.permission_class),
+        "requested_permission_class": int(requested_permission_class),
         "legacy_executable": legacy_executable,
         "execution_parity": shadow_executable == legacy_executable,
         "authority_ceiling_parity": None,
         "failure_stage": failure_stage,
     }
+    if comparison_binding_digest is not None:
+        payload["comparison_binding_digest"] = comparison_binding_digest
+    return payload
 
 
 __all__ = [
     "ADMISSION_ACTION_SCOPE",
+    "COMPARISON_SHADOW_EVENT_SCHEMA_VERSION",
     "DISPATCH_ACTION_SCOPE",
     "PUBLICATION_ACTION_SCOPE",
     "SHADOW_ACTION_SCOPE",
     "SHADOW_EVENT_SCHEMA_VERSION",
+    "build_comparison_trial_admission_shadow_event",
+    "build_comparison_trial_dispatch_shadow_event",
     "build_local_candidate_publication_shadow_event",
     "build_runner_model_dispatch_shadow_event",
     "build_task_admission_shadow_event",

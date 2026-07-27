@@ -37,7 +37,15 @@ from .authorization import (
     derive_permission_class_from_attributes,
 )
 from .errors import ConfigurationError
-from .models import PermissionClass, RunStatus
+from .models import (
+    AssessmentConfidence,
+    BillingRoute,
+    CapacityState,
+    PaidContinuationProtection,
+    PaidCreditBalance,
+    PermissionClass,
+    RunStatus,
+)
 from .state import (
     RecordNotFoundError,
     _BASELINE_TABLE_NAMES,
@@ -46,13 +54,26 @@ from .state import (
 
 
 AUTHORIZATION_SHADOW_EVENT_TYPE = "authorization_shadow_decision"
+COMPARISON_TRIAL_BINDING_EVENT_TYPE = "comparison_trial_binding"
+COMPARISON_REVIEW_ARTIFACT_INTENT_EVENT_TYPE = (
+    "comparison_review_artifact_intent"
+)
+COMPARISON_REVIEW_ARTIFACT_OBSERVED_EVENT_TYPE = (
+    "comparison_review_artifact_observed"
+)
+COMPARISON_RUN_KIND = "controlled_comparison_trial"
+COMPARISON_SHADOW_COVERAGE = "partial_admission_dispatch_shadow"
+TASK_ATTEMPT_RUN_KIND = "task_attempt"
+TASK_ATTEMPT_SHADOW_COVERAGE = (
+    "task_attempt_admission_dispatch_publication_shadow"
+)
 ADMISSION_SCOPE = "task_attempt_admission_only"
 DISPATCH_SCOPE = "runner_model_dispatch_only"
 PUBLICATION_SCOPE = "local_candidate_publication_only"
 KNOWN_ACTION_SCOPES = frozenset(
     {ADMISSION_SCOPE, DISPATCH_SCOPE, PUBLICATION_SCOPE}
 )
-SUPPORTED_SHADOW_SCHEMA_VERSIONS = frozenset({1, 2})
+SUPPORTED_SHADOW_SCHEMA_VERSIONS = frozenset({1, 2, 3})
 
 _FLOW_STATE_BY_SCOPE = {
     ADMISSION_SCOPE: "admission_proposed",
@@ -67,6 +88,7 @@ _KNOWN_EVIDENCE_SOURCES = frozenset(item.value for item in EvidenceSource)
 _KNOWN_EFFECTS = frozenset(item.value for item in AuthorizationEffect)
 _KNOWN_STATUSES = frozenset(item.value for item in RunStatus)
 _DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
+_BARE_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _AUTHORIZATION_IDENTIFIER_PATTERN = re.compile(r"[a-z][a-z0-9_.-]{0,119}")
 _SAFE_IDENTIFIER_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _SENSITIVE_IDENTIFIER_MARKERS = (
@@ -84,8 +106,11 @@ _SENSITIVE_IDENTIFIER_MARKERS = (
 _SENSITIVE_IDENTIFIER_PREFIXES = ("ghp_", "gho_", "ghu_", "ghs_", "sk-", "xox")
 _MAX_RUNS = 250
 _MAX_SHADOW_EVENTS_PER_RUN = 16
+_MAX_COMPARISON_BINDING_EVENTS_PER_RUN = 2
+_MAX_COMPARISON_BILLING_EVENTS_PER_RUN = 2
 _MAX_EVIDENCE_RECORDS = 32
 _MAX_PAYLOAD_BYTES = 512 * 1024
+_SHADOW_EVIDENCE_LIFETIME_SECONDS = 120.0
 _MISSING = object()
 
 
@@ -177,6 +202,8 @@ class RunAuthorizationInspection:
 
     run_id: str | None
     run_ref: str
+    run_kind: str
+    authorization_shadow_coverage: str
     permission_class: int | None
     attempt: int | None
     latest_status: str | None
@@ -198,6 +225,10 @@ class RunAuthorizationInspection:
         return {
             "run_id": self.run_id,
             "run_ref": self.run_ref,
+            "run_kind": self.run_kind,
+            "authorization_shadow_coverage": (
+                self.authorization_shadow_coverage
+            ),
             "permission_class": self.permission_class,
             "attempt": self.attempt,
             "latest_status": self.latest_status,
@@ -260,6 +291,11 @@ class AuthorizationInspectionReport:
 @dataclass(frozen=True, slots=True)
 class _RunFacts:
     raw_run_id: str
+    raw_task_id: Any
+    raw_task_version: Any
+    raw_runner_id: Any
+    raw_context_digest: Any
+    timeout_seconds: int | None
     run_id: str | None
     run_ref: str
     permission_class: int | None
@@ -269,11 +305,35 @@ class _RunFacts:
     succeeded_observed: bool
     artifact_observed: bool
     shadow_event_count: int
+    comparison_binding_event_count: int
+    comparison_billing_event_count: int
+    created_sequence: int | None
     billing_sequence: int | None
     running_sequence: int | None
     accounting_sequence: int | None
     runner_event_sequence: int | None
     terminal_sequence: int | None
+    issues: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _ComparisonBindingFacts:
+    """Validated, private comparison binding used only during inspection."""
+
+    observed: bool
+    sequence: int | None
+    binding: Mapping[str, Any] | None
+    binding_digest: str | None
+    issues: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _ComparisonBillingFacts:
+    """Validated, private billing evidence used only during inspection."""
+
+    payload: Mapping[str, Any] | None
+    assessment_digest: str | None
+    evidence_window: tuple[float, float] | None
     issues: tuple[str, ...]
 
 
@@ -362,9 +422,19 @@ def inspect_authorization_shadows(
                             "requested authorization run was not found"
                         )
                     event_rows = _read_shadow_events(connection, facts)
+                    comparison_binding_rows = _read_comparison_binding_events(
+                        connection,
+                        facts,
+                    )
+                    comparison_billing_rows = _read_comparison_billing_events(
+                        connection,
+                        facts,
+                    )
                 else:
                     facts = ()
                     event_rows = ()
+                    comparison_binding_rows = ()
+                    comparison_billing_rows = ()
                     run_truncated = False
                 connection.rollback()
             finally:
@@ -387,16 +457,63 @@ def inspect_authorization_shadows(
         if isinstance(raw_event_run_id, str) and raw_event_run_id in rows_by_run:
             rows_by_run[raw_event_run_id].append(row)
 
+    binding_rows_by_run: dict[str, list[sqlite3.Row]] = {
+        fact.raw_run_id: [] for fact in facts
+    }
+    for row in comparison_binding_rows:
+        raw_event_run_id = row["run_id"]
+        if (
+            isinstance(raw_event_run_id, str)
+            and raw_event_run_id in binding_rows_by_run
+        ):
+            binding_rows_by_run[raw_event_run_id].append(row)
+
+    billing_rows_by_run: dict[str, list[sqlite3.Row]] = {
+        fact.raw_run_id: [] for fact in facts
+    }
+    for row in comparison_billing_rows:
+        raw_event_run_id = row["run_id"]
+        if (
+            isinstance(raw_event_run_id, str)
+            and raw_event_run_id in billing_rows_by_run
+        ):
+            billing_rows_by_run[raw_event_run_id].append(row)
+
     all_runs: list[RunAuthorizationInspection] = []
     event_truncated = False
     for fact in facts:
         event_rows_for_run = rows_by_run[fact.raw_run_id]
+        comparison_binding = _inspect_comparison_binding(
+            fact,
+            binding_rows_by_run[fact.raw_run_id],
+        )
+        valid_comparison_binding = (
+            comparison_binding.binding is not None
+            and not comparison_binding.issues
+        )
+        if valid_comparison_binding:
+            comparison_billing = _inspect_comparison_billing(
+                fact,
+                comparison_binding,
+                billing_rows_by_run[fact.raw_run_id],
+            )
+        else:
+            comparison_billing = _ComparisonBillingFacts(
+                None,
+                None,
+                None,
+                (),
+            )
         events = tuple(
             _inspect_event(
                 row,
                 now=evaluated_now,
                 expected_run_id=fact.raw_run_id,
+                expected_task_id=fact.raw_task_id,
+                expected_task_version=fact.raw_task_version,
                 expected_permission_class=fact.permission_class,
+                comparison_binding=comparison_binding,
+                comparison_billing=comparison_billing,
             )
             for row in event_rows_for_run
         )
@@ -411,7 +528,20 @@ def inspect_authorization_shadows(
                 observed_counts[event.action_scope] = (
                     observed_counts.get(event.action_scope, 0) + 1
                 )
-        run_issues = list(fact.issues)
+        run_issues = [
+            *fact.issues,
+            *comparison_binding.issues,
+            *comparison_billing.issues,
+        ]
+        if (
+            not comparison_binding.observed
+            and any(
+                "comparison_shadow_binding_digest_mismatch"
+                in event.integrity_issues
+                for event in events
+            )
+        ):
+            run_issues.append("comparison_binding_missing")
         if any(count > 1 for count in observed_counts.values()):
             run_issues.append("duplicate_boundary_event")
         if fact.shadow_event_count > _MAX_SHADOW_EVENTS_PER_RUN:
@@ -423,6 +553,29 @@ def inspect_authorization_shadows(
             if event.action_scope is not None
         }
         admission_sequence = sequences_by_scope.get(ADMISSION_SCOPE)
+        if (
+            comparison_binding.observed
+            and comparison_binding.sequence is not None
+        ):
+            if (
+                (
+                    fact.created_sequence is not None
+                    and comparison_binding.sequence <= fact.created_sequence
+                )
+                or (
+                    admission_sequence is not None
+                    and comparison_binding.sequence >= admission_sequence
+                )
+                or (
+                    fact.billing_sequence is not None
+                    and comparison_binding.sequence >= fact.billing_sequence
+                )
+                or (
+                    fact.running_sequence is not None
+                    and comparison_binding.sequence >= fact.running_sequence
+                )
+            ):
+                run_issues.append("comparison_binding_order_invalid")
         if admission_sequence is not None:
             if (
                 fact.billing_sequence is not None
@@ -464,6 +617,16 @@ def inspect_authorization_shadows(
             RunAuthorizationInspection(
                 run_id=fact.run_id,
                 run_ref=fact.run_ref,
+                run_kind=(
+                    COMPARISON_RUN_KIND
+                    if valid_comparison_binding
+                    else TASK_ATTEMPT_RUN_KIND
+                ),
+                authorization_shadow_coverage=(
+                    COMPARISON_SHADOW_COVERAGE
+                    if valid_comparison_binding
+                    else TASK_ATTEMPT_SHADOW_COVERAGE
+                ),
                 permission_class=fact.permission_class,
                 attempt=fact.attempt,
                 latest_status=fact.latest_status,
@@ -634,7 +797,12 @@ def _read_run_facts(
         f"""
         SELECT
             r.run_id,
+            r.task_id,
+            r.task_version,
+            r.runner_id,
+            r.context_digest,
             r.permission_class,
+            r.timeout_seconds,
             r.attempt,
             EXISTS (
                 SELECT 1 FROM run_events running
@@ -644,9 +812,16 @@ def _read_run_facts(
                 SELECT 1 FROM run_events succeeded
                 WHERE succeeded.run_id = r.run_id AND succeeded.status = 'succeeded'
             ) AS succeeded_observed,
-            EXISTS (
-                SELECT 1 FROM run_artifacts artifact
-                WHERE artifact.run_id = r.run_id
+            (
+                EXISTS (
+                    SELECT 1 FROM run_artifacts artifact
+                    WHERE artifact.run_id = r.run_id
+                )
+                OR EXISTS (
+                    SELECT 1 FROM run_events comparison_artifact
+                    WHERE comparison_artifact.run_id = r.run_id
+                      AND comparison_artifact.event_type IN (?, ?)
+                )
             ) AS artifact_observed,
             (
                 SELECT latest.status FROM run_events latest
@@ -658,6 +833,21 @@ def _read_run_facts(
                 WHERE shadow.run_id = r.run_id
                   AND shadow.event_type = ?
             ) AS shadow_event_count
+            ,(
+                SELECT COUNT(*) FROM run_events binding
+                WHERE binding.run_id = r.run_id
+                  AND binding.event_type = ?
+            ) AS comparison_binding_event_count
+            ,(
+                SELECT COUNT(*) FROM run_events comparison_billing
+                WHERE comparison_billing.run_id = r.run_id
+                  AND comparison_billing.event_type = 'billing_assessment'
+            ) AS comparison_billing_event_count
+            ,(
+                SELECT MIN(created.sequence) FROM run_events created
+                WHERE created.run_id = r.run_id
+                  AND created.status = 'created'
+            ) AS created_sequence
             ,(
                 SELECT MIN(billing.sequence) FROM run_events billing
                 WHERE billing.run_id = r.run_id
@@ -690,7 +880,13 @@ def _read_run_facts(
         ORDER BY r.created_at DESC, r.run_id DESC
         LIMIT ?
         """,
-        (AUTHORIZATION_SHADOW_EVENT_TYPE, *parameters),
+        (
+            COMPARISON_REVIEW_ARTIFACT_INTENT_EVENT_TYPE,
+            COMPARISON_REVIEW_ARTIFACT_OBSERVED_EVENT_TYPE,
+            AUTHORIZATION_SHADOW_EVENT_TYPE,
+            COMPARISON_TRIAL_BINDING_EVENT_TYPE,
+            *parameters,
+        ),
     ).fetchall()
     truncated = requested_run_id is None and len(rows) > _MAX_RUNS
     selected = rows[:_MAX_RUNS]
@@ -706,6 +902,14 @@ def _read_run_facts(
         permission_class = _permission_class(row["permission_class"])
         if permission_class is None:
             issues.append("run_permission_class_invalid")
+        timeout_seconds = row["timeout_seconds"]
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, int)
+            or timeout_seconds <= 0
+        ):
+            timeout_seconds = None
+            issues.append("run_timeout_invalid")
         attempt = row["attempt"]
         if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt <= 0:
             attempt = None
@@ -721,6 +925,21 @@ def _read_run_facts(
             or shadow_event_count < 0
         ):
             raise sqlite3.DatabaseError("invalid shadow event count")
+        comparison_binding_event_count = row["comparison_binding_event_count"]
+        if (
+            isinstance(comparison_binding_event_count, bool)
+            or not isinstance(comparison_binding_event_count, int)
+            or comparison_binding_event_count < 0
+        ):
+            raise sqlite3.DatabaseError("invalid comparison binding event count")
+        comparison_billing_event_count = row["comparison_billing_event_count"]
+        if (
+            isinstance(comparison_billing_event_count, bool)
+            or not isinstance(comparison_billing_event_count, int)
+            or comparison_billing_event_count < 0
+        ):
+            raise sqlite3.DatabaseError("invalid comparison billing event count")
+        created_sequence = _optional_sequence(row["created_sequence"])
         billing_sequence = _optional_sequence(row["billing_sequence"])
         running_sequence = _optional_sequence(row["running_sequence"])
         accounting_sequence = _optional_sequence(row["accounting_sequence"])
@@ -729,6 +948,11 @@ def _read_run_facts(
         facts.append(
             _RunFacts(
                 raw_run_id=raw_run_id,
+                raw_task_id=row["task_id"],
+                raw_task_version=row["task_version"],
+                raw_runner_id=row["runner_id"],
+                raw_context_digest=row["context_digest"],
+                timeout_seconds=timeout_seconds,
                 run_id=safe_run_id,
                 run_ref=canonical_digest({"run_id": raw_run_id}),
                 permission_class=permission_class,
@@ -738,6 +962,9 @@ def _read_run_facts(
                 succeeded_observed=bool(row["succeeded_observed"]),
                 artifact_observed=bool(row["artifact_observed"]),
                 shadow_event_count=shadow_event_count,
+                comparison_binding_event_count=comparison_binding_event_count,
+                comparison_billing_event_count=comparison_billing_event_count,
+                created_sequence=created_sequence,
                 billing_sequence=billing_sequence,
                 running_sequence=running_sequence,
                 accounting_sequence=accounting_sequence,
@@ -785,12 +1012,251 @@ def _read_shadow_events(
     return tuple(rows)
 
 
+def _read_comparison_binding_events(
+    connection: sqlite3.Connection,
+    facts: tuple[_RunFacts, ...],
+) -> tuple[sqlite3.Row, ...]:
+    """Read at most two bindings per run so duplicates remain detectable."""
+
+    if not facts:
+        return ()
+    placeholders = ",".join("?" for _ in facts)
+    parameters: tuple[Any, ...] = (
+        COMPARISON_TRIAL_BINDING_EVENT_TYPE,
+        *(fact.raw_run_id for fact in facts),
+        _MAX_COMPARISON_BINDING_EVENTS_PER_RUN,
+    )
+    rows = connection.execute(
+        f"""
+        WITH ranked_comparison_bindings AS (
+            SELECT
+                run_id,
+                sequence,
+                payload_json,
+                ROW_NUMBER() OVER (
+                    PARTITION BY run_id ORDER BY sequence
+                ) AS binding_rank
+            FROM run_events
+            WHERE event_type = ? AND run_id IN ({placeholders})
+        )
+        SELECT run_id, sequence, payload_json
+        FROM ranked_comparison_bindings
+        WHERE binding_rank <= ?
+        ORDER BY run_id, sequence
+        """,
+        parameters,
+    ).fetchall()
+    return tuple(rows)
+
+
+def _read_comparison_billing_events(
+    connection: sqlite3.Connection,
+    facts: tuple[_RunFacts, ...],
+) -> tuple[sqlite3.Row, ...]:
+    """Read at most two billing assessments so duplicates remain detectable."""
+
+    if not facts:
+        return ()
+    placeholders = ",".join("?" for _ in facts)
+    parameters: tuple[Any, ...] = (
+        *(fact.raw_run_id for fact in facts),
+        "billing_assessment",
+        _MAX_COMPARISON_BILLING_EVENTS_PER_RUN,
+    )
+    rows = connection.execute(
+        f"""
+        WITH ranked_billing_events AS (
+            SELECT
+                run_id,
+                sequence,
+                payload_json,
+                ROW_NUMBER() OVER (
+                    PARTITION BY run_id ORDER BY sequence
+                ) AS billing_rank
+            FROM run_events
+            WHERE run_id IN ({placeholders}) AND event_type = ?
+        )
+        SELECT run_id, sequence, payload_json
+        FROM ranked_billing_events
+        WHERE billing_rank <= ?
+        ORDER BY run_id, sequence
+        """,
+        parameters,
+    ).fetchall()
+    return tuple(rows)
+
+
+def _inspect_comparison_binding(
+    fact: _RunFacts,
+    rows: list[sqlite3.Row],
+) -> _ComparisonBindingFacts:
+    """Validate one digest-only controller binding without projecting it."""
+
+    if fact.comparison_binding_event_count == 0:
+        return _ComparisonBindingFacts(False, None, None, None, ())
+    if fact.comparison_binding_event_count != 1 or len(rows) != 1:
+        return _ComparisonBindingFacts(
+            True,
+            None,
+            None,
+            None,
+            ("comparison_binding_duplicate",),
+        )
+
+    row = rows[0]
+    sequence = _optional_sequence(row["sequence"])
+    payload_json = row["payload_json"]
+    if not isinstance(payload_json, str):
+        return _invalid_comparison_binding(
+            sequence,
+            "comparison_binding_payload_invalid",
+        )
+    if len(payload_json.encode("utf-8", errors="replace")) > _MAX_PAYLOAD_BYTES:
+        return _invalid_comparison_binding(
+            sequence,
+            "comparison_binding_payload_invalid",
+        )
+    try:
+        payload = json.loads(payload_json, object_pairs_hook=_unique_json_object)
+    except (ValueError, RecursionError, UnicodeError):
+        return _invalid_comparison_binding(
+            sequence,
+            "comparison_binding_payload_invalid",
+        )
+    if not isinstance(payload, Mapping) or set(payload) != {
+        "authorization_shadow_coverage",
+        "binding",
+        "binding_digest",
+        "schema_version",
+    }:
+        return _invalid_comparison_binding(
+            sequence,
+            "comparison_binding_payload_invalid",
+        )
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("authorization_shadow_coverage")
+        != COMPARISON_SHADOW_COVERAGE
+    ):
+        return _invalid_comparison_binding(
+            sequence,
+            "comparison_binding_payload_invalid",
+        )
+
+    binding = payload.get("binding")
+    if not _is_comparison_binding_shape(binding):
+        return _invalid_comparison_binding(
+            sequence,
+            "comparison_binding_payload_invalid",
+        )
+    assert isinstance(binding, Mapping)
+    binding_digest = payload.get("binding_digest")
+    if not _digest_matches(binding_digest, binding):
+        return _ComparisonBindingFacts(
+            True,
+            sequence,
+            None,
+            None,
+            ("comparison_binding_digest_mismatch",),
+        )
+
+    issues: list[str] = []
+    if (
+        binding.get("runner_id") != fact.raw_runner_id
+        or binding.get("permission_class") != fact.permission_class
+        or binding.get("timeout_seconds") != fact.timeout_seconds
+        or binding.get("attempt") != fact.attempt
+        or _normalize_sha256_digest(binding.get("context_digest"))
+        != _normalize_sha256_digest(fact.raw_context_digest)
+    ):
+        issues.append("comparison_binding_record_mismatch")
+    return _ComparisonBindingFacts(
+        True,
+        sequence,
+        binding,
+        binding_digest,
+        tuple(issues),
+    )
+
+
+def _invalid_comparison_binding(
+    sequence: int | None,
+    issue: str,
+) -> _ComparisonBindingFacts:
+    return _ComparisonBindingFacts(True, sequence, None, None, (issue,))
+
+
+def _inspect_comparison_billing(
+    fact: _RunFacts,
+    comparison_binding: _ComparisonBindingFacts,
+    rows: list[sqlite3.Row],
+) -> _ComparisonBillingFacts:
+    """Validate the persisted billing assessment bound to a comparison."""
+
+    if fact.comparison_billing_event_count == 0:
+        return _ComparisonBillingFacts(
+            None,
+            None,
+            None,
+            ("comparison_billing_payload_missing",),
+        )
+    if fact.comparison_billing_event_count != 1 or len(rows) != 1:
+        return _ComparisonBillingFacts(
+            None,
+            None,
+            None,
+            ("comparison_billing_duplicate",),
+        )
+    payload_json = rows[0]["payload_json"]
+    if not isinstance(payload_json, str) or len(
+        payload_json.encode("utf-8", errors="replace")
+    ) > _MAX_PAYLOAD_BYTES:
+        return _invalid_comparison_billing("comparison_billing_payload_invalid")
+    try:
+        payload = json.loads(payload_json, object_pairs_hook=_unique_json_object)
+    except (ValueError, RecursionError, UnicodeError):
+        return _invalid_comparison_billing("comparison_billing_payload_invalid")
+    if not _is_comparison_billing_shape(payload):
+        return _invalid_comparison_billing("comparison_billing_payload_invalid")
+    assert isinstance(payload, Mapping)
+
+    assessment_digest = payload["assessment_digest"]
+    assessment_body = dict(payload)
+    del assessment_body["assessment_digest"]
+    if not _digest_matches(assessment_digest, assessment_body):
+        return _invalid_comparison_billing("comparison_billing_digest_mismatch")
+
+    binding = comparison_binding.binding
+    assert isinstance(binding, Mapping)
+    issues: list[str] = []
+    if (
+        binding["billing_assessment_digest"] != assessment_digest
+        or payload["runner_id"] != binding["runner_id"]
+        or payload["runner_id"] != fact.raw_runner_id
+    ):
+        issues.append("comparison_billing_binding_mismatch")
+    return _ComparisonBillingFacts(
+        payload,
+        assessment_digest,
+        _comparison_billing_evidence_window(payload),
+        tuple(issues),
+    )
+
+
+def _invalid_comparison_billing(issue: str) -> _ComparisonBillingFacts:
+    return _ComparisonBillingFacts(None, None, None, (issue,))
+
+
 def _inspect_event(
     row: sqlite3.Row,
     *,
     now: float,
     expected_run_id: str,
+    expected_task_id: Any,
+    expected_task_version: Any,
     expected_permission_class: int | None,
+    comparison_binding: _ComparisonBindingFacts,
+    comparison_billing: _ComparisonBillingFacts,
 ) -> ShadowDecisionInspection:
     issues: list[str] = []
     sequence = row["sequence"]
@@ -857,7 +1323,7 @@ def _inspect_event(
     requested_permission_class = _permission_class(
         payload.get("requested_permission_class")
     )
-    if schema_version == 2:
+    if schema_version in {2, 3}:
         if requested_permission_class is None:
             issues.append("requested_permission_class_invalid")
         elif (
@@ -889,7 +1355,7 @@ def _inspect_event(
         payload.get("authority_ceiling_parity")
     )
     if (
-        schema_version == 2
+        schema_version in {2, 3}
         and reported_authority_ceiling_parity is None
         and not (
             effect == AuthorizationEffect.INDETERMINATE.value
@@ -902,13 +1368,14 @@ def _inspect_event(
     request = payload.get("request")
     request_digest = payload.get("request_digest")
     failure_stage = payload.get("failure_stage")
-    if schema_version == 2:
+    if schema_version in {2, 3}:
         issues.extend(
             _inspect_task_intent_projection(
                 payload,
                 request=request,
                 failure_stage=failure_stage,
                 action_scope=action_scope,
+                comparison_projection=schema_version == 3,
             )
         )
     request_failure = (
@@ -930,7 +1397,7 @@ def _inspect_event(
             issues.append("request_digest_mismatch")
 
     if (
-        schema_version == 2
+        schema_version in {2, 3}
         and action_scope is not None
         and isinstance(request, Mapping)
     ):
@@ -941,6 +1408,25 @@ def _inspect_event(
                 expected_run_id=expected_run_id,
             )
         )
+
+    if schema_version == 3:
+        issues.extend(
+            _inspect_comparison_shadow_binding(
+                payload,
+                request=request,
+                action_scope=action_scope,
+                expected_task_id=expected_task_id,
+                expected_task_version=expected_task_version,
+                expected_permission_class=expected_permission_class,
+                comparison_binding=comparison_binding,
+                comparison_billing=comparison_billing,
+            )
+        )
+    elif comparison_binding.observed and action_scope in {
+        ADMISSION_SCOPE,
+        DISPATCH_SCOPE,
+    }:
+        issues.append("comparison_shadow_schema_invalid")
 
     recomputed_derived_permission_class: int | None = None
     if isinstance(request, Mapping):
@@ -1066,8 +1552,9 @@ def _inspect_task_intent_projection(
     request: Any,
     failure_stage: Any,
     action_scope: str | None,
+    comparison_projection: bool,
 ) -> tuple[str, ...]:
-    """Validate the safe schema-v2 intent projection without emitting it."""
+    """Validate the safe schema-v2/v3 intent projection without emitting it."""
 
     intent = payload.get("task_authorization_intent")
     intent_digest = payload.get("intent_digest")
@@ -1081,11 +1568,12 @@ def _inspect_task_intent_projection(
         return ()
 
     issues: list[str] = []
-    allowed_sources = (
-        {"controller_boundary_projection"}
-        if action_scope == PUBLICATION_SCOPE
-        else {"legacy_permission_class_fallback", "task_contract"}
-    )
+    if comparison_projection:
+        allowed_sources = {"comparison_trial_projection"}
+    elif action_scope == PUBLICATION_SCOPE:
+        allowed_sources = {"controller_boundary_projection"}
+    else:
+        allowed_sources = {"legacy_permission_class_fallback", "task_contract"}
     if intent_source not in allowed_sources:
         issues.append("task_intent_source_invalid")
     if not _is_task_intent_shape(intent):
@@ -1117,8 +1605,196 @@ def _inspect_task_intent_projection(
             or request_consequences != intent_consequences
         ):
             issues.append("task_intent_request_projection_mismatch")
-    if action_scope == PUBLICATION_SCOPE:
+    if comparison_projection:
+        issues.extend(_inspect_comparison_intent(intent, action_scope=action_scope))
+    elif action_scope == PUBLICATION_SCOPE:
         issues.extend(_inspect_publication_intent(intent))
+    return tuple(issues)
+
+
+def _inspect_comparison_intent(
+    intent: Mapping[str, Any],
+    *,
+    action_scope: str | None,
+) -> tuple[str, ...]:
+    """Validate the fixed Class 0 comparison admission/dispatch projection."""
+
+    action = intent["action"]
+    resource = intent["resource"]
+    consequences = intent["consequences"]
+    assert isinstance(action, Mapping)
+    assert isinstance(resource, Mapping)
+    assert isinstance(consequences, Mapping)
+    if action_scope not in {ADMISSION_SCOPE, DISPATCH_SCOPE}:
+        return ("comparison_intent_invalid",)
+    if (
+        action.get("verb") != ActionVerb.READ.value
+        or action.get("operation")
+        != "comparison.evaluate_immutable_snapshot"
+        or action.get("intended_effect")
+        != "evaluate_immutable_comparison_snapshot"
+        or resource.get("resource_type") != "comparison_snapshot"
+        or resource.get("trust_boundary") != "isolated_run_workspace"
+        or consequences.get("reach") != Reach.LOCAL.value
+        or consequences.get("destructive") is not False
+        or consequences.get("reversible") is not True
+        or consequences.get("blast_radius")
+        != BlastRadius.SINGLE_RESOURCE.value
+    ):
+        return ("comparison_intent_invalid",)
+    return ()
+
+
+def _inspect_comparison_shadow_binding(
+    payload: Mapping[str, Any],
+    *,
+    request: Any,
+    action_scope: str | None,
+    expected_task_id: Any,
+    expected_task_version: Any,
+    expected_permission_class: int | None,
+    comparison_binding: _ComparisonBindingFacts,
+    comparison_billing: _ComparisonBillingFacts,
+) -> tuple[str, ...]:
+    """Bind a schema-v3 shadow to its controller-authored trial metadata."""
+
+    issues: list[str] = []
+    if action_scope not in {ADMISSION_SCOPE, DISPATCH_SCOPE}:
+        issues.append("comparison_shadow_schema_invalid")
+    if expected_permission_class != int(PermissionClass.READ_ONLY):
+        issues.append("comparison_request_binding_mismatch")
+    reported_binding_digest = payload.get("comparison_binding_digest")
+    if (
+        comparison_binding.binding_digest is None
+        or reported_binding_digest != comparison_binding.binding_digest
+    ):
+        issues.append("comparison_shadow_binding_digest_mismatch")
+
+    binding = comparison_binding.binding
+    if not isinstance(binding, Mapping) or not isinstance(request, Mapping):
+        return tuple(issues)
+
+    subject = request.get("subject")
+    resource = request.get("resource")
+    action = request.get("action")
+    if (
+        not isinstance(subject, Mapping)
+        or subject.get("profile_id") != binding["profile_ref"]
+        or subject.get("runner_id") != binding["runner_id"]
+        or not isinstance(resource, Mapping)
+        or resource.get("repository_id") != binding["repository_ref"]
+        or resource.get("version") != binding["snapshot_digest"]
+        or resource.get("content_digest")
+        != (
+            binding["context_digest"]
+            if action_scope == ADMISSION_SCOPE
+            else binding["prompt_digest"]
+        )
+        or not isinstance(action, Mapping)
+    ):
+        issues.append("comparison_request_binding_mismatch")
+        return tuple(issues)
+
+    if action_scope == ADMISSION_SCOPE:
+        boundary_parameters = {
+            "comparison_binding_digest": comparison_binding.binding_digest,
+            "context_digest": binding["context_digest"],
+            "snapshot_digest": binding["snapshot_digest"],
+        }
+    elif action_scope == DISPATCH_SCOPE:
+        boundary_parameters = {
+            "comparison_binding_digest": comparison_binding.binding_digest,
+            "prompt_digest": binding["prompt_digest"],
+            "snapshot_digest": binding["snapshot_digest"],
+        }
+    else:
+        return tuple(issues)
+    expected_parameters_digest = canonical_digest(
+        {
+            "action_scope": action_scope,
+            "intent_digest": payload.get("intent_digest"),
+            "intent_source": "comparison_trial_projection",
+            "legacy_permission_class": int(PermissionClass.READ_ONLY),
+            "output_schema_digest": binding["output_schema_digest"],
+            "parameters": boundary_parameters,
+            "profile_ref": binding["profile_ref"],
+            "runner_id": binding["runner_id"],
+            "task_definition_digest": binding["task_definition_digest"],
+            "task_id": expected_task_id,
+            "task_version": expected_task_version,
+        }
+    )
+    if action.get("parameters_digest") != expected_parameters_digest:
+        issues.append("comparison_request_binding_mismatch")
+    issues.extend(
+        _inspect_comparison_request_environment(
+            request,
+            comparison_billing=comparison_billing,
+        )
+    )
+    return tuple(issues)
+
+
+def _inspect_comparison_request_environment(
+    request: Mapping[str, Any],
+    *,
+    comparison_billing: _ComparisonBillingFacts,
+) -> tuple[str, ...]:
+    """Compare v3 environment attributes with bound billing evidence."""
+
+    payload = comparison_billing.payload
+    if not isinstance(payload, Mapping):
+        return ()
+    environment = request.get("environment")
+    if not isinstance(environment, Mapping):
+        return ("comparison_billing_environment_mismatch",)
+    issues: list[str] = []
+    expected_route = payload["route"]
+    expected_capacity_state = payload["capacity_state"]
+    expected_paid_continuation = payload["paid_continuation_protection"]
+    if payload["runner_id"] == "mock":
+        expected_route = BillingRoute.MOCK.value
+        expected_capacity_state = CapacityState.NOT_APPLICABLE.value
+        expected_paid_continuation = (
+            PaidContinuationProtection.NOT_APPLICABLE.value
+        )
+    if (
+        environment.get("billing_route") != expected_route
+        or environment.get("capacity_state") != expected_capacity_state
+        or environment.get("paid_continuation_protection")
+        != expected_paid_continuation
+    ):
+        issues.append("comparison_billing_environment_mismatch")
+
+    evaluated_at = _optional_timestamp(environment.get("evaluated_at"))
+    expected_window = comparison_billing.evidence_window
+    if payload["runner_id"] == "mock" and evaluated_at is not None:
+        expected_window = (
+            evaluated_at,
+            evaluated_at + _SHADOW_EVIDENCE_LIFETIME_SECONDS,
+        )
+    evidence = request.get("evidence")
+    environment_evidence = (
+        [
+            item
+            for item in evidence
+            if isinstance(item, Mapping)
+            and item.get("attribute") == "environment"
+        ]
+        if isinstance(evidence, list)
+        else []
+    )
+    if expected_window is None:
+        if environment_evidence:
+            issues.append("comparison_billing_evidence_window_mismatch")
+    elif (
+        len(environment_evidence) != 1
+        or _optional_timestamp(environment_evidence[0].get("observed_at"))
+        != expected_window[0]
+        or _optional_timestamp(environment_evidence[0].get("expires_at"))
+        != expected_window[1]
+    ):
+        issues.append("comparison_billing_evidence_window_mismatch")
     return tuple(issues)
 
 
@@ -1554,6 +2230,176 @@ def _is_task_intent_shape(value: Any) -> bool:
     )
 
 
+def _is_comparison_binding_shape(value: Any) -> bool:
+    """Accept only the fixed, digest-only comparison binding schema."""
+
+    if not isinstance(value, Mapping) or set(value) != {
+        "attempt",
+        "billing_assessment_digest",
+        "comparison_ref",
+        "context_digest",
+        "controls_digest",
+        "kind",
+        "order_index",
+        "output_schema_digest",
+        "permission_class",
+        "plan_digest",
+        "profile_configuration_digest",
+        "profile_ref",
+        "profile_version_ref",
+        "prompt_digest",
+        "repetition",
+        "repository_ref",
+        "runner_id",
+        "runner_overrides_digest",
+        "snapshot_digest",
+        "task_definition_digest",
+        "timeout_seconds",
+        "trial_ref",
+    }:
+        return False
+    digest_fields = {
+        "billing_assessment_digest",
+        "comparison_ref",
+        "context_digest",
+        "controls_digest",
+        "output_schema_digest",
+        "plan_digest",
+        "profile_configuration_digest",
+        "profile_ref",
+        "profile_version_ref",
+        "prompt_digest",
+        "repository_ref",
+        "runner_overrides_digest",
+        "snapshot_digest",
+        "task_definition_digest",
+        "trial_ref",
+    }
+    if any(not _is_digest(value.get(field)) for field in digest_fields):
+        return False
+    repetition = value.get("repetition")
+    order_index = value.get("order_index")
+    timeout_seconds = value.get("timeout_seconds")
+    attempt = value.get("attempt")
+    permission_class = value.get("permission_class")
+    return (
+        value.get("kind") == COMPARISON_RUN_KIND
+        and _bounded_authorization_identifier(value.get("runner_id"))
+        and isinstance(permission_class, int)
+        and not isinstance(permission_class, bool)
+        and permission_class == int(PermissionClass.READ_ONLY)
+        and isinstance(repetition, int)
+        and not isinstance(repetition, bool)
+        and repetition > 0
+        and isinstance(order_index, int)
+        and not isinstance(order_index, bool)
+        and order_index >= 0
+        and isinstance(timeout_seconds, int)
+        and not isinstance(timeout_seconds, bool)
+        and timeout_seconds > 0
+        and isinstance(attempt, int)
+        and not isinstance(attempt, bool)
+        and attempt > 0
+    )
+
+
+def _is_comparison_billing_shape(value: Any) -> bool:
+    if not isinstance(value, Mapping) or set(value) != {
+        "account_identity_ref",
+        "assessment_digest",
+        "attestation",
+        "capacity_expires_at",
+        "capacity_observed_at",
+        "capacity_state",
+        "confidence",
+        "paid_continuation_protection",
+        "paid_credit_balance",
+        "route",
+        "runner_id",
+        "schema_version",
+        "subscription_ref",
+    }:
+        return False
+    if (
+        value.get("schema_version") != 1
+        or not _is_digest(value.get("assessment_digest"))
+        or not _bounded_authorization_identifier(value.get("runner_id"))
+        or value.get("route") not in {item.value for item in BillingRoute}
+        or value.get("confidence")
+        not in {item.value for item in AssessmentConfidence}
+        or value.get("capacity_state")
+        not in {item.value for item in CapacityState}
+        or value.get("paid_continuation_protection")
+        not in {item.value for item in PaidContinuationProtection}
+        or value.get("paid_credit_balance")
+        not in {item.value for item in PaidCreditBalance}
+        or not _is_optional_digest(value.get("subscription_ref"))
+        or not _is_optional_digest(value.get("account_identity_ref"))
+        or not _is_optional_timestamp_value(value.get("capacity_observed_at"))
+        or not _is_optional_timestamp_value(value.get("capacity_expires_at"))
+    ):
+        return False
+    capacity_observed_at = value.get("capacity_observed_at")
+    capacity_expires_at = value.get("capacity_expires_at")
+    if (
+        capacity_observed_at is not None
+        and capacity_expires_at is not None
+        and float(capacity_expires_at) <= float(capacity_observed_at)
+    ):
+        return False
+
+    attestation = value.get("attestation")
+    if attestation is None:
+        return True
+    if not isinstance(attestation, Mapping) or set(attestation) != {
+        "account_identity_ref",
+        "billing_route",
+        "capacity_state",
+        "confidence",
+        "expires_at",
+        "observed_at",
+        "paid_continuation_protection",
+        "runner_id",
+    }:
+        return False
+    observed_at = attestation.get("observed_at")
+    expires_at = attestation.get("expires_at")
+    return (
+        attestation.get("runner_id") == value.get("runner_id")
+        and attestation.get("billing_route") == value.get("route")
+        and attestation.get("capacity_state") == value.get("capacity_state")
+        and attestation.get("paid_continuation_protection")
+        == value.get("paid_continuation_protection")
+        and attestation.get("account_identity_ref")
+        == value.get("account_identity_ref")
+        and attestation.get("confidence")
+        in {item.value for item in AssessmentConfidence}
+        and _is_required_timestamp_value(observed_at)
+        and _is_required_timestamp_value(expires_at)
+        and float(expires_at) > float(observed_at)
+    )
+
+
+def _comparison_billing_evidence_window(
+    payload: Mapping[str, Any],
+) -> tuple[float, float] | None:
+    observations: list[float] = []
+    expiries: list[float] = []
+    capacity_observed_at = payload["capacity_observed_at"]
+    capacity_expires_at = payload["capacity_expires_at"]
+    if capacity_observed_at is not None:
+        observations.append(float(capacity_observed_at))
+    if capacity_expires_at is not None:
+        expiries.append(float(capacity_expires_at))
+    attestation = payload["attestation"]
+    if isinstance(attestation, Mapping):
+        observations.append(float(attestation["observed_at"]))
+        expiries.append(float(attestation["expires_at"]))
+    if not observations or not expiries:
+        return None
+    return min(observations), min(expiries)
+
+
 def _bounded_authorization_identifier(value: Any) -> bool:
     return (
         isinstance(value, str)
@@ -1610,6 +2456,32 @@ def _digest_matches(reported: Any, value: Mapping[str, Any]) -> bool:
 
 def _is_digest(value: Any) -> bool:
     return isinstance(value, str) and _DIGEST_PATTERN.fullmatch(value) is not None
+
+
+def _is_optional_digest(value: Any) -> bool:
+    return value is None or _is_digest(value)
+
+
+def _is_required_timestamp_value(value: Any) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+        and float(value) >= 0
+    )
+
+
+def _is_optional_timestamp_value(value: Any) -> bool:
+    return value is None or _is_required_timestamp_value(value)
+
+
+def _normalize_sha256_digest(value: Any) -> str | None:
+    if _is_digest(value):
+        assert isinstance(value, str)
+        return value
+    if isinstance(value, str) and _BARE_SHA256_PATTERN.fullmatch(value) is not None:
+        return f"sha256:{value}"
+    return None
 
 
 def _known_string(value: Any, allowed: frozenset[str]) -> str | None:
@@ -1683,6 +2555,8 @@ __all__ = [
     "ADMISSION_SCOPE",
     "AUTHORIZATION_SHADOW_EVENT_TYPE",
     "AuthorizationInspectionReport",
+    "COMPARISON_RUN_KIND",
+    "COMPARISON_SHADOW_COVERAGE",
     "DISPATCH_SCOPE",
     "EvidenceFreshnessInspection",
     "KNOWN_ACTION_SCOPES",
@@ -1690,5 +2564,7 @@ __all__ = [
     "RunAuthorizationInspection",
     "ShadowDecisionInspection",
     "SUPPORTED_SHADOW_SCHEMA_VERSIONS",
+    "TASK_ATTEMPT_RUN_KIND",
+    "TASK_ATTEMPT_SHADOW_COVERAGE",
     "inspect_authorization_shadows",
 ]

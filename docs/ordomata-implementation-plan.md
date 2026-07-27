@@ -326,9 +326,10 @@ evidence payloads remain separate operational state.
   attributes, independently reports a derived class above persisted authority,
   and does not change a
   current allow or deny outcome. Chief-of-Staff admission, dispatch intent, and
-  local-candidate publication are observed and inspectable; controlled
-  comparison trials, mediated commands/tools, and complete legacy-path parity
-  remain exit requirements.
+  local-candidate publication are observed and inspectable. Controlled
+  comparison trials now have digest-bound Class 0 admission/dispatch shadows;
+  their separate Class 1 private-artifact boundary, mediated commands/tools,
+  and complete legacy-path parity remain exit requirements.
 - No live harness, schedule, repository, or external system is touched.
 
 ### Deferred

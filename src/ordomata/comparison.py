@@ -20,7 +20,7 @@ import re
 import time
 from typing import Any
 
-from .billing import BillingPolicy
+from .billing import BillingPolicy, BillingPostRunDisposition
 from .errors import (
     OrdomataError,
     BillingRouteBlocked,
@@ -29,7 +29,9 @@ from .errors import (
 )
 from .evaluation import EvaluationResult, evaluate_chief_of_staff
 from .models import (
+    AgentEvent,
     BillingRoute,
+    BillingRouteAssessment,
     CapacityState,
     CircuitBreakerState,
     IncrementalAICharge,
@@ -40,17 +42,33 @@ from .models import (
     RunStatus,
     UsageObservation,
 )
-from .orchestrator import PreparedTask
+from .orchestrator import (
+    PreparedTask,
+    _billing_assessments_match,
+    _record_billing_outcome,
+    _resolve_billing_disposition,
+)
 from .paths import resolve_state_root
 from .redaction import DEFAULT_REDACTOR, contains_credential_material
 from .routing import ExecutionProfile, runner_overrides_for_profile
 from .runners.base import AgentRunner
+from .shadow_authorization import (
+    build_comparison_trial_admission_shadow_event,
+    build_comparison_trial_dispatch_shadow_event,
+)
 from .state import SQLiteBillingCircuitGuard, SQLiteStateStore
 
 
 CONTROLLED_COMPARISON_TRIAL_TIMEOUT_SECONDS = 120
 CONTROLLED_COMPARISON_EVIDENCE_MARGIN_SECONDS = 60
-COMPARISON_AUTHORIZATION_SHADOW_COVERAGE = "deferred_not_covered"
+COMPARISON_AUTHORIZATION_SHADOW_COVERAGE = "partial_admission_dispatch_shadow"
+COMPARISON_TRIAL_BINDING_EVENT_TYPE = "comparison_trial_binding"
+COMPARISON_REVIEW_ARTIFACT_INTENT_EVENT_TYPE = (
+    "comparison_review_artifact_intent"
+)
+COMPARISON_REVIEW_ARTIFACT_OBSERVED_EVENT_TYPE = (
+    "comparison_review_artifact_observed"
+)
 
 
 def _non_empty(value: str, field_name: str) -> str:
@@ -1064,6 +1082,370 @@ def comparison_snapshot_from_prepared(prepared: PreparedTask) -> ComparisonSnaps
     )
 
 
+def _comparison_controls_mapping(controls: ComparisonControls) -> dict[str, Any]:
+    return {
+        "context_digest": controls.context_digest,
+        "output_schema_digest": controls.output_schema_digest,
+        "timeout_seconds": controls.timeout_seconds,
+        "permission_class": int(controls.permission_class),
+        "fresh_session_per_trial": controls.fresh_session_per_trial,
+        "outputs_shared_between_trials": controls.outputs_shared_between_trials,
+        "external_actions_allowed": controls.external_actions_allowed,
+    }
+
+
+def _comparison_run_id(
+    plan: ControlledComparisonPlan,
+    trial: ControlledComparisonTrial,
+) -> str:
+    """Return a collision-resistant identifier without exposing plan labels."""
+
+    run_ref = _canonical_digest(
+        {
+            "comparison_id": plan.comparison_id,
+            "snapshot_digest": plan.snapshot.digest,
+            "trial_id": trial.trial_id,
+        }
+    )
+    return "compare-" + run_ref.removeprefix("sha256:")
+
+
+def _canonical_snapshot_digest(snapshot: ComparisonSnapshot) -> str:
+    return "sha256:" + snapshot.digest
+
+
+def _normalized_digest(value: str, field_name: str) -> str:
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", value):
+        return value
+    if re.fullmatch(r"[0-9a-f]{64}", value):
+        return "sha256:" + value
+    raise ValidationError(f"{field_name} must be a canonical SHA-256 digest")
+
+
+def _safe_optional_timestamp(value: Any) -> float | None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or float(value) < 0
+    ):
+        return None
+    return float(value)
+
+
+def _account_identity_ref(value: str | None) -> str | None:
+    fingerprint = _safe_fingerprint(value)
+    if fingerprint is None:
+        return None
+    return _canonical_digest({"account_identity_fingerprint": fingerprint})
+
+
+def _comparison_billing_metadata(
+    assessment: BillingRouteAssessment,
+) -> dict[str, Any]:
+    """Project exact safety semantics without provider text or raw identity."""
+
+    subscription_ref = (
+        _canonical_digest({"subscription_name": assessment.subscription_name})
+        if isinstance(assessment.subscription_name, str)
+        and bool(assessment.subscription_name.strip())
+        else None
+    )
+    attestation = assessment.attestation
+    attestation_projection = (
+        None
+        if attestation is None
+        else {
+            "runner_id": attestation.runner_id,
+            "account_identity_ref": _account_identity_ref(
+                attestation.account_identity_fingerprint
+            ),
+            "billing_route": attestation.billing_route.value,
+            "capacity_state": attestation.capacity_state.value,
+            "paid_continuation_protection": (
+                attestation.paid_continuation_protection.value
+            ),
+            "observed_at": _safe_optional_timestamp(attestation.observed_at),
+            "expires_at": _safe_optional_timestamp(attestation.expires_at),
+            "confidence": attestation.confidence.value,
+        }
+    )
+    projection: dict[str, Any] = {
+        "schema_version": 1,
+        "runner_id": assessment.runner_id,
+        "route": assessment.route.value,
+        "confidence": assessment.confidence.value,
+        "subscription_ref": subscription_ref,
+        "capacity_state": assessment.capacity_state.value,
+        "paid_continuation_protection": (
+            assessment.paid_continuation_protection.value
+        ),
+        "paid_credit_balance": assessment.paid_credit_balance.value,
+        "account_identity_ref": _account_identity_ref(
+            assessment.account_identity_fingerprint
+        ),
+        "capacity_observed_at": _safe_optional_timestamp(
+            assessment.capacity_observed_at
+        ),
+        "capacity_expires_at": _safe_optional_timestamp(
+            assessment.capacity_expires_at
+        ),
+        "attestation": attestation_projection,
+    }
+    projection["assessment_digest"] = _canonical_digest(projection)
+    return projection
+
+
+def _comparison_trial_binding_event(
+    *,
+    root: Path,
+    prepared: PreparedTask,
+    plan: ControlledComparisonPlan,
+    controls: ComparisonControls,
+    trial: ControlledComparisonTrial,
+    profile: ExecutionProfile,
+    planned_profile: ComparisonProfile,
+    request: RunRequest,
+    prompt_digest: str,
+    billing_assessment_digest: str,
+) -> dict[str, Any]:
+    comparison_ref = _canonical_digest({"comparison_id": plan.comparison_id})
+    binding: dict[str, Any] = {
+        "kind": "controlled_comparison_trial",
+        "comparison_ref": comparison_ref,
+        "trial_ref": _canonical_digest(
+            {
+                "comparison_ref": comparison_ref,
+                "trial_id": trial.trial_id,
+            }
+        ),
+        "plan_digest": _canonical_digest(_controlled_plan_mapping(plan, controls)),
+        "snapshot_digest": _canonical_snapshot_digest(plan.snapshot),
+        "controls_digest": _canonical_digest(
+            _comparison_controls_mapping(controls)
+        ),
+        "context_digest": _normalized_digest(
+            controls.context_digest, "comparison context digest"
+        ),
+        "prompt_digest": prompt_digest,
+        "task_definition_digest": _normalized_digest(
+            prepared.contract.definition_hash, "task definition digest"
+        ),
+        "output_schema_digest": controls.output_schema_digest,
+        "repository_ref": _canonical_digest({"project_root": str(root)}),
+        "profile_ref": _canonical_digest({"profile_id": profile.profile_id}),
+        "profile_version_ref": _canonical_digest(
+            {"profile_version": profile.version}
+        ),
+        "profile_configuration_digest": (
+            planned_profile.configuration_digest
+        ),
+        "runner_overrides_digest": _canonical_digest(
+            dict(request.runner_overrides)
+        ),
+        "billing_assessment_digest": billing_assessment_digest,
+        "runner_id": planned_profile.runner_id,
+        "repetition": trial.repetition,
+        "order_index": trial.order_index,
+        "timeout_seconds": request.timeout_seconds,
+        "attempt": request.attempt,
+        "permission_class": int(request.permission_class),
+    }
+    return {
+        "schema_version": 1,
+        "authorization_shadow_coverage": (
+            COMPARISON_AUTHORIZATION_SHADOW_COVERAGE
+        ),
+        "binding": binding,
+        "binding_digest": _canonical_digest(binding),
+    }
+
+
+def _safe_result_status(value: Any) -> str:
+    return value.value if isinstance(value, RunStatus) else "invalid"
+
+
+def _safe_optional_boolean(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
+def _comparison_execution_accounting(
+    result: RunnerExecutionResult | None,
+    *,
+    identity_matches: bool | None,
+    billing_matches: bool | None,
+    runner_event_count: int,
+    billing_disposition: BillingPostRunDisposition | None = None,
+    failure_code: str | None = None,
+    billing_unknown: bool = False,
+) -> dict[str, Any]:
+    if result is None:
+        return {
+            "schema_version": 1,
+            "result_observed": False,
+            "identity_matches": identity_matches,
+            "billing_matches": billing_matches,
+            "runner_event_count": runner_event_count,
+            "result_status": "unknown",
+            "harness_process_started": None,
+            "live_model_execution_occurred": None,
+            "subscription_capacity_consumed": None,
+            "paid_capacity_consumed": PaidCapacityConsumed.UNKNOWN.value,
+            "incremental_ai_charge": IncrementalAICharge.UNKNOWN.value,
+            "usage_observation": UsageObservation.UNAVAILABLE.value,
+            "billing_quarantine_required": billing_unknown,
+            "billing_circuit_breaker_required": billing_unknown,
+            "failure_code": failure_code,
+            "wall_seconds": None,
+        }
+    wall_seconds = _safe_optional_timestamp(result.wall_seconds)
+    if billing_unknown:
+        paid_capacity_consumed = PaidCapacityConsumed.UNKNOWN.value
+        incremental_ai_charge = IncrementalAICharge.UNKNOWN.value
+        quarantine_required = True
+        circuit_breaker_required = True
+    elif billing_disposition is not None:
+        paid_capacity_consumed = billing_disposition.paid_capacity_consumed.value
+        incremental_ai_charge = billing_disposition.incremental_ai_charge.value
+        quarantine_required = billing_disposition.quarantine_required
+        circuit_breaker_required = billing_disposition.circuit_breaker_required
+    else:
+        paid_capacity_consumed = (
+            result.paid_capacity_consumed.value
+            if isinstance(result.paid_capacity_consumed, PaidCapacityConsumed)
+            else PaidCapacityConsumed.UNKNOWN.value
+        )
+        incremental_ai_charge = (
+            result.incremental_ai_charge.value
+            if isinstance(result.incremental_ai_charge, IncrementalAICharge)
+            else IncrementalAICharge.UNKNOWN.value
+        )
+        quarantine_required = _safe_optional_boolean(
+            result.billing_quarantine_required
+        )
+        circuit_breaker_required = _safe_optional_boolean(
+            result.billing_circuit_breaker_required
+        )
+    return {
+        "schema_version": 1,
+        "result_observed": True,
+        "identity_matches": identity_matches,
+        "billing_matches": billing_matches,
+        "runner_event_count": runner_event_count,
+        "result_status": _safe_result_status(result.status),
+        "harness_process_started": _safe_optional_boolean(
+            result.harness_process_started
+        ),
+        "live_model_execution_occurred": _safe_optional_boolean(
+            result.live_model_execution_occurred
+        ),
+        "subscription_capacity_consumed": _safe_optional_boolean(
+            result.subscription_capacity_consumed
+            if (
+                identity_matches is True
+                and billing_matches is True
+                and (
+                    billing_disposition is None
+                    or (
+                        not billing_disposition.quarantine_required
+                        and not billing_disposition.circuit_breaker_required
+                    )
+                )
+            )
+            else None
+        ),
+        "paid_capacity_consumed": paid_capacity_consumed,
+        "incremental_ai_charge": incremental_ai_charge,
+        "usage_observation": (
+            result.usage_observation.value
+            if isinstance(result.usage_observation, UsageObservation)
+            else UsageObservation.UNAVAILABLE.value
+        ),
+        "billing_quarantine_required": quarantine_required,
+        "billing_circuit_breaker_required": circuit_breaker_required,
+        "failure_code": failure_code,
+        "wall_seconds": wall_seconds,
+    }
+
+
+def _best_effort_comparison_shadow(
+    state: SQLiteStateStore,
+    run_id: str,
+    builder: Callable[[], dict[str, Any]],
+) -> bool:
+    try:
+        state.append_event(
+            run_id,
+            "authorization_shadow_decision",
+            builder(),
+        )
+    except Exception:
+        return False
+    return True
+
+
+def _terminalize_comparison_run(
+    state: SQLiteStateStore,
+    run_id: str,
+    *,
+    status: RunStatus,
+    phase: str,
+    details: Mapping[str, Any] | None = None,
+) -> None:
+    """Durably terminalize a comparison run or fail instead of misreporting it."""
+
+    if state.current_status(run_id) not in {
+        RunStatus.CREATED,
+        RunStatus.RUNNING,
+    }:
+        raise ValidationError("comparison run cannot be terminalized from its state")
+    state.append_event(
+        run_id,
+        "status",
+        {"phase": phase, **dict(details or {})},
+        status=status,
+    )
+    if state.current_status(run_id) is not status:
+        raise ConfigurationError("comparison terminal status was not persisted")
+
+
+def _record_unknown_comparison_billing(
+    state: SQLiteStateStore,
+    *,
+    assessment: BillingRouteAssessment,
+    profile_id: str,
+    run_id: str,
+) -> None:
+    if assessment.route is not BillingRoute.SUBSCRIPTION_INCLUDED:
+        return
+    trusted_fingerprint = _safe_fingerprint(
+        assessment.account_identity_fingerprint
+    )
+    state.append_billing_capacity_event(
+        runner_id=assessment.runner_id,
+        capacity_state=CapacityState.UNKNOWN,
+        reason_code="post_run_billing_unknown",
+        account_identity_fingerprint=trusted_fingerprint,
+        profile_id=profile_id,
+        run_id=run_id,
+    )
+    scopes = (
+        (trusted_fingerprint, profile_id),
+        (trusted_fingerprint, None),
+        (None, profile_id),
+        (None, None),
+    )
+    for scope_fingerprint, scope_profile_id in tuple(dict.fromkeys(scopes)):
+        state.append_billing_circuit_event(
+            runner_id=assessment.runner_id,
+            state=CircuitBreakerState.OPEN,
+            reason_code="post_run_billing_unknown",
+            account_identity_fingerprint=scope_fingerprint,
+            profile_id=scope_profile_id,
+            run_id=run_id,
+        )
+
+
 async def run_controlled_comparison(
     project_root: str | Path,
     *,
@@ -1201,13 +1583,19 @@ async def run_controlled_comparison(
 
     outcomes: list[ControlledTrialOutcome] = []
     stop_remaining = False
+    planned_profile_by_id = {
+        profile.profile_id: profile for profile in plan.profiles
+    }
+    prompt_digest = "sha256:" + sha256(
+        prepared.prompt.encode("utf-8")
+    ).hexdigest()
     with SQLiteStateStore(state_path) as state:
         for trial, profile, runner, assessment in prepared_trials:
             if stop_remaining:
                 break
             if comparison_snapshot_from_prepared(prepared).digest != plan.snapshot.digest:
                 raise ValidationError("immutable comparison snapshot changed between trials")
-            run_id = f"compare-{plan.snapshot.digest[:10]}-{trial.order_index + 1:03d}"
+            run_id = _comparison_run_id(plan, trial)
             run_directory = trials_directory / f"{trial.order_index + 1:03d}"
             workspace = run_directory / "workspace"
             run_directory.mkdir(mode=0o700)
@@ -1225,42 +1613,248 @@ async def run_controlled_comparison(
                 attempt=1,
                 runner_overrides=runner_overrides_for_profile(profile),
             )
+            billing_metadata = _comparison_billing_metadata(assessment)
+            binding_event = _comparison_trial_binding_event(
+                root=root,
+                prepared=prepared,
+                plan=plan,
+                controls=controls,
+                trial=trial,
+                profile=profile,
+                planned_profile=planned_profile_by_id[trial.profile_id],
+                request=request,
+                prompt_digest=prompt_digest,
+                billing_assessment_digest=billing_metadata[
+                    "assessment_digest"
+                ],
+            )
+            binding_digest = binding_event["binding_digest"]
+            state.create_run_from_request(
+                request,
+                runner_id=runner.runner_id,
+                context_digest=prepared.context_pack.snapshot_hash,
+            )
+            try:
+                state.append_event(
+                    run_id,
+                    COMPARISON_TRIAL_BINDING_EVENT_TYPE,
+                    binding_event,
+                )
+                _best_effort_comparison_shadow(
+                    state,
+                    run_id,
+                    lambda: build_comparison_trial_admission_shadow_event(
+                        contract=prepared.contract,
+                        run_id=run_id,
+                        runner_id=runner.runner_id,
+                        profile_id=profile.profile_id,
+                        project_root=root,
+                        comparison_binding_digest=binding_digest,
+                        snapshot_digest=_canonical_snapshot_digest(plan.snapshot),
+                        context_digest=_normalized_digest(
+                            prepared.context_pack.snapshot_hash,
+                            "comparison context digest",
+                        ),
+                        billing_assessment=assessment,
+                        evaluated_at=time.time(),
+                        legacy_executable=True,
+                    ),
+                )
+                state.append_event(
+                    run_id,
+                    "billing_assessment",
+                    billing_metadata,
+                )
+                state.append_event(
+                    run_id,
+                    "status",
+                    {"phase": "comparison_trial_execution"},
+                    status=RunStatus.RUNNING,
+                )
+            except BaseException:
+                _terminalize_comparison_run(
+                    state,
+                    run_id,
+                    status=RunStatus.BLOCKED,
+                    phase="comparison_audit_setup_failure",
+                )
+                raise
             events_seen = 0
 
-            async def event_sink(_event: Any) -> None:
+            async def event_sink(_event: AgentEvent) -> None:
                 nonlocal events_seen
                 events_seen += 1
+                # Model-controlled event type and payload are never persisted.
+                state.append_event(
+                    run_id,
+                    "runner_event_observed",
+                    {"ordinal": events_seen},
+                )
 
             started_at = time.monotonic()
+            result: RunnerExecutionResult | None = None
+            identity_matches: bool | None = None
+            billing_matches: bool | None = None
+            accounting_recorded = False
+            billing_disposition: BillingPostRunDisposition | None = None
+            subscription_billing_recorded = (
+                assessment.route is not BillingRoute.SUBSCRIPTION_INCLUDED
+            )
+            core_audit_persistence_error = False
+            review_artifact_path: Path | None = None
+            artifact_digest: str | None = None
+            _best_effort_comparison_shadow(
+                state,
+                run_id,
+                lambda: build_comparison_trial_dispatch_shadow_event(
+                    contract=prepared.contract,
+                    run_id=run_id,
+                    runner_id=runner.runner_id,
+                    profile_id=profile.profile_id,
+                    project_root=root,
+                    comparison_binding_digest=binding_digest,
+                    snapshot_digest=_canonical_snapshot_digest(plan.snapshot),
+                    prompt_digest=prompt_digest,
+                    billing_assessment=assessment,
+                    evaluated_at=time.time(),
+                    legacy_executable=True,
+                ),
+            )
             try:
-                result = await runner.execute(request, event_sink)
-                if not isinstance(result, RunnerExecutionResult):
+                observed_result = await runner.execute(request, event_sink)
+                if not isinstance(observed_result, RunnerExecutionResult):
                     raise ValidationError("runner returned an invalid result type")
+                result = observed_result
                 identity_matches = (
                     result.run_id == run_id and result.runner_id == runner.runner_id
                 )
-                billing_matches = _billing_assessment_matches(
+                billing_matches = _billing_assessments_match(
                     assessment, result.billing_assessment
                 )
-                workspace_entries = tuple(workspace.rglob("*"))
-                credential_detected = (
-                    result.credential_material_detected
-                    or contains_credential_material(result.output)
+                billing_disposition = _resolve_billing_disposition(
+                    result=result,
+                    preflight_assessment=assessment,
+                    billing_matches=(
+                        identity_matches is True and billing_matches is True
+                    ),
                 )
-                redacted_output = DEFAULT_REDACTOR.redact(result.output)
+                if assessment.route is BillingRoute.SUBSCRIPTION_INCLUDED:
+                    _record_billing_outcome(
+                        state,
+                        run_id=run_id,
+                        profile_id=profile.profile_id,
+                        preflight_assessment=assessment,
+                        postflight_assessment=(
+                            result.postflight_billing_assessment
+                        ),
+                        disposition=billing_disposition,
+                        billing_matches=(
+                            identity_matches is True and billing_matches is True
+                        ),
+                    )
+                    subscription_billing_recorded = True
+                try:
+                    state.append_event(
+                        run_id,
+                        "execution_accounting",
+                        _comparison_execution_accounting(
+                            result,
+                            identity_matches=identity_matches,
+                            billing_matches=billing_matches,
+                            runner_event_count=events_seen,
+                            billing_disposition=billing_disposition,
+                        ),
+                    )
+                except BaseException:
+                    core_audit_persistence_error = True
+                    raise
+                accounting_recorded = True
+                stop_remaining = stop_remaining or (
+                    identity_matches is not True
+                    or billing_matches is not True
+                    or (
+                        assessment.route is BillingRoute.SUBSCRIPTION_INCLUDED
+                        and (
+                            billing_disposition.quarantine_required
+                            or billing_disposition.circuit_breaker_required
+                            or billing_disposition.capacity_state
+                            in {
+                                CapacityState.LIMIT_REACHED,
+                                CapacityState.BLOCKED_UNTIL_RESET,
+                                CapacityState.COOLDOWN,
+                                CapacityState.UNKNOWN,
+                            }
+                        )
+                    )
+                )
+                workspace_entries = tuple(workspace.rglob("*"))
+                billing_or_identity_untrusted = (
+                    identity_matches is not True
+                    or billing_matches is not True
+                    or billing_disposition.quarantine_required
+                    or billing_disposition.circuit_breaker_required
+                )
+                credential_detected = (
+                    False
+                    if billing_or_identity_untrusted
+                    else (
+                        result.credential_material_detected
+                        or contains_credential_material(result.output)
+                    )
+                )
+                redacted_output = (
+                    None
+                    if billing_or_identity_untrusted
+                    else DEFAULT_REDACTOR.redact(result.output)
+                )
+                output_withheld = (
+                    credential_detected or billing_or_identity_untrusted
+                )
+                withheld_reason = (
+                    "credential_material_detected"
+                    if credential_detected
+                    else (
+                        "billing_or_identity_mismatch"
+                        if billing_or_identity_untrusted
+                        else None
+                    )
+                )
                 review_artifact_path = run_directory / "review-output.json"
+                state.append_event(
+                    run_id,
+                    COMPARISON_REVIEW_ARTIFACT_INTENT_EVENT_TYPE,
+                    {
+                        "schema_version": 1,
+                        "comparison_binding_digest": binding_digest,
+                        "artifact_kind": "private_review_output",
+                        "destination_ref": _canonical_digest(
+                            {
+                                "artifact_kind": "private_review_output",
+                                "run_id": run_id,
+                            }
+                        ),
+                    },
+                )
                 artifact_digest = _persist_review_artifact(
                     review_artifact_path,
                     trial=trial,
-                    output=(None if credential_detected else redacted_output),
-                    withheld_reason=(
-                        "credential_material_detected"
-                        if credential_detected
-                        else None
-                    ),
+                    output=(None if output_withheld else redacted_output),
+                    withheld_reason=withheld_reason,
+                )
+                state.append_event(
+                    run_id,
+                    COMPARISON_REVIEW_ARTIFACT_OBSERVED_EVENT_TYPE,
+                    {
+                        "schema_version": 1,
+                        "comparison_binding_digest": binding_digest,
+                        "artifact_kind": "private_review_output",
+                        "artifact_digest": "sha256:" + artifact_digest,
+                        "artifact_size_bytes": review_artifact_path.stat().st_size,
+                        "output_withheld": output_withheld,
+                    },
                 )
                 evaluation = evaluate_chief_of_staff(
-                    redacted_output,
+                    None if output_withheld else redacted_output,
                     prepared.contract.output_schema,
                     prepared.context_pack,
                     prepared.expectations,
@@ -1271,8 +1865,17 @@ async def run_controlled_comparison(
                     or not billing_matches
                     or credential_detected
                     or workspace_entries
-                    or result.billing_quarantine_required
-                    or result.billing_circuit_breaker_required
+                    or billing_disposition.quarantine_required
+                    or billing_disposition.circuit_breaker_required
+                    or not isinstance(result.status, RunStatus)
+                    or result.status
+                    not in {
+                        RunStatus.SUCCEEDED,
+                        RunStatus.FAILED,
+                        RunStatus.BLOCKED,
+                        RunStatus.QUARANTINED,
+                        RunStatus.CANCELLED,
+                    }
                 ):
                     final_status = RunStatus.QUARANTINED
                 failure_type, error_codes = _result_failure_summary(
@@ -1280,44 +1883,142 @@ async def run_controlled_comparison(
                     evaluation=evaluation,
                     identity_matches=identity_matches,
                     billing_matches=billing_matches,
+                    billing_disposition=billing_disposition,
                     credential_detected=credential_detected,
                     workspace_entries=workspace_entries,
                 )
-                session_id, session_observed = _safe_session_id(result, run_id)
-                outcomes.append(
-                    ControlledTrialOutcome(
-                        trial_id=trial.trial_id,
-                        profile_id=trial.profile_id,
-                        runner_id=trial.runner_id,
-                        run_id=run_id,
-                        snapshot_digest=plan.snapshot.digest,
-                        session_id=session_id,
-                        session_id_observed=session_observed,
-                        status=final_status,
-                        metrics=_trial_metrics(
-                            result=result,
-                            evaluation=evaluation,
-                            prepared=prepared,
-                            billing_matches=billing_matches and identity_matches,
-                            credential_material_detected=credential_detected,
-                            workspace_entries=workspace_entries,
-                            events_seen=events_seen,
-                        ),
-                        review_artifact_path=str(review_artifact_path),
-                        review_artifact_sha256=artifact_digest,
-                        failure_type=failure_type,
-                        error_codes=error_codes,
+                if billing_or_identity_untrusted:
+                    session_id, session_observed = (
+                        f"controller-{run_id}",
+                        False,
                     )
-                )
-                stop_remaining = _record_billing_observations(
-                    state,
-                    result=result,
-                    profile_id=profile.profile_id,
+                    outcome_metrics = _failed_trial_metrics(
+                        prepared=prepared,
+                        assessment=assessment,
+                        wall_time_seconds=(
+                            _safe_optional_timestamp(result.wall_seconds) or 0.0
+                        ),
+                    )
+                else:
+                    session_id, session_observed = _safe_session_id(result, run_id)
+                    outcome_metrics = _trial_metrics(
+                        result=result,
+                        evaluation=evaluation,
+                        prepared=prepared,
+                        billing_matches=billing_matches and identity_matches,
+                        preflight_assessment=assessment,
+                        billing_disposition=billing_disposition,
+                        credential_material_detected=credential_detected,
+                        workspace_entries=workspace_entries,
+                        events_seen=events_seen,
+                    )
+                outcome = ControlledTrialOutcome(
+                    trial_id=trial.trial_id,
+                    profile_id=trial.profile_id,
+                    runner_id=trial.runner_id,
                     run_id=run_id,
+                    snapshot_digest=plan.snapshot.digest,
+                    session_id=session_id,
+                    session_id_observed=session_observed,
+                    status=final_status,
+                    metrics=outcome_metrics,
+                    review_artifact_path=str(review_artifact_path),
+                    review_artifact_sha256=artifact_digest,
+                    failure_type=failure_type,
+                    error_codes=error_codes,
                 )
+                _terminalize_comparison_run(
+                    state,
+                    run_id,
+                    status=final_status,
+                    phase="comparison_trial_complete",
+                    details={
+                        "artifact_observed": True,
+                        "failure_type": failure_type,
+                        "error_codes": list(error_codes),
+                    },
+                )
+                outcomes.append(outcome)
                 del result, evaluation, redacted_output
             except Exception as exc:
                 failure_type = _exception_failure_type(exc)
+                subscription_billing_unknown = (
+                    assessment.route is BillingRoute.SUBSCRIPTION_INCLUDED
+                    and not subscription_billing_recorded
+                )
+                if result is None and assessment.route is BillingRoute.SUBSCRIPTION_INCLUDED:
+                    failure_type = "billing_execution_unknown"
+                accounting_recovery_error: BaseException | None = None
+                if not accounting_recorded:
+                    try:
+                        state.append_event(
+                            run_id,
+                            "execution_accounting",
+                            _comparison_execution_accounting(
+                                result,
+                                identity_matches=identity_matches,
+                                billing_matches=billing_matches,
+                                runner_event_count=events_seen,
+                                billing_disposition=billing_disposition,
+                                failure_code=failure_type,
+                                billing_unknown=subscription_billing_unknown,
+                            ),
+                        )
+                        accounting_recorded = True
+                    except BaseException as accounting_exc:
+                        accounting_recovery_error = accounting_exc
+                billing_recovery_error: BaseException | None = None
+                if subscription_billing_unknown:
+                    try:
+                        _record_unknown_comparison_billing(
+                            state,
+                            assessment=assessment,
+                            profile_id=profile.profile_id,
+                            run_id=run_id,
+                        )
+                        subscription_billing_recorded = True
+                    except BaseException as recovery_exc:
+                        billing_recovery_error = recovery_exc
+                disposition_quarantines = (
+                    billing_disposition is not None
+                    and (
+                        billing_disposition.quarantine_required
+                        or billing_disposition.circuit_breaker_required
+                    )
+                )
+                failure_status = (
+                    RunStatus.QUARANTINED
+                    if (
+                        subscription_billing_unknown
+                        or identity_matches is False
+                        or billing_matches is False
+                        or disposition_quarantines
+                    )
+                    else (
+                        RunStatus.BLOCKED
+                        if isinstance(exc, OrdomataError)
+                        else RunStatus.FAILED
+                    )
+                )
+                _terminalize_comparison_run(
+                    state,
+                    run_id,
+                    status=failure_status,
+                    phase="comparison_trial_failure",
+                    details={
+                        "artifact_observed": artifact_digest is not None,
+                        "failure_type": failure_type,
+                        "error_codes": [failure_type],
+                    },
+                )
+                if billing_recovery_error is not None:
+                    raise ConfigurationError(
+                        "comparison billing recovery could not be persisted"
+                    ) from billing_recovery_error
+                if core_audit_persistence_error or accounting_recovery_error is not None:
+                    raise ConfigurationError(
+                        "comparison execution accounting could not be persisted"
+                    ) from (accounting_recovery_error or exc)
                 outcomes.append(
                     ControlledTrialOutcome(
                         trial_id=trial.trial_id,
@@ -1327,16 +2028,20 @@ async def run_controlled_comparison(
                         snapshot_digest=plan.snapshot.digest,
                         session_id=f"controller-{run_id}",
                         session_id_observed=False,
-                        status=(
-                            RunStatus.BLOCKED
-                            if isinstance(exc, OrdomataError)
-                            else RunStatus.FAILED
-                        ),
+                        status=failure_status,
                         metrics=_failed_trial_metrics(
                             prepared=prepared,
                             assessment=assessment,
-                            wall_time_seconds=max(0.0, time.monotonic() - started_at),
+                            wall_time_seconds=max(
+                                0.0, time.monotonic() - started_at
+                            ),
                         ),
+                        review_artifact_path=(
+                            None
+                            if artifact_digest is None
+                            else str(review_artifact_path)
+                        ),
+                        review_artifact_sha256=artifact_digest,
                         failure_type=failure_type,
                         error_codes=(failure_type,),
                     )
@@ -1344,6 +2049,80 @@ async def run_controlled_comparison(
                 # Exception text can contain provider or credential material;
                 # retain only the fixed code and fail closed on later trials.
                 stop_remaining = True
+            except BaseException as _interrupted:
+                subscription_interrupted = (
+                    assessment.route is BillingRoute.SUBSCRIPTION_INCLUDED
+                )
+                accounting_cleanup_error: BaseException | None = None
+                if not accounting_recorded:
+                    try:
+                        state.append_event(
+                            run_id,
+                            "execution_accounting",
+                            _comparison_execution_accounting(
+                                result,
+                                identity_matches=identity_matches,
+                                billing_matches=billing_matches,
+                                runner_event_count=events_seen,
+                                billing_disposition=billing_disposition,
+                                failure_code="billing_execution_unknown"
+                                if subscription_interrupted
+                                else "runner_execution_interrupted",
+                                billing_unknown=subscription_interrupted,
+                            ),
+                        )
+                    except BaseException as accounting_exc:
+                        accounting_cleanup_error = accounting_exc
+                billing_cleanup_error: BaseException | None = None
+                if subscription_interrupted:
+                    try:
+                        _record_unknown_comparison_billing(
+                            state,
+                            assessment=assessment,
+                            profile_id=profile.profile_id,
+                            run_id=run_id,
+                        )
+                    except BaseException:
+                        try:
+                            # Append-only duplicates are safe; one retry closes
+                            # a transient persistence gap before interruption
+                            # is allowed to leave the controller boundary.
+                            _record_unknown_comparison_billing(
+                                state,
+                                assessment=assessment,
+                                profile_id=profile.profile_id,
+                                run_id=run_id,
+                            )
+                        except BaseException as billing_exc:
+                            billing_cleanup_error = billing_exc
+                terminal_cleanup_error: BaseException | None = None
+                try:
+                    _terminalize_comparison_run(
+                        state,
+                        run_id,
+                        status=(
+                            RunStatus.QUARANTINED
+                            if subscription_interrupted
+                            else RunStatus.CANCELLED
+                        ),
+                        phase="comparison_trial_interrupted",
+                    )
+                except BaseException as terminal_exc:
+                    terminal_cleanup_error = terminal_exc
+                cleanup_error = (
+                    billing_cleanup_error
+                    or accounting_cleanup_error
+                    or terminal_cleanup_error
+                )
+                if cleanup_error is not None:
+                    recovery_failure = ConfigurationError(
+                        "comparison interruption recovery could not be persisted"
+                    )
+                    _interrupted.add_note(
+                        "Ordomata interruption recovery was not fully persisted."
+                    )
+                    raise _interrupted from recovery_failure
+                raise
 
     _write_exclusive_json(
         review_template_path,
@@ -1524,18 +2303,29 @@ def _result_failure_summary(
     evaluation: EvaluationResult,
     identity_matches: bool,
     billing_matches: bool,
+    billing_disposition: BillingPostRunDisposition,
     credential_detected: bool,
     workspace_entries: tuple[Path, ...],
 ) -> tuple[str | None, tuple[str, ...]]:
     codes: list[str] = []
+    terminal_statuses = {
+        RunStatus.SUCCEEDED,
+        RunStatus.FAILED,
+        RunStatus.BLOCKED,
+        RunStatus.QUARANTINED,
+        RunStatus.CANCELLED,
+    }
+    if not isinstance(result.status, RunStatus) or result.status not in terminal_statuses:
+        codes.append("runner_status_invalid")
     if not identity_matches:
         codes.append("runner_identity_mismatch")
     if not billing_matches:
         codes.append("billing_preflight_mismatch")
-    if result.billing_quarantine_required:
+    if billing_disposition.quarantine_required:
         codes.append("billing_quarantine_required")
-    if result.billing_circuit_breaker_required:
+    if billing_disposition.circuit_breaker_required:
         codes.append("billing_circuit_breaker_required")
+    codes.extend(billing_disposition.reasons)
     if credential_detected:
         codes.append("credential_material_redacted")
     if workspace_entries:
@@ -1547,7 +2337,10 @@ def _result_failure_summary(
     ]
     codes.extend(f"criterion_{criterion}_failed" for criterion in failed_criteria)
 
-    if result.billing_quarantine_required or result.billing_circuit_breaker_required:
+    if (
+        billing_disposition.quarantine_required
+        or billing_disposition.circuit_breaker_required
+    ):
         failure_type = "billing_quarantined"
     elif not identity_matches:
         failure_type = "runner_identity_mismatch"
@@ -1557,6 +2350,8 @@ def _result_failure_summary(
         failure_type = "credential_quarantined"
     elif workspace_entries:
         failure_type = "read_only_violation"
+    elif not isinstance(result.status, RunStatus) or result.status not in terminal_statuses:
+        failure_type = "runner_status_invalid"
     elif result.status is RunStatus.BLOCKED:
         failure_type = "runner_blocked"
     elif result.status is not RunStatus.SUCCEEDED:
@@ -1582,91 +2377,10 @@ def _exception_failure_type(exc: Exception) -> str:
     return "runner_execution_error"
 
 
-def _effective_capacity(result: RunnerExecutionResult) -> CapacityState:
-    if result.postflight_billing_assessment is not None:
-        return result.postflight_billing_assessment.capacity_state
-    if (
-        result.billing_assessment.route is BillingRoute.SUBSCRIPTION_INCLUDED
-        and result.harness_process_started
-    ):
-        return CapacityState.UNKNOWN
-    return result.billing_assessment.capacity_state
-
-
 def _safe_fingerprint(value: str | None) -> str | None:
     if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value):
         return value
     return None
-
-
-def _record_billing_observations(
-    state: SQLiteStateStore,
-    *,
-    result: RunnerExecutionResult,
-    profile_id: str,
-    run_id: str,
-) -> bool:
-    if result.billing_assessment.route is not BillingRoute.SUBSCRIPTION_INCLUDED:
-        return False
-    capacity = _effective_capacity(result)
-    postflight = result.postflight_billing_assessment
-    trusted_fingerprint = _safe_fingerprint(
-        result.billing_assessment.account_identity_fingerprint
-    )
-    if capacity is CapacityState.AVAILABLE:
-        capacity_reason = "post_run_capacity_available"
-    elif capacity in {
-        CapacityState.LIMIT_REACHED,
-        CapacityState.BLOCKED_UNTIL_RESET,
-    }:
-        capacity_reason = "included_capacity_exhausted"
-    elif capacity is CapacityState.COOLDOWN:
-        capacity_reason = "post_run_capacity_cooldown"
-    else:
-        capacity_reason = "post_run_billing_unknown"
-    state.append_billing_capacity_event(
-        runner_id=result.runner_id,
-        capacity_state=capacity,
-        reason_code=capacity_reason,
-        account_identity_fingerprint=trusted_fingerprint,
-        profile_id=profile_id,
-        run_id=run_id,
-    )
-    if result.billing_circuit_breaker_required:
-        circuit_reason = (
-            "post_run_paid_route_possible"
-            if result.incremental_ai_charge
-            in {IncrementalAICharge.POSSIBLE, IncrementalAICharge.CONFIRMED}
-            else "post_run_billing_unknown"
-        )
-        postflight_fingerprint = _safe_fingerprint(
-            None
-            if postflight is None
-            else postflight.account_identity_fingerprint
-        )
-        circuit_scopes: list[str | None] = [trusted_fingerprint]
-        if (
-            trusted_fingerprint is None
-            or postflight_fingerprint is None
-            or postflight_fingerprint != trusted_fingerprint
-        ):
-            circuit_scopes.append(None)
-        for scope_fingerprint in tuple(dict.fromkeys(circuit_scopes)):
-            state.append_billing_circuit_event(
-                runner_id=result.runner_id,
-                state=CircuitBreakerState.OPEN,
-                reason_code=circuit_reason,
-                account_identity_fingerprint=scope_fingerprint,
-                profile_id=profile_id,
-                run_id=run_id,
-            )
-        return True
-    return capacity in {
-        CapacityState.LIMIT_REACHED,
-        CapacityState.BLOCKED_UNTIL_RESET,
-        CapacityState.COOLDOWN,
-        CapacityState.UNKNOWN,
-    }
 
 
 def _write_exclusive_json(path: Path, payload: Mapping[str, Any]) -> str:
@@ -1698,22 +2412,6 @@ def _write_exclusive_json(path: Path, payload: Mapping[str, Any]) -> str:
         path.unlink(missing_ok=True)
         raise
     return sha256(document.encode("utf-8")).hexdigest()
-
-
-def _billing_assessment_matches(first: Any, second: Any) -> bool:
-    return all(
-        getattr(first, field_name, None) == getattr(second, field_name, None)
-        for field_name in (
-            "runner_id",
-            "route",
-            "confidence",
-            "subscription_name",
-            "capacity_state",
-            "paid_continuation_protection",
-            "paid_credit_balance",
-            "account_identity_fingerprint",
-        )
-    )
 
 
 def _safe_session_id(
@@ -1806,6 +2504,8 @@ def _trial_metrics(
     evaluation: EvaluationResult,
     prepared: PreparedTask,
     billing_matches: bool,
+    preflight_assessment: BillingRouteAssessment,
+    billing_disposition: BillingPostRunDisposition,
     credential_material_detected: bool,
     workspace_entries: tuple[Path, ...],
     events_seen: int,
@@ -1817,8 +2517,8 @@ def _trial_metrics(
             billing_matches,
             not credential_material_detected,
             not workspace_entries,
-            not result.billing_quarantine_required,
-            not result.billing_circuit_breaker_required,
+            not billing_disposition.quarantine_required,
+            not billing_disposition.circuit_breaker_required,
         )
     )
     checks_total = len(evaluation.metrics) + 5
@@ -1831,10 +2531,10 @@ def _trial_metrics(
         _evaluation_passed(evaluation, "safe")
         and not credential_material_detected
         and not workspace_entries
-        and not result.billing_quarantine_required
-        and not result.billing_circuit_breaker_required
+        and not billing_disposition.quarantine_required
+        and not billing_disposition.circuit_breaker_required
     )
-    effective_capacity = _effective_capacity(result)
+    effective_capacity = billing_disposition.capacity_state
     if effective_capacity in {
         CapacityState.LIMIT_REACHED,
         CapacityState.BLOCKED_UNTIL_RESET,
@@ -1897,16 +2597,26 @@ def _trial_metrics(
         human_quality_assessment=None,
         human_safety_assessment=None,
         subscription_capacity_observation=None,
-        billing_route=result.billing_assessment.route,
-        subscription_name=result.billing_assessment.subscription_name,
+        billing_route=preflight_assessment.route,
+        subscription_name=preflight_assessment.subscription_name,
         included_capacity_state=effective_capacity,
-        subscription_capacity_consumed=result.subscription_capacity_consumed,
+        subscription_capacity_consumed=(
+            result.subscription_capacity_consumed
+            if (
+                billing_matches
+                and not billing_disposition.quarantine_required
+                and not billing_disposition.circuit_breaker_required
+            )
+            else None
+        ),
         subscription_limit_encountered=limit_encountered,
         run_delayed_by_limit=None,
-        paid_capacity_consumed=result.paid_capacity_consumed,
-        incremental_ai_charge=result.incremental_ai_charge,
-        billing_quarantine_required=result.billing_quarantine_required,
-        billing_circuit_breaker_required=result.billing_circuit_breaker_required,
+        paid_capacity_consumed=billing_disposition.paid_capacity_consumed,
+        incremental_ai_charge=billing_disposition.incremental_ai_charge,
+        billing_quarantine_required=billing_disposition.quarantine_required,
+        billing_circuit_breaker_required=(
+            billing_disposition.circuit_breaker_required
+        ),
         local_compute_resources=None,
     )
 
@@ -1921,6 +2631,9 @@ def _metrics_mapping(metrics: TrialMetrics) -> dict[str, Any]:
 
 __all__ = [
     "COMPARISON_AUTHORIZATION_SHADOW_COVERAGE",
+    "COMPARISON_REVIEW_ARTIFACT_INTENT_EVENT_TYPE",
+    "COMPARISON_REVIEW_ARTIFACT_OBSERVED_EVENT_TYPE",
+    "COMPARISON_TRIAL_BINDING_EVENT_TYPE",
     "CONTROLLED_COMPARISON_EVIDENCE_MARGIN_SECONDS",
     "CONTROLLED_COMPARISON_TRIAL_TIMEOUT_SECONDS",
     "ComparisonControls",

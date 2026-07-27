@@ -144,6 +144,14 @@ admission and dispatch, while the controller supplies the exact local-create
 intent at publication. Its run path constructs a fresh request at all three
 boundaries:
 
+Controlled comparison trials use a distinct controller projection for the
+Class 0 effect of reading and evaluating one immutable comparison snapshot. A
+digest-only event binds each trial's plan, controls, profile configuration,
+runner settings, and billing assessment before schema-v3 admission and dispatch
+shadows are recorded. The owner-private review artifact is deliberately not
+folded into that Class 0 projection: it remains a separate Class 1 controller
+effect whose publication shadow and action receipt are deferred.
+
 - `subject`: operator principal, controller instance, agent session, assigned
   role and role version, execution profile, runner, and authenticated
   harness/account evidence references;

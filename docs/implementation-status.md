@@ -86,11 +86,20 @@ RBAC role constraints, adapted confidentiality/integrity/availability impact
 labels, untrusted MCP claim handling, and conservatively derived Class 0-3
 summaries. There is still no enforcing central PDP, RBAC separation-of-duty
 enforcement, approval resumption, mediated command/tool coverage, or persisted
-runtime action receipt. The controlled comparison path also lacks a durable
-per-trial event stream and therefore has no shadow PEP coverage. Its reports
-now mark that limit with
-`authorization_shadow_coverage=deferred_not_covered`. Enforcement follows only
-after broader parity evidence.
+runtime action receipt. The controlled comparison path now records a durable
+Class 0 run/event stream for every started trial, including a digest-only trial
+binding, bounded billing/accounting facts, runner-event ordinals, and schema-v3
+non-enforcing admission and immediate pre-dispatch shadows. The read-only
+inspector cross-checks their binding, source evidence, request projection,
+cardinality, and order. Controller-derived post-run billing disposition governs
+quarantine, circuit scope, output withholding, and terminal reporting; adapter
+flags cannot make unknown or changed evidence succeed. The owner-private review
+artifact remains a separate Class 1 controller effect without a publication
+shadow or action receipt, so
+artifact-producing trials intentionally report that coverage gap and comparison
+reports state
+`authorization_shadow_coverage=partial_admission_dispatch_shadow`. Enforcement
+follows only after broader parity evidence.
 
 **Adopted target design, not implemented:** revocable standing authorization
 envelopes and fresh per-action permits; permissive but exactly bounded Class 3
@@ -172,7 +181,7 @@ cells, runtime authorization enforcement, and soak evidence remain planned.
 - Post-run billing disposition: normalized capacity/paid/account-change evidence, typed paid-capacity and incremental-AI-charge accounting, quarantine before promotion, durable append-only capacity state, atomic capacity persistence before lease release, restart-safe capacity blocking, and account/profile circuit breakers.
 - `ordomata run --profile ...`: explicit live-adapter entry point guarded by diagnostics, current evidence, environment/profile/isolation checks, a closed durable circuit, and the exact live gate.
 - `ordomata compare-plan`: identical-snapshot, repeated, block-randomized, fresh-session plan creation without execution.
-- `ordomata compare-run`: preflight-all controlled execution for explicit named profiles using one immutable sanitized Class 0 snapshot, fresh adapters/sessions/empty workspaces, randomized repetition blocks, private per-trial review artifacts, raw reports, and a separate human-review template. It performs no ranking or promotion and retains partial results after a stop condition.
+- `ordomata compare-run`: preflight-all controlled execution for explicit named profiles using one immutable sanitized Class 0 snapshot, fresh adapters/sessions/empty workspaces, randomized repetition blocks, append-only digest-bound per-trial audit streams with non-enforcing admission/dispatch shadows, private review artifacts, raw reports, and a separate human-review template. It performs no ranking or promotion, retains partial results after a stop condition, and leaves the Class 1 artifact-publication authorization boundary explicit and deferred.
 - `ordomata schedule-inspect`: non-mutating run-once schedule inspection; atomic claims and leases are available as library primitives.
 - `ordomata supervisor ...`: mock-only immutable admission; append-only
   start/pause/resume/drain/stop and sticky cancel intent; read-only status,

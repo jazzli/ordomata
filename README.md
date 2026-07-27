@@ -74,6 +74,9 @@ records.
 - optional typed task-effect authorization intent, independent of the legacy
   numeric class, plus three non-enforcing Chief-of-Staff shadow decisions at
   admission, runner/model dispatch intent, and local-candidate publication;
+- append-only Class 0 comparison-trial bindings, lifecycle/accounting evidence,
+  and non-enforcing admission/dispatch shadows, with the separate Class 1
+  private review-artifact authorization boundary still explicit and deferred;
 - a strictly read-only `auth-inspect` command that checks baseline schema and
   run-history integrity plus the frozen migration ledger, then recomputes
   legacy and authority-ceiling parity from persisted run state and independently
@@ -226,12 +229,22 @@ The command binds named, versioned profiles to the same immutable sanitized snap
 
 The workflow exists, but no live Codex-versus-Claude comparison has been completed or scored in this repository.
 
-Comparison trials do not yet emit the Chief-of-Staff shadow events because the
-comparison subsystem has no append-only per-trial run-event stream. That
-coverage is explicitly deferred rather than inferred from its private report
-files. Each comparison report exposes this limitation as the stable
-machine-readable field
-`authorization_shadow_coverage="deferred_not_covered"`.
+Every started comparison trial now has an append-only Class 0 run/event stream.
+A digest-only binding ties its plan, snapshot, controls, profile configuration,
+runner settings, billing assessment, and trial identity to schema-v3
+non-enforcing admission and immediate pre-dispatch shadows. Runner events retain
+only ordinals; accounting and artifact-intent/observation markers retain bounded
+controller facts, never prompt, output, provider diagnostics, or raw account
+identity. `auth-inspect` independently checks those bindings and shadows. The
+private review artifact is a separate Class 1 controller effect and does not yet
+have a shadow decision or action receipt, so successful trials intentionally
+retain a publication coverage gap. Reports state this precisely as
+`authorization_shadow_coverage="partial_admission_dispatch_shadow"`.
+Post-run subscription evidence is reconciled by the controller before any
+review output is retained: unknown, changed, interrupted, or incompletely
+persisted billing state quarantines the trial, stops the comparison, withholds
+usable output, and opens the applicable account/profile and broad runner
+circuits.
 
 ## Verification
 

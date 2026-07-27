@@ -37,12 +37,35 @@ _PRIVATE_MARKERS = (
 
 
 class AuthorizationInspectionTests(unittest.TestCase):
+    @staticmethod
+    def _comparison_billing_payload() -> dict[str, object]:
+        payload: dict[str, object] = {
+            "schema_version": 1,
+            "runner_id": "mock",
+            "route": "mock",
+            "confidence": "high",
+            "subscription_ref": None,
+            "capacity_state": "unknown",
+            "paid_continuation_protection": "unknown",
+            "paid_credit_balance": "unknown",
+            "account_identity_ref": None,
+            "capacity_observed_at": None,
+            "capacity_expires_at": None,
+            "attestation": None,
+        }
+        payload["assessment_digest"] = canonical_digest(payload)
+        return payload
+
     def _create_run(
         self,
         database: Path,
         *,
         run_id: str = "run-inspect",
         permission_class: PermissionClass = PermissionClass.LOCAL_DRAFT,
+        runner_id: str = "mock",
+        context_digest: str = "a" * 64,
+        timeout_seconds: int = 60,
+        attempt: int = 1,
     ) -> SQLiteStateStore:
         store = SQLiteStateStore(database, clock=lambda: 100.0)
         store.create_run(
@@ -50,17 +73,278 @@ class AuthorizationInspectionTests(unittest.TestCase):
                 run_id=run_id,
                 task_id="inspect-task",
                 task_version="1.0.0",
-                runner_id="mock",
+                runner_id=runner_id,
                 workspace="/private/worktree-marker",
                 run_directory="/private/run-marker",
-                context_digest="a" * 64,
+                context_digest=context_digest,
                 permission_class=permission_class,
-                timeout_seconds=60,
-                attempt=1,
+                timeout_seconds=timeout_seconds,
+                attempt=attempt,
                 created_at=100.0,
             )
         )
         return store
+
+    def _comparison_binding_payload(
+        self,
+        *,
+        context_digest: str | None = None,
+        runner_id: str = "mock",
+        timeout_seconds: int = 60,
+        attempt: int = 1,
+    ) -> dict[str, object]:
+        binding = {
+            "kind": "controlled_comparison_trial",
+            "comparison_ref": canonical_digest(
+                {"comparison_id": "private-comparison-marker"}
+            ),
+            "trial_ref": canonical_digest(
+                {"trial_id": "private-trial-marker"}
+            ),
+            "plan_digest": canonical_digest({"plan": "bounded"}),
+            "snapshot_digest": canonical_digest({"snapshot": "bounded"}),
+            "controls_digest": canonical_digest({"controls": "bounded"}),
+            "context_digest": (
+                canonical_digest({"context": "bounded"})
+                if context_digest is None
+                else context_digest
+            ),
+            "prompt_digest": canonical_digest({"prompt": "bounded"}),
+            "task_definition_digest": canonical_digest(
+                {"task_definition": "bounded"}
+            ),
+            "output_schema_digest": canonical_digest(
+                {"output_schema": "bounded"}
+            ),
+            "repository_ref": canonical_digest(
+                {"repository": "private-repository-marker"}
+            ),
+            "profile_ref": canonical_digest(
+                {"profile_id": "private-profile-marker"}
+            ),
+            "profile_version_ref": canonical_digest(
+                {"profile_version": "private-profile-version-marker"}
+            ),
+            "profile_configuration_digest": canonical_digest(
+                {"profile_configuration": "bounded"}
+            ),
+            "runner_overrides_digest": canonical_digest(
+                {"runner_overrides": {}}
+            ),
+            "billing_assessment_digest": self._comparison_billing_payload()[
+                "assessment_digest"
+            ],
+            "runner_id": runner_id,
+            "repetition": 1,
+            "order_index": 0,
+            "timeout_seconds": timeout_seconds,
+            "attempt": attempt,
+            "permission_class": 0,
+        }
+        return {
+            "schema_version": 1,
+            "authorization_shadow_coverage": (
+                "partial_admission_dispatch_shadow"
+            ),
+            "binding": binding,
+            "binding_digest": canonical_digest(binding),
+        }
+
+    def _comparison_shadow_payload(
+        self,
+        scope: str,
+        binding_payload: dict[str, object],
+        *,
+        run_id: str = "run-comparison",
+    ) -> dict[str, object]:
+        self.assertIn(scope, (ADMISSION_SCOPE, DISPATCH_SCOPE))
+        binding = binding_payload["binding"]
+        binding_digest = binding_payload["binding_digest"]
+        self.assertIsInstance(binding, dict)
+        self.assertIsInstance(binding_digest, str)
+        assert isinstance(binding, dict)
+        assert isinstance(binding_digest, str)
+
+        task_intent = {
+            "action": {
+                "verb": "read",
+                "operation": "comparison.evaluate_immutable_snapshot",
+                "intended_effect": "evaluate_immutable_comparison_snapshot",
+            },
+            "resource": {
+                "resource_type": "comparison_snapshot",
+                "trust_boundary": "isolated_run_workspace",
+                "protected": False,
+                "sensitivity": "low",
+            },
+            "consequences": {
+                "confidentiality": "low",
+                "integrity": "low",
+                "availability": "low",
+                "reach": "local",
+                "destructive": False,
+                "reversible": True,
+                "sensitivity": "low",
+                "blast_radius": "single_resource",
+            },
+        }
+        intent_digest = canonical_digest(task_intent)
+        parameters = {
+            "comparison_binding_digest": binding_digest,
+            (
+                "context_digest"
+                if scope == ADMISSION_SCOPE
+                else "prompt_digest"
+            ): (
+                binding["context_digest"]
+                if scope == ADMISSION_SCOPE
+                else binding["prompt_digest"]
+            ),
+            "snapshot_digest": binding["snapshot_digest"],
+        }
+        action = {
+            "descriptive_claims": [],
+            "verb": "read",
+            "operation": "comparison.evaluate_immutable_snapshot",
+            "parameters_digest": canonical_digest(
+                {
+                    "action_scope": scope,
+                    "intent_digest": intent_digest,
+                    "intent_source": "comparison_trial_projection",
+                    "legacy_permission_class": 0,
+                    "output_schema_digest": binding["output_schema_digest"],
+                    "parameters": parameters,
+                    "profile_ref": binding["profile_ref"],
+                    "runner_id": binding["runner_id"],
+                    "task_definition_digest": binding[
+                        "task_definition_digest"
+                    ],
+                    "task_id": "inspect-task",
+                    "task_version": "1.0.0",
+                }
+            ),
+            "intended_effect": "evaluate_immutable_comparison_snapshot",
+            "tool_id": None,
+        }
+        subject = {
+            "principal_id": "agent:task-attempt",
+            "controller_id": "agentops:local-controller",
+            "role": "implementer",
+            "role_version": "1",
+            "profile_id": binding["profile_ref"],
+            "runner_id": binding["runner_id"],
+            "session_id": f"attempt:{run_id}",
+        }
+        resource = {
+            "resource_type": "comparison_snapshot",
+            "identifier": canonical_digest(
+                {
+                    "action_scope": scope,
+                    "resource_type": "comparison_snapshot",
+                    "run_id": run_id,
+                }
+            ),
+            "version": binding["snapshot_digest"],
+            "owner": "operator:local",
+            "trust_boundary": "isolated_run_workspace",
+            "protected": False,
+            "sensitivity": "low",
+            "repository_id": binding["repository_ref"],
+            "content_digest": (
+                binding["context_digest"]
+                if scope == ADMISSION_SCOPE
+                else binding["prompt_digest"]
+            ),
+        }
+        environment = {
+            "approval_grants": [],
+            "evaluated_at": 110.0,
+            "isolation_state": "verified",
+            "network_state": "disabled",
+            "billing_route": "mock",
+            "capacity_state": "not_applicable",
+            "paid_continuation_protection": "not_applicable",
+            "circuit_state": "closed",
+            "flow_state": {
+                ADMISSION_SCOPE: "admission_proposed",
+                DISPATCH_SCOPE: "runner_dispatch_proposed",
+            }[scope],
+        }
+        consequences = dict(task_intent["consequences"])
+        attributes = {
+            "subject": subject,
+            "action": action,
+            "resource": resource,
+            "environment": environment,
+            "consequences": consequences,
+        }
+        evidence = [
+            {
+                "attribute": attribute,
+                "authenticated": True,
+                "evidence_id": f"private-evidence-marker:{attribute}",
+                "expires_at": 230.0 if attribute == "environment" else 200.0,
+                "observed_at": 110.0 if attribute == "environment" else 100.0,
+                "source": "controller",
+                "source_id": "private-source-marker",
+                "value_digest": canonical_digest(value),
+            }
+            for attribute, value in attributes.items()
+        ]
+        request = {
+            "action": action,
+            "consequences": consequences,
+            "environment": environment,
+            "evidence": evidence,
+            "request_id": f"{scope}:{run_id}",
+            "resource": resource,
+            "subject": subject,
+        }
+        request_digest = canonical_digest(request)
+        decision = {
+            "derived_permission_class": 0,
+            "effect": "permit",
+            "evidence_refs": ["private-evidence-marker"],
+            "expires_at": 150.0,
+            "issued_at": 110.0,
+            "matched_rule_ids": ["private-rule-marker"],
+            "obligations": [
+                {"kind": "audit_receipt", "value": "private-obligation-marker"}
+            ],
+            "policy_bundle_id": "private-policy-marker",
+            "policy_digest": canonical_digest({"policy": "bounded"}),
+            "policy_version": "1",
+            "reason_codes": ["current_stage_permit"],
+            "reason_details": ["private-reason-marker"],
+            "request_digest": request_digest,
+            "request_id": f"{scope}:{run_id}",
+        }
+        return {
+            "schema_version": 3,
+            "mode": "shadow",
+            "action_scope": scope,
+            "intent_source": "comparison_trial_projection",
+            "intent_digest": intent_digest,
+            "task_authorization_intent": task_intent,
+            "comparison_binding_digest": binding_digest,
+            "request": request,
+            "request_digest": request_digest,
+            "decision": decision,
+            "decision_digest": canonical_digest(decision),
+            "policy_bundle_id": decision["policy_bundle_id"],
+            "policy_version": decision["policy_version"],
+            "policy_digest": decision["policy_digest"],
+            "effect": decision["effect"],
+            "reason_codes": decision["reason_codes"],
+            "matched_rule_ids": decision["matched_rule_ids"],
+            "evidence_refs": decision["evidence_refs"],
+            "obligations": decision["obligations"],
+            "derived_permission_class": 0,
+            "requested_permission_class": 0,
+            "legacy_executable": True,
+            "execution_parity": True,
+            "authority_ceiling_parity": True,
+        }
 
     def _shadow_payload(
         self,
@@ -550,6 +834,11 @@ class AuthorizationInspectionTests(unittest.TestCase):
             self.assertTrue(report.clean)
             self.assertEqual(report.inspected_run_count, 1)
             self.assertEqual(report.inspected_event_count, 3)
+            self.assertEqual(report.runs[0].run_kind, "task_attempt")
+            self.assertEqual(
+                report.runs[0].authorization_shadow_coverage,
+                "task_attempt_admission_dispatch_publication_shadow",
+            )
             self.assertEqual(
                 report.runs[0].observed_scopes,
                 tuple(sorted((ADMISSION_SCOPE, DISPATCH_SCOPE, PUBLICATION_SCOPE))),
@@ -617,6 +906,438 @@ class AuthorizationInspectionTests(unittest.TestCase):
             self.assertTrue(report.clean)
             self.assertEqual(report.inspected_event_count, 1)
             self.assertEqual(report.runs[0].events[0].integrity_issues, ())
+
+    def test_comparison_v3_shadows_validate_without_hiding_publication_gap(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "state.sqlite3"
+            binding_payload = self._comparison_binding_payload()
+            binding = binding_payload["binding"]
+            self.assertIsInstance(binding, dict)
+            assert isinstance(binding, dict)
+            store = self._create_run(
+                database,
+                run_id="run-comparison",
+                permission_class=PermissionClass.READ_ONLY,
+                context_digest=str(binding["context_digest"]),
+            )
+            store.append_event(
+                "run-comparison",
+                "comparison_trial_binding",
+                binding_payload,
+                occurred_at=105.0,
+            )
+            store.append_event(
+                "run-comparison",
+                "authorization_shadow_decision",
+                self._comparison_shadow_payload(
+                    ADMISSION_SCOPE,
+                    binding_payload,
+                ),
+                occurred_at=110.0,
+            )
+            store.append_event(
+                "run-comparison",
+                "billing_assessment",
+                self._comparison_billing_payload(),
+                occurred_at=110.5,
+            )
+            store.append_event(
+                "run-comparison",
+                "status",
+                {"phase": "runner_execution"},
+                status=RunStatus.RUNNING,
+                occurred_at=111.0,
+            )
+            store.append_event(
+                "run-comparison",
+                "authorization_shadow_decision",
+                self._comparison_shadow_payload(
+                    DISPATCH_SCOPE,
+                    binding_payload,
+                ),
+                occurred_at=112.0,
+            )
+            store.append_event(
+                "run-comparison",
+                "comparison_review_artifact_intent",
+                {},
+                occurred_at=112.5,
+            )
+            store.append_event(
+                "run-comparison",
+                "execution_accounting",
+                {"incremental_api_charge": "none"},
+                occurred_at=113.0,
+            )
+            store.append_event(
+                "run-comparison",
+                "status",
+                {"phase": "complete"},
+                status=RunStatus.SUCCEEDED,
+                occurred_at=114.0,
+            )
+            store.close()
+
+            report = inspect_authorization_shadows(database, now=120.0)
+
+            self.assertFalse(report.clean)
+            self.assertEqual(report.inspected_run_count, 1)
+            self.assertEqual(report.inspected_event_count, 2)
+            self.assertEqual(report.coverage_gap_count, 1)
+            run = report.runs[0]
+            self.assertEqual(run.run_kind, "controlled_comparison_trial")
+            self.assertEqual(
+                run.authorization_shadow_coverage,
+                "partial_admission_dispatch_shadow",
+            )
+            self.assertEqual(
+                run.expected_scopes,
+                tuple(
+                    sorted(
+                        (ADMISSION_SCOPE, DISPATCH_SCOPE, PUBLICATION_SCOPE)
+                    )
+                ),
+            )
+            self.assertEqual(
+                run.observed_scopes,
+                tuple(sorted((ADMISSION_SCOPE, DISPATCH_SCOPE))),
+            )
+            self.assertEqual(run.missing_scopes, (PUBLICATION_SCOPE,))
+            self.assertEqual(run.integrity_issues, ())
+            for event in run.events:
+                self.assertEqual(event.integrity_issues, ())
+                self.assertEqual(event.derived_permission_class, 0)
+                self.assertEqual(event.requested_permission_class, 0)
+                self.assertTrue(event.request_digest_valid)
+                self.assertTrue(event.decision_digest_valid)
+                self.assertTrue(event.recomputed_execution_parity)
+                self.assertTrue(event.recomputed_authority_ceiling_parity)
+            projection = json.dumps(report.to_mapping(), sort_keys=True)
+            for marker in _PRIVATE_MARKERS:
+                self.assertNotIn(marker, projection)
+
+    def test_duplicate_comparison_billing_is_fixed_and_value_free(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "state.sqlite3"
+            binding_payload = self._comparison_binding_payload()
+            binding = binding_payload["binding"]
+            self.assertIsInstance(binding, dict)
+            assert isinstance(binding, dict)
+            store = self._create_run(
+                database,
+                run_id="run-comparison",
+                permission_class=PermissionClass.READ_ONLY,
+                context_digest=str(binding["context_digest"]),
+            )
+            store.append_event(
+                "run-comparison",
+                "comparison_trial_binding",
+                binding_payload,
+                occurred_at=105.0,
+            )
+            store.append_event(
+                "run-comparison",
+                "authorization_shadow_decision",
+                self._comparison_shadow_payload(
+                    ADMISSION_SCOPE,
+                    binding_payload,
+                ),
+                occurred_at=110.0,
+            )
+            store.append_event(
+                "run-comparison",
+                "billing_assessment",
+                self._comparison_billing_payload(),
+                occurred_at=110.5,
+            )
+            store.append_event(
+                "run-comparison",
+                "status",
+                {"phase": "runner_execution"},
+                status=RunStatus.RUNNING,
+                occurred_at=111.0,
+            )
+            store.append_event(
+                "run-comparison",
+                "authorization_shadow_decision",
+                self._comparison_shadow_payload(
+                    DISPATCH_SCOPE,
+                    binding_payload,
+                ),
+                occurred_at=112.0,
+            )
+            store.append_event(
+                "run-comparison",
+                "comparison_review_artifact_intent",
+                {},
+                occurred_at=112.5,
+            )
+            store.append_event(
+                "run-comparison",
+                "execution_accounting",
+                {"incremental_api_charge": "none"},
+                occurred_at=113.0,
+            )
+            store.append_event(
+                "run-comparison",
+                "status",
+                {"phase": "complete"},
+                status=RunStatus.SUCCEEDED,
+                occurred_at=114.0,
+            )
+            store.close()
+
+            private_key = "private-duplicate-billing-marker"
+            private_value = "private-duplicate-billing-value"
+            with closing(sqlite3.connect(database)) as connection:
+                connection.executescript(
+                    """
+                    DROP TRIGGER run_events_no_update;
+                    DROP TRIGGER run_events_no_delete;
+                    """
+                )
+                connection.execute(
+                    """
+                    INSERT INTO run_events (
+                        event_id, run_id, event_type, status,
+                        payload_json, occurred_at
+                    ) VALUES (?, ?, 'billing_assessment', NULL, ?, ?)
+                    """,
+                    (
+                        "duplicate-comparison-billing",
+                        "run-comparison",
+                        json.dumps({private_key: private_value}),
+                        114.5,
+                    ),
+                )
+                connection.executescript(
+                    """
+                    CREATE TRIGGER run_events_no_update
+                    BEFORE UPDATE ON run_events BEGIN
+                        SELECT RAISE(ABORT, 'run events are append-only');
+                    END;
+                    CREATE TRIGGER run_events_no_delete
+                    BEFORE DELETE ON run_events BEGIN
+                        SELECT RAISE(ABORT, 'run events are append-only');
+                    END;
+                    """
+                )
+                connection.commit()
+
+            report = inspect_authorization_shadows(database, now=120.0)
+
+            self.assertFalse(report.clean)
+            self.assertEqual(report.inspected_run_count, 1)
+            self.assertEqual(
+                report.runs[0].integrity_issues,
+                ("comparison_billing_duplicate",),
+            )
+            projection = json.dumps(report.to_mapping(), sort_keys=True)
+            self.assertNotIn(private_key, projection)
+            self.assertNotIn(private_value, projection)
+
+    def test_comparison_binding_tampering_fails_closed_without_private_leaks(
+        self,
+    ) -> None:
+        cases = (
+            ("missing", "comparison_binding_missing", "run"),
+            ("duplicate", "comparison_binding_duplicate", "run"),
+            ("digest", "comparison_binding_digest_mismatch", "run"),
+            ("order", "comparison_binding_order_invalid", "run"),
+            ("record", "comparison_binding_record_mismatch", "run"),
+            ("request", "comparison_request_binding_mismatch", "event"),
+            ("billing_digest", "comparison_billing_digest_mismatch", "run"),
+            ("billing_binding", "comparison_billing_binding_mismatch", "run"),
+            (
+                "billing_environment",
+                "comparison_billing_environment_mismatch",
+                "event",
+            ),
+            (
+                "billing_window",
+                "comparison_billing_evidence_window_mismatch",
+                "event",
+            ),
+        )
+        for case, expected_issue, issue_location in cases:
+            with (
+                self.subTest(case=case),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                database = Path(temporary) / "state.sqlite3"
+                binding_payload = self._comparison_binding_payload()
+                if case == "digest":
+                    binding_payload["binding_digest"] = "sha256:" + "0" * 64
+                binding = binding_payload["binding"]
+                self.assertIsInstance(binding, dict)
+                assert isinstance(binding, dict)
+                run_context_digest = str(binding["context_digest"])
+                if case == "record":
+                    run_context_digest = canonical_digest(
+                        {"context": "different-run-record"}
+                    )
+                store = self._create_run(
+                    database,
+                    run_id="run-comparison",
+                    permission_class=PermissionClass.READ_ONLY,
+                    context_digest=run_context_digest,
+                )
+                if case not in {"missing", "order"}:
+                    store.append_event(
+                        "run-comparison",
+                        "comparison_trial_binding",
+                        binding_payload,
+                        occurred_at=105.0,
+                    )
+                    if case == "duplicate":
+                        store.append_event(
+                            "run-comparison",
+                            "comparison_trial_binding",
+                            binding_payload,
+                            occurred_at=106.0,
+                        )
+                admission_payload = self._comparison_shadow_payload(
+                    ADMISSION_SCOPE,
+                    binding_payload,
+                )
+                if case in {"billing_environment", "billing_window"}:
+                    request = admission_payload["request"]
+                    self.assertIsInstance(request, dict)
+                    assert isinstance(request, dict)
+                    environment = request["environment"]
+                    evidence = request["evidence"]
+                    self.assertIsInstance(environment, dict)
+                    self.assertIsInstance(evidence, list)
+                    assert isinstance(environment, dict)
+                    assert isinstance(evidence, list)
+                    environment_evidence = next(
+                        item
+                        for item in evidence
+                        if isinstance(item, dict)
+                        and item.get("attribute") == "environment"
+                    )
+                    if case == "billing_environment":
+                        environment["capacity_state"] = "available"
+                        environment_evidence["value_digest"] = canonical_digest(
+                            environment
+                        )
+                    else:
+                        environment_evidence["expires_at"] = 231.0
+                    self._resign_payload(admission_payload)
+                store.append_event(
+                    "run-comparison",
+                    "authorization_shadow_decision",
+                    admission_payload,
+                    occurred_at=110.0,
+                )
+                billing_payload = self._comparison_billing_payload()
+                if case == "billing_digest":
+                    billing_payload["assessment_digest"] = "sha256:" + "0" * 64
+                elif case == "billing_binding":
+                    billing_payload["confidence"] = "low"
+                    billing_body = dict(billing_payload)
+                    del billing_body["assessment_digest"]
+                    billing_payload["assessment_digest"] = canonical_digest(
+                        billing_body
+                    )
+                store.append_event(
+                    "run-comparison",
+                    "billing_assessment",
+                    billing_payload,
+                    occurred_at=110.5,
+                )
+                store.append_event(
+                    "run-comparison",
+                    "status",
+                    {"phase": "runner_execution"},
+                    status=RunStatus.RUNNING,
+                    occurred_at=111.0,
+                )
+                if case == "order":
+                    store.append_event(
+                        "run-comparison",
+                        "comparison_trial_binding",
+                        binding_payload,
+                        occurred_at=111.5,
+                    )
+                dispatch_payload = self._comparison_shadow_payload(
+                    DISPATCH_SCOPE,
+                    binding_payload,
+                )
+                if case == "request":
+                    request = dispatch_payload["request"]
+                    self.assertIsInstance(request, dict)
+                    assert isinstance(request, dict)
+                    action = request["action"]
+                    evidence = request["evidence"]
+                    self.assertIsInstance(action, dict)
+                    self.assertIsInstance(evidence, list)
+                    assert isinstance(action, dict)
+                    assert isinstance(evidence, list)
+                    action["parameters_digest"] = canonical_digest(
+                        {"parameters": "private-comparison-request-marker"}
+                    )
+                    action_evidence = next(
+                        item
+                        for item in evidence
+                        if isinstance(item, dict)
+                        and item.get("attribute") == "action"
+                    )
+                    action_evidence["value_digest"] = canonical_digest(action)
+                    self._resign_payload(dispatch_payload)
+                store.append_event(
+                    "run-comparison",
+                    "authorization_shadow_decision",
+                    dispatch_payload,
+                    occurred_at=112.0,
+                )
+                store.append_event(
+                    "run-comparison",
+                    "comparison_review_artifact_intent",
+                    {},
+                    occurred_at=112.5,
+                )
+                store.append_event(
+                    "run-comparison",
+                    "execution_accounting",
+                    {"incremental_api_charge": "none"},
+                    occurred_at=113.0,
+                )
+                store.append_event(
+                    "run-comparison",
+                    "status",
+                    {"phase": "complete"},
+                    status=RunStatus.SUCCEEDED,
+                    occurred_at=114.0,
+                )
+                store.close()
+
+                report = inspect_authorization_shadows(database, now=120.0)
+
+                self.assertFalse(report.clean)
+                run = report.runs[0]
+                if issue_location == "run":
+                    self.assertIn(expected_issue, run.integrity_issues)
+                else:
+                    self.assertTrue(
+                        any(
+                            expected_issue in event.integrity_issues
+                            for event in run.events
+                        )
+                    )
+                self.assertIn(PUBLICATION_SCOPE, run.missing_scopes)
+                self.assertTrue(
+                    all(
+                        issue.replace("_", "").isalnum()
+                        and issue == issue.lower()
+                        for issue in run.integrity_issues
+                    )
+                )
+                projection = json.dumps(report.to_mapping(), sort_keys=True)
+                for marker in _PRIVATE_MARKERS:
+                    self.assertNotIn(marker, projection)
 
     def test_tampering_and_legacy_disagreement_are_recomputed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
