@@ -58,7 +58,17 @@ from .models import (
     PaidContinuationProtection,
     PermissionClass,
 )
-from .state import SQLiteStateStore, _canonical_json
+from .state import (
+    SQLiteStateStore,
+    _KNOWN_STATE_MIGRATIONS,
+    _canonical_json,
+    _expected_migration_schema,
+    _state_schema_integrity_issues,
+    _verify_baseline_history,
+    _verify_baseline_schema,
+    _verify_migration_ledger,
+    _verify_migration_schema,
+)
 from .schema import parse_json_document
 
 
@@ -457,24 +467,6 @@ class SupervisorStatus:
             "dispatch_enabled": self.dispatch_enabled,
             "dispatch_blocker": "runtime_abac_enforcement_not_implemented",
         }
-
-
-_MIGRATION_SCHEMA = """
-CREATE TABLE IF NOT EXISTS state_schema_migrations (
-    version INTEGER PRIMARY KEY CHECK (version > 0),
-    name TEXT NOT NULL UNIQUE,
-    script_sha256 TEXT NOT NULL CHECK (length(script_sha256) = 64),
-    applied_at REAL NOT NULL CHECK (applied_at >= 0)
-);
-CREATE TRIGGER IF NOT EXISTS state_schema_migrations_no_update
-BEFORE UPDATE ON state_schema_migrations BEGIN
-    SELECT RAISE(ABORT, 'schema migrations are append-only');
-END;
-CREATE TRIGGER IF NOT EXISTS state_schema_migrations_no_delete
-BEFORE DELETE ON state_schema_migrations BEGIN
-    SELECT RAISE(ABORT, 'schema migrations are append-only');
-END;
-"""
 
 
 _SCHEMA_V2 = """
@@ -974,6 +966,7 @@ class SQLiteSupervisorStore:
                 database_path,
                 clock=clock,
                 timeout_seconds=timeout_seconds,
+                _configure_journal_mode=False,
             ):
                 pass
         except sqlite3.Error as error:
@@ -993,8 +986,8 @@ class SQLiteSupervisorStore:
             self._connection.row_factory = sqlite3.Row
             self._connection.execute("PRAGMA foreign_keys = ON")
             self._connection.execute("PRAGMA busy_timeout = 5000")
-            self._connection.execute("PRAGMA journal_mode = WAL")
             self._initialise_migrations()
+            self._connection.execute("PRAGMA journal_mode = WAL")
         except BaseException as error:
             self._connection.close()
             if isinstance(error, sqlite3.Error):
@@ -1027,133 +1020,59 @@ class SQLiteSupervisorStore:
 
     def _initialise_migrations(self) -> None:
         with self._lock:
-            self._connection.executescript(
-                "BEGIN IMMEDIATE;\n" + _MIGRATION_SCHEMA + "\nCOMMIT;"
-            )
-            _verify_migration_schema(self._connection)
-            versions = {
-                int(row["version"]): row
-                for row in self._connection.execute(
-                    "SELECT * FROM state_schema_migrations ORDER BY version"
-                ).fetchall()
-            }
-            if versions and max(versions) > _SCHEMA_VERSION:
-                raise ConfigurationError("state database uses an unsupported future schema")
-            baseline_tables = {
-                "runs",
-                "run_events",
-                "run_artifacts",
-                "leases",
-                "schedule_claims",
-                "billing_capacity_events",
-                "billing_circuit_events",
-            }
-            present = {
-                row["name"]
-                for row in self._connection.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'table'"
-                ).fetchall()
-            }
-            if not baseline_tables.issubset(present):
-                raise ConfigurationError("state database baseline is incomplete")
-            _verify_baseline_schema(self._connection)
-            now = self._now(None)
-            # Frozen pre-rename migration identity. Existing ledgers verify
-            # this exact digest, so changing the spelling would strand state.
-            baseline_digest = _sha256_text("agentops-baseline-schema-v1")
-            if 1 not in versions:
-                self._connection.execute(
-                    """
-                    INSERT INTO state_schema_migrations (
-                        version, name, script_sha256, applied_at
-                    ) VALUES (1, 'baseline_state', ?, ?)
-                    """,
-                    (baseline_digest, now),
-                )
-            elif (
-                versions[1]["name"] != "baseline_state"
-                or versions[1]["script_sha256"] != baseline_digest
-            ):
-                raise ConfigurationError("baseline schema migration record is invalid")
-            migration_digest = _sha256_text(_SCHEMA_V2)
-            if 2 not in versions:
-                escaped_digest = migration_digest.replace("'", "''")
-                self._connection.executescript(
-                    "BEGIN IMMEDIATE;\n"
-                    + _SCHEMA_V2
-                    + "\nINSERT INTO state_schema_migrations "
-                    "(version, name, script_sha256, applied_at) VALUES "
-                    f"(2, 'supervisor_control_plane', '{escaped_digest}', {now!r});\n"
-                    "COMMIT;"
-                )
-            else:
-                if (
-                    versions[2]["name"] != "supervisor_control_plane"
-                    or versions[2]["script_sha256"] != migration_digest
-                ):
-                    raise ConfigurationError("supervisor schema migration digest mismatch")
-                required = {
-                    "supervisor_control_events",
-                    "supervisor_flows",
-                    "supervisor_flow_revisions",
-                    "supervisor_cancellation_requests",
-                    "supervisor_attempts",
-                    "supervisor_attempt_events",
-                    "supervisor_completion_outbox",
-                    "supervisor_completion_delivery_events",
-                    "supervisor_completion_receipts",
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                _verify_baseline_schema(self._connection)
+                _verify_baseline_history(self._connection)
+                _verify_migration_schema(self._connection)
+                _verify_migration_ledger(self._connection)
+                versions = {
+                    int(row["version"]): row
+                    for row in self._connection.execute(
+                        "SELECT * FROM state_schema_migrations ORDER BY version"
+                    ).fetchall()
                 }
-                if not required.issubset(present):
-                    raise ConfigurationError("supervisor schema is incomplete")
-            migration_v3_digest = _sha256_text(_SCHEMA_V3)
-            if 3 not in versions:
-                escaped_digest = migration_v3_digest.replace("'", "''")
-                self._connection.executescript(
-                    "BEGIN IMMEDIATE;\n"
-                    + _SCHEMA_V3
-                    + "\nINSERT INTO state_schema_migrations "
-                    "(version, name, script_sha256, applied_at) VALUES "
-                    f"(3, 'supervisor_authorization_shadow', '{escaped_digest}', {now!r});\n"
-                    "COMMIT;"
+                migration_scripts = {
+                    2: _SCHEMA_V2,
+                    3: _SCHEMA_V3,
+                    4: _SCHEMA_V4,
+                }
+                for version, script in migration_scripts.items():
+                    if _sha256_text(script) != _KNOWN_STATE_MIGRATIONS[version][1]:
+                        raise ConfigurationError(
+                            "frozen supervisor migration script digest mismatch"
+                        )
+                missing_versions = tuple(
+                    version for version in migration_scripts if version not in versions
                 )
-            elif (
-                versions[3]["name"] != "supervisor_authorization_shadow"
-                or versions[3]["script_sha256"] != migration_v3_digest
-            ):
-                raise ConfigurationError(
-                    "supervisor authorization schema migration digest mismatch"
-                )
-            migration_v4_digest = _sha256_text(_SCHEMA_V4)
-            if 4 not in versions:
-                self._connection.execute("BEGIN IMMEDIATE")
-                try:
-                    _verify_pre_v4_supervisor_schema(self._connection)
-                    _verify_pre_v4_bookkeeping_history(self._connection)
-                    _execute_schema_script(self._connection, _SCHEMA_V4)
+                applied_at = self._now(None) if missing_versions else None
+
+                for version in missing_versions:
+                    if version == 4:
+                        _verify_pre_v4_supervisor_schema(self._connection)
+                        _verify_pre_v4_bookkeeping_history(self._connection)
+                    _execute_schema_script(
+                        self._connection,
+                        migration_scripts[version],
+                    )
+                    name, digest = _KNOWN_STATE_MIGRATIONS[version]
                     self._connection.execute(
                         """
                         INSERT INTO state_schema_migrations (
                             version, name, script_sha256, applied_at
-                        ) VALUES (
-                            4, 'supervisor_bookkeeping_authorization_shadow', ?, ?
-                        )
+                        ) VALUES (?, ?, ?, ?)
                         """,
-                        (migration_v4_digest, now),
+                        (version, name, digest, applied_at),
                     )
-                except BaseException:
-                    self._connection.rollback()
-                    raise
-                else:
-                    self._connection.commit()
-            elif (
-                versions[4]["name"]
-                != "supervisor_bookkeeping_authorization_shadow"
-                or versions[4]["script_sha256"] != migration_v4_digest
-            ):
-                raise ConfigurationError(
-                    "supervisor bookkeeping authorization migration digest mismatch"
-                )
-            _verify_supervisor_schema(self._connection)
+
+                _verify_migration_schema(self._connection)
+                _verify_migration_ledger(self._connection)
+                _verify_supervisor_schema(self._connection)
+            except BaseException:
+                self._connection.rollback()
+                raise
+            else:
+                self._connection.commit()
 
     def current_control(self) -> SupervisorControlRevision:
         with self._lock:
@@ -2592,14 +2511,19 @@ def inspect_supervisor_audit(
     try:
         with _read_only_connection(path) as connection:
             tables = _table_names(connection)
+            authorization = _inspect_supervisor_authorization_connection(
+                connection
+            )
             plan = (
                 _make_plan(True, timestamp, ())
-                if "supervisor_flows" not in tables
+                if (
+                    "supervisor_flows" not in tables
+                    or not authorization.schema_present
+                )
                 else _make_plan(
                     True, timestamp, _audit_connection(connection, timestamp)
                 )
             )
-            authorization = _inspect_supervisor_authorization_connection(connection)
             return plan, authorization
     except Exception as error:
         raise ConfigurationError("supervisor state is unreadable or malformed") from error
@@ -2610,10 +2534,19 @@ def _inspect_supervisor_authorization_connection(
 ) -> SupervisorAuthorizationAudit:
     tables = _table_names(connection)
     if "supervisor_flows" not in tables:
+        objects = _schema_objects(connection)
         supervisor_state_present = any(
-            name.startswith("supervisor_") for name in tables
+            key[1].startswith("supervisor_")
+            or value[1].startswith("supervisor_")
+            for key, value in objects.items()
         )
-        if "state_schema_migrations" in tables:
+        migration_objects = {
+            key: value
+            for key, value in objects.items()
+            if key[1].startswith("state_schema_migrations")
+            or value[1] == "state_schema_migrations"
+        }
+        if migration_objects == _expected_migration_schema():
             supervisor_state_present = supervisor_state_present or (
                 connection.execute(
                     "SELECT 1 FROM state_schema_migrations WHERE version >= 2 LIMIT 1"
@@ -2628,10 +2561,26 @@ def _inspect_supervisor_authorization_connection(
                 *_authorization_guard_findings(connection),
             )
             if supervisor_state_present
-            else ()
+            else _shared_state_guard_findings(connection)
         )
         return SupervisorAuthorizationAudit(True, False, 0, 0, findings)
     guard_findings = _authorization_guard_findings(connection)
+    guard_codes = {finding.code for finding in guard_findings}
+    projection_unsafe = (
+        "migration_schema_mismatch" in guard_codes
+        or (
+            "authorization_schema_mismatch" in guard_codes
+            and not _supervisor_table_shapes_safe(connection)
+        )
+    )
+    if projection_unsafe:
+        return SupervisorAuthorizationAudit(
+            True,
+            False,
+            0,
+            0,
+            guard_findings,
+        )
     required_sources = {
         "supervisor_attempts",
         "supervisor_cancellation_requests",
@@ -2664,13 +2613,7 @@ def _inspect_supervisor_authorization_connection(
         schema_present=(
             flow.schema_present
             and bookkeeping.schema_present
-            and not any(
-                finding.code in {
-                    "authorization_schema_mismatch",
-                    "migration_schema_mismatch",
-                }
-                for finding in guard_findings
-            )
+            and not guard_findings
         ),
         observation_count=flow.observation_count + bookkeeping.observation_count,
         expected_observation_count=(
@@ -2678,6 +2621,24 @@ def _inspect_supervisor_authorization_connection(
             + bookkeeping.expected_observation_count
         ),
         findings=findings,
+    )
+
+
+def _supervisor_table_shapes_safe(connection: sqlite3.Connection) -> bool:
+    expected_tables = {
+        key: value
+        for key, value in _expected_supervisor_schema().items()
+        if key[0] == "table"
+    }
+    expected_names = {key[1] for key in expected_tables}
+    actual_tables = {
+        key: value
+        for key, value in _schema_objects(connection).items()
+        if key[0] == "table" and key[1].startswith("supervisor_")
+    }
+    return all(
+        key[1] in expected_names and expected_tables.get(key) == value
+        for key, value in actual_tables.items()
     )
 
 
@@ -3138,13 +3099,14 @@ def inspect_pending_completions(
 def _authorization_guard_findings(
     connection: sqlite3.Connection,
 ) -> tuple[SupervisorAuthorizationFinding, ...]:
-    findings: list[SupervisorAuthorizationFinding] = []
+    findings = list(_shared_state_guard_findings(connection))
     expected = _expected_supervisor_schema()
     objects = _schema_objects(connection)
     actual = {
-        name: value
-        for name, value in objects.items()
-        if name.startswith("supervisor_") or value[1].startswith("supervisor_")
+        key: value
+        for key, value in objects.items()
+        if key[1].startswith("supervisor_")
+        or value[1].startswith("supervisor_")
     }
     if actual != expected:
         findings.append(
@@ -3154,12 +3116,13 @@ def _authorization_guard_findings(
         )
     expected_migration = _expected_migration_schema()
     actual_migration = {
-        name: value
-        for name, value in objects.items()
-        if name.startswith("state_schema_migrations")
+        key: value
+        for key, value in objects.items()
+        if key[1].startswith("state_schema_migrations")
         or value[1] == "state_schema_migrations"
     }
-    if actual_migration != expected_migration:
+    migration_schema_matches = actual_migration == expected_migration
+    if not migration_schema_matches:
         findings.append(
             SupervisorAuthorizationFinding(
                 "migration_schema_mismatch", None, None, None
@@ -3175,7 +3138,9 @@ def _authorization_guard_findings(
             findings.append(
                 SupervisorAuthorizationFinding(code, None, None, None)
             )
-        return tuple(findings)
+        return tuple(dict.fromkeys(findings))
+    if not migration_schema_matches:
+        return tuple(dict.fromkeys(findings))
     ledger = {
         int(row["version"]): row
         for row in connection.execute(
@@ -3237,7 +3202,16 @@ def _authorization_guard_findings(
                 None,
             )
         )
-    return tuple(findings)
+    return tuple(dict.fromkeys(findings))
+
+
+def _shared_state_guard_findings(
+    connection: sqlite3.Connection,
+) -> tuple[SupervisorAuthorizationFinding, ...]:
+    return tuple(
+        SupervisorAuthorizationFinding(code, None, None, None)
+        for code in _state_schema_integrity_issues(connection)
+    )
 
 
 def _verify_authorization_observation(
@@ -3417,11 +3391,28 @@ def _audit_boundary_reference(value: Any) -> str | None:
 
 @contextmanager
 def _read_only_connection(path: Path) -> Iterator[sqlite3.Connection]:
-    absolute = path.resolve()
+    try:
+        if path.is_symlink() or path.parent.is_symlink():
+            raise ConfigurationError(
+                "supervisor state database must not be a symlink"
+            )
+        absolute = path.resolve(strict=True)
+    except ConfigurationError:
+        raise
+    except OSError as error:
+        raise ConfigurationError(
+            "supervisor state is unreadable or malformed"
+        ) from error
     wal_path = Path(f"{absolute}-wal")
     shared_memory_path = Path(f"{absolute}-shm")
-    wal_exists = wal_path.exists()
-    shared_memory_exists = shared_memory_path.exists()
+    main_signature = _supervisor_file_signature(absolute, required=True)
+    wal_signature = _supervisor_file_signature(wal_path, required=False)
+    shared_memory_signature = _supervisor_file_signature(
+        shared_memory_path,
+        required=False,
+    )
+    wal_exists = wal_signature is not None
+    shared_memory_exists = shared_memory_signature is not None
     if wal_exists != shared_memory_exists:
         raise ConfigurationError(
             "supervisor state has incomplete WAL coordination files; reconcile first"
@@ -3443,6 +3434,54 @@ def _read_only_connection(path: Path) -> Iterator[sqlite3.Connection]:
     finally:
         connection.rollback()
         connection.close()
+        if not wal_exists:
+            after = (
+                _supervisor_file_signature(absolute, required=True),
+                _supervisor_file_signature(wal_path, required=False),
+                _supervisor_file_signature(
+                    shared_memory_path,
+                    required=False,
+                ),
+            )
+            if after != (main_signature, None, None):
+                raise ConfigurationError(
+                    "supervisor state changed during inspection"
+                )
+
+
+def _supervisor_file_signature(
+    path: Path,
+    *,
+    required: bool,
+) -> tuple[int, int, int, int] | None:
+    try:
+        if path.is_symlink():
+            raise ConfigurationError(
+                "supervisor state database must not use symlinks"
+            )
+        metadata = path.stat()
+    except FileNotFoundError:
+        if not required:
+            return None
+        raise ConfigurationError(
+            "supervisor state is unreadable or malformed"
+        ) from None
+    except ConfigurationError:
+        raise
+    except OSError as error:
+        raise ConfigurationError(
+            "supervisor state is unreadable or malformed"
+        ) from error
+    if not path.is_file():
+        raise ConfigurationError(
+            "supervisor state is unreadable or malformed"
+        )
+    return (
+        int(metadata.st_dev),
+        int(metadata.st_ino),
+        int(metadata.st_size),
+        int(metadata.st_mtime_ns),
+    )
 
 
 def _audit_connection(
@@ -3669,16 +3708,16 @@ def _table_names(connection: sqlite3.Connection) -> frozenset[str]:
 
 def _schema_objects(
     connection: sqlite3.Connection,
-) -> dict[str, tuple[str, str, str]]:
+) -> dict[tuple[str, str], tuple[str, str, str]]:
     rows = connection.execute(
         """
         SELECT type, name, tbl_name, sql FROM sqlite_master
-        WHERE sql IS NOT NULL AND type IN ('table', 'index', 'trigger')
+        WHERE sql IS NOT NULL AND type IN ('table', 'index', 'trigger', 'view')
         ORDER BY type, name
         """
     ).fetchall()
     return {
-        row["name"]: (
+        (row["type"], row["name"]): (
             row["type"],
             row["tbl_name"],
             " ".join(row["sql"].split()),
@@ -3701,8 +3740,29 @@ def _execute_schema_script(connection: sqlite3.Connection, script: str) -> None:
 
 
 def _verify_pre_v4_bookkeeping_history(connection: sqlite3.Connection) -> None:
-    foreign_key_errors = connection.execute("PRAGMA foreign_key_check").fetchall()
-    if any(str(row["table"]).startswith("supervisor_") for row in foreign_key_errors):
+    foreign_key_tables = (
+        "supervisor_attempt_events",
+        "supervisor_attempts",
+        "supervisor_authorization_observations",
+        "supervisor_cancellation_requests",
+        "supervisor_completion_delivery_events",
+        "supervisor_completion_outbox",
+        "supervisor_completion_receipts",
+        "supervisor_flow_revisions",
+    )
+    try:
+        foreign_key_errors = tuple(
+            row
+            for table in foreign_key_tables
+            for row in connection.execute(
+                f'PRAGMA foreign_key_check("{table}")'
+            ).fetchall()
+        )
+    except sqlite3.Error as error:
+        raise ConfigurationError(
+            "pre-v4 supervisor bookkeeping history has invalid references"
+        ) from error
+    if foreign_key_errors:
         raise ConfigurationError(
             "pre-v4 supervisor bookkeeping history has invalid references"
         )
@@ -3834,13 +3894,9 @@ def _verify_flow_revision_lineage(
 
 
 @cache
-def _expected_baseline_schema() -> dict[str, tuple[str, str, str]]:
-    with SQLiteStateStore(":memory:") as store:
-        return _schema_objects(store._connection)
-
-
-@cache
-def _expected_supervisor_schema() -> dict[str, tuple[str, str, str]]:
+def _expected_supervisor_schema() -> dict[
+    tuple[str, str], tuple[str, str, str]
+]:
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
     try:
@@ -3849,9 +3905,9 @@ def _expected_supervisor_schema() -> dict[str, tuple[str, str, str]]:
         )
         objects = _schema_objects(connection)
         return {
-            name: value
-            for name, value in objects.items()
-            if name.startswith("supervisor_")
+            key: value
+            for key, value in objects.items()
+            if key[1].startswith("supervisor_")
             or value[1].startswith("supervisor_")
         }
     finally:
@@ -3859,16 +3915,18 @@ def _expected_supervisor_schema() -> dict[str, tuple[str, str, str]]:
 
 
 @cache
-def _expected_pre_v4_supervisor_schema() -> dict[str, tuple[str, str, str]]:
+def _expected_pre_v4_supervisor_schema() -> dict[
+    tuple[str, str], tuple[str, str, str]
+]:
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
     try:
         connection.executescript(_SCHEMA_V2 + "\n" + _SCHEMA_V3)
         objects = _schema_objects(connection)
         return {
-            name: value
-            for name, value in objects.items()
-            if name.startswith("supervisor_")
+            key: value
+            for key, value in objects.items()
+            if key[1].startswith("supervisor_")
             or value[1].startswith("supervisor_")
         }
     finally:
@@ -3878,69 +3936,25 @@ def _expected_pre_v4_supervisor_schema() -> dict[str, tuple[str, str, str]]:
 def _verify_pre_v4_supervisor_schema(connection: sqlite3.Connection) -> None:
     objects = _schema_objects(connection)
     actual = {
-        name: value
-        for name, value in objects.items()
-        if name.startswith("supervisor_")
+        key: value
+        for key, value in objects.items()
+        if key[1].startswith("supervisor_")
         or value[1].startswith("supervisor_")
     }
     if actual != _expected_pre_v4_supervisor_schema():
         raise ConfigurationError("pre-v4 supervisor schema is invalid")
 
 
-def _verify_baseline_schema(connection: sqlite3.Connection) -> None:
-    actual = _schema_objects(connection)
-    expected = _expected_baseline_schema()
-    baseline_tables = {
-        name for name, value in expected.items() if value[0] == "table"
-    }
-    actual_owned = {
-        name: value
-        for name, value in actual.items()
-        if name in expected or value[1] in baseline_tables
-    }
-    if actual_owned != expected:
-        raise ConfigurationError("state database baseline schema does not match v1")
-
-
 def _verify_supervisor_schema(connection: sqlite3.Connection) -> None:
     objects = _schema_objects(connection)
     actual = {
-        name: value
-        for name, value in objects.items()
-        if name.startswith("supervisor_")
+        key: value
+        for key, value in objects.items()
+        if key[1].startswith("supervisor_")
         or value[1].startswith("supervisor_")
     }
     if actual != _expected_supervisor_schema():
         raise ConfigurationError("supervisor schema objects do not match migrations")
-
-
-@cache
-def _expected_migration_schema() -> dict[str, tuple[str, str, str]]:
-    connection = sqlite3.connect(":memory:")
-    connection.row_factory = sqlite3.Row
-    try:
-        connection.executescript(_MIGRATION_SCHEMA)
-        objects = _schema_objects(connection)
-        return {
-            name: value
-            for name, value in objects.items()
-            if name.startswith("state_schema_migrations")
-            or value[1] == "state_schema_migrations"
-        }
-    finally:
-        connection.close()
-
-
-def _verify_migration_schema(connection: sqlite3.Connection) -> None:
-    objects = _schema_objects(connection)
-    actual = {
-        name: value
-        for name, value in objects.items()
-        if name.startswith("state_schema_migrations")
-        or value[1] == "state_schema_migrations"
-    }
-    if actual != _expected_migration_schema():
-        raise ConfigurationError("schema migration ledger objects are invalid")
 
 
 def _validate_flow_spec(spec: FlowSpec) -> None:

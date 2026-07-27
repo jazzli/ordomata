@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
@@ -275,6 +276,185 @@ class AuthorizationInspectionTests(unittest.TestCase):
             self.assertFalse(report.database_present)
             self.assertEqual(report.runs, ())
             self.assertFalse(state_directory.exists())
+
+    def test_baseline_schema_tampering_is_reported_without_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "state.sqlite3"
+            store = SQLiteStateStore(database)
+            store.close()
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute("DROP TRIGGER runs_no_update")
+                connection.commit()
+
+            report = inspect_authorization_shadows(database, now=300.0)
+
+            self.assertFalse(report.clean)
+            self.assertEqual(report.integrity_issues, ("baseline_schema_mismatch",))
+            self.assertEqual(report.integrity_issue_count, 1)
+            with closing(sqlite3.connect(database)) as connection:
+                trigger = connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name = 'runs_no_update'"
+                ).fetchone()
+            self.assertIsNone(trigger)
+
+    def test_migration_schema_and_version_findings_are_value_free(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            missing_guard = Path(temporary) / "missing-guard.sqlite3"
+            store = SQLiteStateStore(missing_guard)
+            store.close()
+            with closing(sqlite3.connect(missing_guard)) as connection:
+                connection.execute(
+                    "DROP TRIGGER state_schema_migrations_no_update"
+                )
+                connection.commit()
+
+            guard_report = inspect_authorization_shadows(
+                missing_guard, now=300.0
+            )
+            self.assertEqual(
+                guard_report.integrity_issues,
+                ("migration_schema_mismatch",),
+            )
+
+            future = Path(temporary) / "future.sqlite3"
+            store = SQLiteStateStore(future)
+            store.close()
+            with closing(sqlite3.connect(future)) as connection:
+                connection.execute(
+                    """
+                    INSERT INTO state_schema_migrations (
+                        version, name, script_sha256, applied_at
+                    ) VALUES (5, 'private-future-marker', ?, 301.0)
+                    """,
+                    ("f" * 64,),
+                )
+                connection.commit()
+
+            future_report = inspect_authorization_shadows(future, now=302.0)
+            projection = json.dumps(future_report.to_mapping(), sort_keys=True)
+            self.assertEqual(
+                future_report.integrity_issues,
+                ("migration_version_set_mismatch",),
+            )
+            self.assertNotIn("private-future-marker", projection)
+
+    def test_invalid_migration_timestamp_is_reported_value_free(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "state.sqlite3"
+            store = SQLiteStateStore(database)
+            store.close()
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute(
+                    "DROP TRIGGER state_schema_migrations_no_update"
+                )
+                connection.execute(
+                    """
+                    UPDATE state_schema_migrations
+                    SET applied_at = 'private-timestamp-marker'
+                    """
+                )
+                connection.execute(
+                    """
+                    CREATE TRIGGER state_schema_migrations_no_update
+                    BEFORE UPDATE ON state_schema_migrations BEGIN
+                        SELECT RAISE(ABORT, 'schema migrations are append-only');
+                    END
+                    """
+                )
+                connection.commit()
+
+            report = inspect_authorization_shadows(database, now=300.0)
+            projection = json.dumps(report.to_mapping(), sort_keys=True)
+
+            self.assertEqual(
+                report.integrity_issues,
+                ("migration_applied_at_invalid",),
+            )
+            self.assertNotIn("private-timestamp-marker", projection)
+
+    def test_migration_version_schema_disagreement_is_reported(self) -> None:
+        from ordomata.supervisor import SQLiteSupervisorStore
+
+        with tempfile.TemporaryDirectory() as temporary:
+            missing_current = Path(temporary) / "missing-current.sqlite3"
+            supervisor = SQLiteSupervisorStore(missing_current)
+            supervisor.close()
+            with closing(sqlite3.connect(missing_current)) as connection:
+                connection.execute(
+                    """
+                    DROP TABLE
+                    supervisor_bookkeeping_authorization_observations
+                    """
+                )
+                connection.commit()
+
+            premature = Path(temporary) / "premature.sqlite3"
+            store = SQLiteStateStore(premature)
+            store.close()
+            with closing(sqlite3.connect(premature)) as connection:
+                connection.execute(
+                    """
+                    CREATE TABLE supervisor_control_events(
+                        private_marker TEXT
+                    )
+                    """
+                )
+                connection.commit()
+
+            for database in (missing_current, premature):
+                with self.subTest(database=database.name):
+                    report = inspect_authorization_shadows(
+                        database,
+                        now=300.0,
+                    )
+                    self.assertIn(
+                        "migration_ledger_schema_mismatch",
+                        report.integrity_issues,
+                    )
+
+    def test_malformed_baseline_columns_return_bounded_schema_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "state.sqlite3"
+            store = SQLiteStateStore(database)
+            store.close()
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute(
+                    """
+                    ALTER TABLE runs
+                    RENAME COLUMN permission_class TO permission_level
+                    """
+                )
+                connection.commit()
+
+            report = inspect_authorization_shadows(database, now=300.0)
+
+            self.assertEqual(
+                report.integrity_issues,
+                ("baseline_schema_mismatch",),
+            )
+            self.assertEqual(report.runs, ())
+
+    def test_exact_preledger_baseline_is_legacy_clean_and_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "state.sqlite3"
+            store = SQLiteStateStore(database)
+            store.close()
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute("DROP TABLE state_schema_migrations")
+                connection.commit()
+
+            report = inspect_authorization_shadows(database, now=300.0)
+
+            self.assertTrue(report.clean)
+            self.assertEqual(report.integrity_issues, ())
+            with closing(sqlite3.connect(database)) as connection:
+                ledger = connection.execute(
+                    """
+                    SELECT 1 FROM sqlite_master
+                    WHERE type = 'table' AND name = 'state_schema_migrations'
+                    """
+                ).fetchone()
+            self.assertIsNone(ledger)
 
     def test_requested_missing_run_raises_without_echoing_identifier(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

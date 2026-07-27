@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import cache
 import hashlib
 import json
 import math
@@ -23,7 +24,12 @@ from typing import Any, Iterator
 from uuid import uuid4
 
 from .billing import BillingDispatchReservation
-from .errors import OrdomataError, BillingRouteBlocked, ValidationError
+from .errors import (
+    OrdomataError,
+    BillingRouteBlocked,
+    ConfigurationError,
+    ValidationError,
+)
 from .models import (
     BillingRouteAssessment,
     CapacityState,
@@ -52,6 +58,92 @@ class InvalidStateTransition(ValidationError):
 
 class SecretPersistenceError(ValidationError):
     """A value that resembles credential material was rejected."""
+
+
+# Migration identities are immutable once published.  Keeping the exact
+# digests here lets every ordinary state-store open validate the shared ledger
+# before any component-specific migration code can run.
+_KNOWN_STATE_MIGRATIONS: Mapping[int, tuple[str, str]] = {
+    1: (
+        "baseline_state",
+        "6076ff9c09a329bc60f1bdc79fd61d3251990219047005691eff8bbd9e9178e6",
+    ),
+    2: (
+        "supervisor_control_plane",
+        "a6267a7238cf2c846de7aaba9982de96cdf328559a91a5fd80243e0b0ef195e0",
+    ),
+    3: (
+        "supervisor_authorization_shadow",
+        "b014646a473c24b8f705017a844dfa56c0ae8671c8f99560f952d3822df89640",
+    ),
+    4: (
+        "supervisor_bookkeeping_authorization_shadow",
+        "b9fabfaafe5053d26845ab6298476a7f2a133f3de9ab079edc71511ffec926e5",
+    ),
+}
+_CURRENT_STATE_SCHEMA_VERSION = max(_KNOWN_STATE_MIGRATIONS)
+_BASELINE_SCHEMA_SCRIPT_FINGERPRINT = (
+    "a23014abb3b16da66b66da6dccd5222490e670c55ebf5dfe1d917024c79d7276"
+)
+_MIGRATION_SCHEMA_SCRIPT_FINGERPRINT = (
+    "6849959c36c7381a486d414f4337af486b453e8f14d51b4342279873fb1a24ee"
+)
+_BASELINE_TABLE_NAMES = frozenset(
+    {
+        "runs",
+        "run_events",
+        "run_artifacts",
+        "leases",
+        "schedule_claims",
+        "billing_capacity_events",
+        "billing_circuit_events",
+    }
+)
+_SUPERVISOR_REQUIRED_TABLES_BY_VERSION: Mapping[int, frozenset[str]] = {
+    2: frozenset(
+        {
+            "supervisor_control_events",
+            "supervisor_flows",
+            "supervisor_flow_revisions",
+            "supervisor_cancellation_requests",
+            "supervisor_attempts",
+            "supervisor_attempt_events",
+            "supervisor_completion_outbox",
+            "supervisor_completion_delivery_events",
+            "supervisor_completion_receipts",
+        }
+    ),
+    3: frozenset(
+        {
+            "supervisor_authorization_shadow_baseline",
+            "supervisor_authorization_observations",
+        }
+    ),
+    4: frozenset(
+        {
+            "supervisor_bookkeeping_authorization_baseline",
+            "supervisor_bookkeeping_authorization_sources",
+            "supervisor_bookkeeping_authorization_observations",
+        }
+    ),
+}
+
+_MIGRATION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS state_schema_migrations (
+    version INTEGER PRIMARY KEY CHECK (version > 0),
+    name TEXT NOT NULL UNIQUE,
+    script_sha256 TEXT NOT NULL CHECK (length(script_sha256) = 64),
+    applied_at REAL NOT NULL CHECK (applied_at >= 0)
+);
+CREATE TRIGGER IF NOT EXISTS state_schema_migrations_no_update
+BEFORE UPDATE ON state_schema_migrations BEGIN
+    SELECT RAISE(ABORT, 'schema migrations are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS state_schema_migrations_no_delete
+BEFORE DELETE ON state_schema_migrations BEGIN
+    SELECT RAISE(ABORT, 'schema migrations are append-only');
+END;
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,6 +402,450 @@ def _canonical_json(value: Any) -> str:
         raise ValidationError("payload must be valid finite JSON") from error
 
 
+def _schema_objects(
+    connection: sqlite3.Connection,
+) -> dict[tuple[str, str], tuple[str, str, str]]:
+    rows = connection.execute(
+        """
+        SELECT type, name, tbl_name, sql FROM sqlite_master
+        WHERE sql IS NOT NULL AND type IN ('table', 'index', 'trigger', 'view')
+        ORDER BY type, name
+        """
+    ).fetchall()
+    return {
+        (row["type"], row["name"]): (
+            row["type"],
+            row["tbl_name"],
+            " ".join(row["sql"].split()),
+        )
+        for row in rows
+    }
+
+
+def _user_schema_object_names(
+    connection: sqlite3.Connection,
+) -> frozenset[tuple[str, str]]:
+    return frozenset(
+        (row["type"], row["name"])
+        for row in connection.execute(
+            """
+            SELECT type, name FROM sqlite_master
+            WHERE name NOT GLOB 'sqlite_*'
+            """
+        ).fetchall()
+    )
+
+
+def _execute_schema_script(connection: sqlite3.Connection, script: str) -> None:
+    statement = ""
+    for line in script.splitlines(keepends=True):
+        statement += line
+        if sqlite3.complete_statement(statement):
+            sql = statement.strip()
+            if sql:
+                connection.execute(sql)
+            statement = ""
+    if statement.strip():
+        raise ConfigurationError("state schema script is incomplete")
+
+
+def _schema_script_fingerprint(script: str) -> str:
+    normalized = " ".join(script.split())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+@cache
+def _expected_baseline_schema() -> dict[tuple[str, str], tuple[str, str, str]]:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    try:
+        baseline_schema = SQLiteStateStore._baseline_schema()
+        if (
+            _schema_script_fingerprint(baseline_schema)
+            != _BASELINE_SCHEMA_SCRIPT_FINGERPRINT
+        ):
+            raise ConfigurationError(
+                "frozen state baseline schema definition changed"
+            )
+        _execute_schema_script(connection, baseline_schema)
+        objects = _schema_objects(connection)
+        expected = {
+            key: value
+            for key, value in objects.items()
+            if key[1] in _BASELINE_TABLE_NAMES
+            or value[1] in _BASELINE_TABLE_NAMES
+        }
+        return expected
+    finally:
+        connection.close()
+
+
+@cache
+def _expected_migration_schema() -> dict[tuple[str, str], tuple[str, str, str]]:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    try:
+        if (
+            _schema_script_fingerprint(_MIGRATION_SCHEMA)
+            != _MIGRATION_SCHEMA_SCRIPT_FINGERPRINT
+        ):
+            raise ConfigurationError(
+                "frozen state migration schema definition changed"
+            )
+        _execute_schema_script(connection, _MIGRATION_SCHEMA)
+        return _migration_schema_objects(connection)
+    finally:
+        connection.close()
+
+
+def _migration_schema_objects(
+    connection: sqlite3.Connection,
+) -> dict[tuple[str, str], tuple[str, str, str]]:
+    return {
+        key: value
+        for key, value in _schema_objects(connection).items()
+        if key[1].startswith("state_schema_migrations")
+        or value[1] == "state_schema_migrations"
+    }
+
+
+def _has_supervisor_schema_objects(connection: sqlite3.Connection) -> bool:
+    return any(
+        key[1].startswith("supervisor_")
+        or value[1].startswith("supervisor_")
+        for key, value in _schema_objects(connection).items()
+    )
+
+
+def _verify_baseline_schema(connection: sqlite3.Connection) -> None:
+    expected = _expected_baseline_schema()
+    expected_names = {key[1] for key in expected}
+    actual = _schema_objects(connection)
+    actual_owned = {
+        key: value
+        for key, value in actual.items()
+        if key[1] in expected_names or value[1] in _BASELINE_TABLE_NAMES
+    }
+    if actual_owned != expected:
+        raise ConfigurationError(
+            "state database baseline schema objects do not match v1"
+        )
+
+
+def _verify_baseline_history(connection: sqlite3.Connection) -> None:
+    try:
+        foreign_key_errors = tuple(
+            row
+            for table in ("run_artifacts", "run_events")
+            for row in connection.execute(
+                f'PRAGMA foreign_key_check("{table}")'
+            ).fetchall()
+        )
+    except sqlite3.Error as error:
+        raise ConfigurationError(
+            "state database baseline history is invalid"
+        ) from error
+    if foreign_key_errors:
+        raise ConfigurationError("state database baseline history is invalid")
+
+    invalid_first_event = connection.execute(
+        """
+        WITH ordered_events AS (
+            SELECT
+                events.run_id,
+                events.event_type,
+                events.status,
+                events.occurred_at,
+                ROW_NUMBER() OVER (
+                    PARTITION BY events.run_id ORDER BY events.sequence
+                ) AS event_rank
+            FROM run_events events
+        )
+        SELECT 1
+        FROM ordered_events ordered
+        JOIN runs run ON run.run_id = ordered.run_id
+        WHERE ordered.event_rank = 1
+          AND (
+              ordered.event_type != 'status'
+              OR ordered.status != 'created'
+              OR ordered.occurred_at != run.created_at
+          )
+        LIMIT 1
+        """
+    ).fetchone()
+    invalid_status = connection.execute(
+        """
+        WITH ordered_status AS (
+            SELECT
+                events.run_id,
+                events.event_type,
+                events.status,
+                events.occurred_at,
+                ROW_NUMBER() OVER (
+                    PARTITION BY events.run_id ORDER BY events.sequence
+                ) AS status_rank,
+                LAG(events.status) OVER (
+                    PARTITION BY events.run_id ORDER BY events.sequence
+                ) AS previous_status
+            FROM run_events events
+            WHERE events.status IS NOT NULL
+        )
+        SELECT 1
+        FROM ordered_status ordered
+        WHERE
+            (
+                ordered.status_rank = 1
+                AND ordered.status != 'created'
+            )
+            OR (
+                ordered.status_rank > 1
+                AND NOT (
+                    (
+                        ordered.previous_status = 'created'
+                        AND ordered.status IN (
+                            'running', 'failed', 'blocked',
+                            'quarantined', 'cancelled'
+                        )
+                    )
+                    OR (
+                        ordered.previous_status = 'running'
+                        AND ordered.status IN (
+                            'succeeded', 'failed', 'blocked',
+                            'quarantined', 'cancelled'
+                        )
+                    )
+                    OR (
+                        ordered.previous_status = 'blocked'
+                        AND ordered.status IN (
+                            'running', 'quarantined', 'cancelled'
+                        )
+                    )
+                )
+            )
+        LIMIT 1
+        """
+    ).fetchone()
+    missing_status = connection.execute(
+        """
+        SELECT 1 FROM runs run
+        WHERE NOT EXISTS (
+            SELECT 1 FROM run_events event
+            WHERE event.run_id = run.run_id AND event.status IS NOT NULL
+        )
+        LIMIT 1
+        """
+    ).fetchone()
+    if (
+        invalid_first_event is not None
+        or invalid_status is not None
+        or missing_status is not None
+    ):
+        raise ConfigurationError("state database baseline history is invalid")
+
+
+def _verify_migration_schema(connection: sqlite3.Connection) -> None:
+    if _migration_schema_objects(connection) != _expected_migration_schema():
+        raise ConfigurationError("state migration ledger schema is invalid")
+
+
+def _migration_versions(connection: sqlite3.Connection) -> tuple[int, ...]:
+    rows = connection.execute(
+        """
+        SELECT version, name, script_sha256, applied_at
+        FROM state_schema_migrations ORDER BY version
+        """
+    ).fetchall()
+    if not rows:
+        raise ConfigurationError("state migration ledger is empty")
+    versions: list[int] = []
+    for row in rows:
+        version = row["version"]
+        if isinstance(version, bool) or not isinstance(version, int):
+            raise ConfigurationError("state migration ledger is invalid")
+        expected = _KNOWN_STATE_MIGRATIONS.get(version)
+        if expected is None or (row["name"], row["script_sha256"]) != expected:
+            raise ConfigurationError("state migration ledger is invalid")
+        applied_at = row["applied_at"]
+        if (
+            isinstance(applied_at, bool)
+            or not isinstance(applied_at, (int, float))
+            or not math.isfinite(float(applied_at))
+            or float(applied_at) < 0
+        ):
+            raise ConfigurationError("state migration ledger is invalid")
+        versions.append(version)
+    expected_versions = list(range(1, versions[-1] + 1))
+    if versions != expected_versions or versions[-1] > _CURRENT_STATE_SCHEMA_VERSION:
+        raise ConfigurationError("state migration ledger is invalid")
+    return tuple(versions)
+
+
+def _verify_migration_ledger(connection: sqlite3.Connection) -> None:
+    versions = _migration_versions(connection)
+    current_version = versions[-1]
+    present_tables = {
+        row["name"]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    for version, required in _SUPERVISOR_REQUIRED_TABLES_BY_VERSION.items():
+        if version <= current_version and not required.issubset(present_tables):
+            raise ConfigurationError(
+                "state migration ledger does not match installed schema"
+            )
+        if version > current_version and required.intersection(present_tables):
+            raise ConfigurationError(
+                "state migration ledger does not match installed schema"
+            )
+
+
+def _state_schema_integrity_issues(
+    connection: sqlite3.Connection,
+) -> tuple[str, ...]:
+    """Return fixed, value-free findings for a read-only state audit."""
+
+    issues: list[str] = []
+    objects = _schema_objects(connection)
+    present_tables = {
+        key[1] for key, value in objects.items() if value[0] == "table"
+    }
+    expected_baseline = _expected_baseline_schema()
+    expected_baseline_names = {key[1] for key in expected_baseline}
+    actual_baseline = {
+        key: value
+        for key, value in objects.items()
+        if key[1] in expected_baseline_names
+        or value[1] in _BASELINE_TABLE_NAMES
+    }
+    baseline_present = _BASELINE_TABLE_NAMES.issubset(present_tables)
+    if not baseline_present:
+        issues.append("baseline_schema_missing")
+    elif actual_baseline != expected_baseline:
+        issues.append("baseline_schema_mismatch")
+    else:
+        try:
+            _verify_baseline_history(connection)
+        except ConfigurationError:
+            issues.append("baseline_history_invalid")
+
+    migration_objects = _migration_schema_objects(connection)
+    if not migration_objects:
+        if _user_schema_object_names(connection) != frozenset(expected_baseline):
+            issues.append("migration_schema_missing")
+        return tuple(sorted(set(issues)))
+    if migration_objects != _expected_migration_schema():
+        issues.append("migration_schema_mismatch")
+        return tuple(sorted(set(issues)))
+
+    rows = connection.execute(
+        """
+        SELECT version, name, script_sha256, applied_at
+        FROM state_schema_migrations ORDER BY version
+        """
+    ).fetchall()
+    versions = [row["version"] for row in rows]
+    version_set_valid = bool(versions) and all(
+        not isinstance(version, bool) and isinstance(version, int)
+        for version in versions
+    )
+    if version_set_valid:
+        expected_versions = list(range(1, versions[-1] + 1))
+        version_set_valid = (
+            versions == expected_versions
+            and versions[-1] <= _CURRENT_STATE_SCHEMA_VERSION
+        )
+    if not version_set_valid:
+        issues.append("migration_version_set_mismatch")
+        return tuple(sorted(set(issues)))
+
+    identity_valid = True
+    for row in rows:
+        applied_at = row["applied_at"]
+        if (
+            isinstance(applied_at, bool)
+            or not isinstance(applied_at, (int, float))
+            or not math.isfinite(float(applied_at))
+            or float(applied_at) < 0
+        ):
+            issues.append("migration_applied_at_invalid")
+        expected = _KNOWN_STATE_MIGRATIONS.get(row["version"])
+        if expected is None or (row["name"], row["script_sha256"]) != expected:
+            identity_valid = False
+            issues.append(
+                "baseline_migration_ledger_mismatch"
+                if row["version"] == 1
+                else "migration_ledger_mismatch"
+            )
+    if identity_valid:
+        current_version = versions[-1]
+        for version, required in _SUPERVISOR_REQUIRED_TABLES_BY_VERSION.items():
+            if version <= current_version and not required.issubset(present_tables):
+                issues.append("migration_ledger_schema_mismatch")
+            if version > current_version and required.intersection(present_tables):
+                issues.append("migration_ledger_schema_mismatch")
+    return tuple(sorted(set(issues)))
+
+
+def _insert_baseline_migration(
+    connection: sqlite3.Connection,
+    *,
+    applied_at: float,
+) -> None:
+    name, digest = _KNOWN_STATE_MIGRATIONS[1]
+    connection.execute(
+        """
+        INSERT INTO state_schema_migrations (
+            version, name, script_sha256, applied_at
+        ) VALUES (1, ?, ?, ?)
+        """,
+        (name, digest, applied_at),
+    )
+
+
+def _create_new_state_schema(
+    connection: sqlite3.Connection,
+    baseline_schema: str,
+    *,
+    applied_at: float,
+) -> None:
+    existing = _user_schema_object_names(connection)
+    if existing:
+        raise ConfigurationError("state database changed during initialization")
+    _execute_schema_script(connection, baseline_schema)
+    _execute_schema_script(connection, _MIGRATION_SCHEMA)
+    _insert_baseline_migration(connection, applied_at=applied_at)
+    _verify_baseline_schema(connection)
+    _verify_baseline_history(connection)
+    _verify_migration_schema(connection)
+    _verify_migration_ledger(connection)
+
+
+def _adopt_legacy_baseline(
+    connection: sqlite3.Connection,
+    *,
+    applied_at: float,
+) -> None:
+    _verify_baseline_schema(connection)
+    _verify_baseline_history(connection)
+    if _user_schema_object_names(connection) != frozenset(
+        _expected_baseline_schema()
+    ):
+        raise ConfigurationError(
+            "legacy state database contains unrecognized schema objects"
+        )
+    if _migration_schema_objects(connection) or _has_supervisor_schema_objects(
+        connection
+    ):
+        raise ConfigurationError(
+            "state database changed during migration-ledger initialization"
+        )
+    _execute_schema_script(connection, _MIGRATION_SCHEMA)
+    _insert_baseline_migration(connection, applied_at=applied_at)
+    _verify_migration_schema(connection)
+    _verify_migration_ledger(connection)
+
+
 class SQLiteStateStore:
     """Small SQLite repository with database-enforced audit immutability."""
 
@@ -319,6 +855,7 @@ class SQLiteStateStore:
         *,
         clock: Callable[[], float] = time.time,
         timeout_seconds: float = 5.0,
+        _configure_journal_mode: bool = True,
     ) -> None:
         self.database_path = str(database_path)
         self._clock = clock
@@ -333,9 +870,9 @@ class SQLiteStateStore:
         self._connection.execute("PRAGMA foreign_keys = ON")
         self._connection.execute("PRAGMA busy_timeout = 5000")
         try:
-            if self.database_path != ":memory:":
-                self._connection.execute("PRAGMA journal_mode = WAL")
             self._initialise_schema()
+            if _configure_journal_mode and self.database_path != ":memory:":
+                self._connection.execute("PRAGMA journal_mode = WAL")
         except BaseException:
             self._connection.close()
             raise
@@ -362,8 +899,9 @@ class SQLiteStateStore:
             else:
                 self._connection.commit()
 
-    def _initialise_schema(self) -> None:
-        schema = """
+    @staticmethod
+    def _baseline_schema() -> str:
+        return """
         CREATE TABLE IF NOT EXISTS runs (
             run_id TEXT PRIMARY KEY,
             task_id TEXT NOT NULL,
@@ -523,8 +1061,39 @@ class SQLiteStateStore:
             SELECT RAISE(ABORT, 'billing circuit events are append-only');
         END;
         """
+
+    def _initialise_schema(self) -> None:
         with self._lock:
-            self._connection.executescript(schema)
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                user_objects = _user_schema_object_names(self._connection)
+                if not user_objects:
+                    _create_new_state_schema(
+                        self._connection,
+                        self._baseline_schema(),
+                        applied_at=self._now(None),
+                    )
+                else:
+                    _verify_baseline_schema(self._connection)
+                    _verify_baseline_history(self._connection)
+                    migration_objects = _migration_schema_objects(self._connection)
+                    if not migration_objects:
+                        if _has_supervisor_schema_objects(self._connection):
+                            raise ConfigurationError(
+                                "state migration ledger is missing for supervisor schema"
+                            )
+                        _adopt_legacy_baseline(
+                            self._connection,
+                            applied_at=self._now(None),
+                        )
+                    else:
+                        _verify_migration_schema(self._connection)
+                        _verify_migration_ledger(self._connection)
+            except BaseException:
+                self._connection.rollback()
+                raise
+            else:
+                self._connection.commit()
 
     def create_run(self, record: RunRecord) -> RunRecord:
         """Append a run and its initial ``created`` status atomically."""

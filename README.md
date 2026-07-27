@@ -34,8 +34,10 @@ check.
 The renamed distribution intentionally does not install legacy `agentops`
 import-package or CLI aliases. Before starting Ordomata, stop and remove any
 pre-rename installed runtime or background process; old code cannot participate
-in the new dual-root integrity check. Existing legacy state remains selected in
-place until an explicit offline migration is designed and verified.
+in the new dual-root integrity check. An existing legacy state root remains
+selected in place: normal versioned SQLite initialization may append migration
+metadata, but moving that root or rewriting existing records requires a
+separately designed and verified offline migration.
 
 Several pre-rename v1 identifiers remain frozen protocol provenance: account-
 fingerprint and supervisor-migration domain separators, authorization shadow
@@ -56,7 +58,7 @@ records.
 - an exact live-run gate that is necessary but cannot override billing, evidence, environment, profile, isolation, or circuit failures;
 - versioned harness/model/role/settings profiles and billing-lane-aware routing;
 - isolated per-run workspaces, wall timeouts, terminal-event checks, and output validation;
-- append-only SQLite runs, events, artifacts, capacity observations, billing circuits, scheduler claims, and expiring leases, with capacity checked inside the atomic dispatch reservation;
+- append-only SQLite runs, events, artifacts, capacity observations, billing circuits, scheduler claims, and expiring leases, with capacity checked inside the atomic dispatch reservation; baseline creation and exact legacy adoption are transactional, and every ordinary open verifies the frozen, contiguous v1-v4 migration prefix before use;
 - a versioned additive SQLite migration for a durable supervisor control-plane
   tracer: immutable mock-only flow admission, append-only optimistic control/
   flow/attempt revisions, sticky cancellation, fenced multi-resource claim
@@ -72,10 +74,11 @@ records.
 - optional typed task-effect authorization intent, independent of the legacy
   numeric class, plus three non-enforcing Chief-of-Staff shadow decisions at
   admission, runner/model dispatch intent, and local-candidate publication;
-- a strictly read-only `auth-inspect` command that recomputes legacy and
-  authority-ceiling parity from persisted run state and independently derived
-  typed request attributes, canonical digests, evidence authenticity/freshness,
-  and boundary coverage/order;
+- a strictly read-only `auth-inspect` command that checks baseline schema and
+  run-history integrity plus the frozen migration ledger, then recomputes
+  legacy and authority-ceiling parity from persisted run state and independently
+  derived typed request attributes, canonical digests, evidence authenticity/
+  freshness, and boundary coverage/order;
 - deterministic controlled comparisons with one immutable snapshot, randomized repetition blocks, fresh adapters/sessions/workspaces, and Class 0 permissions;
 - proposal-only self-improvement policy with held-out regression protection;
 - typed execution accounting that keeps subscription capacity, paid-capacity consumption, incremental AI charge, and the narrower API-charge field distinct;
@@ -100,6 +103,10 @@ The demo does not invoke a model. It writes its accepted artifact and append-onl
 returns a clean empty report without creating `.ordomata`; after a run it can
 be narrowed with `--run-id` or `--mismatches-only`, and exits nonzero for a
 parity mismatch, integrity finding, coverage gap, or truncated inspection.
+Schema and migration findings are fixed, value-free codes; inspection reports
+damage but never recreates a missing guard or repairs history. An exact legacy
+baseline that predates the migration ledger remains readable without being
+adopted by this command.
 The inspector reports a derived class above the persisted task class as a
 migration mismatch even when both old and shadow paths would otherwise permit
 the action; it does not enforce or repair that mismatch.
