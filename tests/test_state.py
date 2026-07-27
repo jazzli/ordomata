@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from contextlib import closing
 import sqlite3
 import tempfile
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
-from ordomata.errors import BillingRouteBlocked, ValidationError
+from ordomata.errors import BillingRouteBlocked, ConfigurationError, ValidationError
 from ordomata.models import (
     AssessmentConfidence,
     BillingRoute,
@@ -90,9 +92,524 @@ class SQLiteStateStoreTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(sqlite3.IntegrityError, "append-only"):
                     connection.execute(statement)
-                connection.rollback()
         finally:
+            connection.rollback()
             connection.close()
+
+    def test_new_database_records_frozen_baseline_migration(self) -> None:
+        with closing(sqlite3.connect(self.database)) as connection:
+            row = connection.execute(
+                """
+                SELECT version, name, script_sha256
+                FROM state_schema_migrations
+                """
+            ).fetchone()
+            triggers = {
+                item[0]
+                for item in connection.execute(
+                    """
+                    SELECT name FROM sqlite_master
+                    WHERE type = 'trigger'
+                      AND tbl_name = 'state_schema_migrations'
+                    """
+                ).fetchall()
+            }
+
+        self.assertEqual(
+            row,
+            (
+                1,
+                "baseline_state",
+                "6076ff9c09a329bc60f1bdc79fd61d3251990219047005691eff8bbd9e9178e6",
+            ),
+        )
+        self.assertEqual(
+            triggers,
+            {
+                "state_schema_migrations_no_update",
+                "state_schema_migrations_no_delete",
+            },
+        )
+
+    def test_fresh_schema_failure_rolls_back_partial_ddl(self) -> None:
+        database = Path(self.temporary.name) / "rollback.sqlite3"
+
+        def fail_after_one_statement(
+            connection: sqlite3.Connection, _: str
+        ) -> None:
+            connection.execute("CREATE TABLE partial_schema(value TEXT)")
+            raise RuntimeError("injected schema failure")
+
+        with patch(
+            "ordomata.state._execute_schema_script",
+            side_effect=fail_after_one_statement,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "injected schema failure"):
+                SQLiteStateStore(database)
+
+        with closing(sqlite3.connect(database)) as connection:
+            objects = connection.execute(
+                """
+                SELECT name FROM sqlite_master
+                WHERE name NOT GLOB 'sqlite_*'
+                """
+            ).fetchall()
+        self.assertEqual(objects, [])
+
+    def test_exact_legacy_baseline_is_adopted_transactionally(self) -> None:
+        self._run()
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute("DROP TABLE state_schema_migrations")
+            connection.commit()
+
+        self.store = SQLiteStateStore(self.database, clock=lambda: 101.0)
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            row = connection.execute(
+                "SELECT version, name, applied_at FROM state_schema_migrations"
+            ).fetchone()
+            run_count = connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+            event_count = connection.execute(
+                "SELECT COUNT(*) FROM run_events"
+            ).fetchone()[0]
+        self.assertEqual(row, (1, "baseline_state", 101.0))
+        self.assertEqual((run_count, event_count), (1, 1))
+
+    def test_legacy_adoption_failure_rolls_back_and_preserves_history(self) -> None:
+        database = Path(self.temporary.name) / "adoption-rollback.sqlite3"
+        store = SQLiteStateStore(database, clock=lambda: 100.0)
+        record = RunRecord(
+            run_id="legacy-run",
+            task_id="lint",
+            task_version="v1",
+            runner_id="mock",
+            workspace="/worktree",
+            run_directory="/runs/legacy-run",
+            context_digest="a" * 64,
+            permission_class=PermissionClass.LOCAL_DRAFT,
+            timeout_seconds=60,
+            attempt=1,
+            created_at=100.0,
+        )
+        store.create_run(record)
+        store.close()
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute("DROP TABLE state_schema_migrations")
+            connection.commit()
+
+        def fail_after_ledger_table(
+            connection: sqlite3.Connection,
+            _: str,
+        ) -> None:
+            connection.execute(
+                """
+                CREATE TABLE state_schema_migrations(
+                    version INTEGER PRIMARY KEY
+                )
+                """
+            )
+            raise RuntimeError("injected adoption failure")
+
+        with patch(
+            "ordomata.state._execute_schema_script",
+            side_effect=fail_after_ledger_table,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "injected adoption failure",
+            ):
+                SQLiteStateStore(database)
+
+        with closing(sqlite3.connect(database)) as connection:
+            ledger_objects = connection.execute(
+                """
+                SELECT type, name FROM sqlite_master
+                WHERE name GLOB 'state_schema_migrations*'
+                """
+            ).fetchall()
+            run_count = connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+            event_count = connection.execute(
+                "SELECT COUNT(*) FROM run_events"
+            ).fetchone()[0]
+        self.assertEqual(ledger_objects, [])
+        self.assertEqual((run_count, event_count), (1, 1))
+
+    def test_legacy_baseline_with_unknown_view_is_not_adopted(self) -> None:
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute("DROP TABLE state_schema_migrations")
+            connection.execute("CREATE VIEW private_view AS SELECT 1 AS value")
+            connection.commit()
+
+        with self.assertRaisesRegex(
+            ConfigurationError, "unrecognized schema objects"
+        ):
+            SQLiteStateStore(self.database)
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            ledger = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'state_schema_migrations'"
+            ).fetchone()
+            view = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'private_view'"
+            ).fetchone()
+        self.assertIsNone(ledger)
+        self.assertIsNotNone(view)
+
+    def test_schema_name_collision_cannot_hide_an_unknown_object(self) -> None:
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute("DROP TABLE state_schema_migrations")
+            connection.execute(
+                "CREATE TABLE runs_no_update(private_marker TEXT)"
+            )
+            connection.commit()
+
+        with self.assertRaisesRegex(
+            ConfigurationError, "schema objects do not match"
+        ):
+            SQLiteStateStore(self.database)
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            object_types = connection.execute(
+                """
+                SELECT type FROM sqlite_master
+                WHERE name = 'runs_no_update' ORDER BY type
+                """
+            ).fetchall()
+            ledger = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'state_schema_migrations'"
+            ).fetchone()
+        self.assertEqual(object_types, [("table",), ("trigger",)])
+        self.assertIsNone(ledger)
+
+    def test_migration_guard_name_collision_is_rejected(self) -> None:
+        database = Path(self.temporary.name) / "migration-collision.sqlite3"
+        store = SQLiteStateStore(database)
+        store.close()
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute(
+                """
+                CREATE TABLE state_schema_migrations_no_update(
+                    private_marker TEXT
+                )
+                """
+            )
+            connection.commit()
+
+        with self.assertRaisesRegex(
+            ConfigurationError, "ledger schema is invalid"
+        ):
+            SQLiteStateStore(database)
+
+    def test_missing_baseline_trigger_fails_without_repair(self) -> None:
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute("DROP TRIGGER runs_no_update")
+            connection.commit()
+
+        with self.assertRaisesRegex(ConfigurationError, "schema objects do not match"):
+            SQLiteStateStore(self.database)
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            trigger = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'runs_no_update'"
+            ).fetchone()
+        self.assertIsNone(trigger)
+
+    def test_missing_migration_trigger_fails_without_repair(self) -> None:
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                "DROP TRIGGER state_schema_migrations_no_update"
+            )
+            connection.commit()
+
+        with self.assertRaisesRegex(ConfigurationError, "ledger schema is invalid"):
+            SQLiteStateStore(self.database)
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            trigger = connection.execute(
+                """
+                SELECT 1 FROM sqlite_master
+                WHERE name = 'state_schema_migrations_no_update'
+                """
+            ).fetchone()
+        self.assertIsNone(trigger)
+
+    def test_gapped_and_future_migration_ledgers_fail_closed(self) -> None:
+        cases = (
+            (
+                3,
+                "supervisor_authorization_shadow",
+                "b014646a473c24b8f705017a844dfa56c0ae8671c8f99560f952d3822df89640",
+            ),
+            (5, "future_schema", "f" * 64),
+        )
+        self.store.close()
+        for index, (version, name, digest) in enumerate(cases):
+            database = Path(self.temporary.name) / f"invalid-{index}.sqlite3"
+            store = SQLiteStateStore(database, clock=lambda: 100.0)
+            store.close()
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute(
+                    """
+                    INSERT INTO state_schema_migrations (
+                        version, name, script_sha256, applied_at
+                    ) VALUES (?, ?, ?, 101.0)
+                    """,
+                    (version, name, digest),
+                )
+                connection.commit()
+
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(
+                    ConfigurationError, "migration ledger is invalid"
+                ):
+                    SQLiteStateStore(database)
+
+    def test_migration_version_and_required_tables_must_agree(self) -> None:
+        from ordomata.supervisor import SQLiteSupervisorStore
+
+        missing_current = Path(self.temporary.name) / "missing-current.sqlite3"
+        supervisor = SQLiteSupervisorStore(missing_current)
+        supervisor.close()
+        with closing(sqlite3.connect(missing_current)) as connection:
+            connection.execute(
+                "DROP TABLE supervisor_bookkeeping_authorization_observations"
+            )
+            connection.commit()
+
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "does not match installed schema",
+        ):
+            SQLiteStateStore(missing_current)
+
+        premature = Path(self.temporary.name) / "premature.sqlite3"
+        store = SQLiteStateStore(premature)
+        store.close()
+        with closing(sqlite3.connect(premature)) as connection:
+            connection.execute(
+                "CREATE TABLE supervisor_control_events(private_marker TEXT)"
+            )
+            connection.commit()
+
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "does not match installed schema",
+        ):
+            SQLiteStateStore(premature)
+
+    def test_wrong_frozen_migration_identity_is_not_repaired(self) -> None:
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.executescript(
+                """
+                DROP TRIGGER state_schema_migrations_no_update;
+                UPDATE state_schema_migrations
+                SET script_sha256 = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
+                WHERE version = 1;
+                CREATE TRIGGER state_schema_migrations_no_update
+                BEFORE UPDATE ON state_schema_migrations BEGIN
+                    SELECT RAISE(ABORT, 'schema migrations are append-only');
+                END;
+                """
+            )
+
+        with self.assertRaisesRegex(ConfigurationError, "migration ledger is invalid"):
+            SQLiteStateStore(self.database)
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            digest = connection.execute(
+                "SELECT script_sha256 FROM state_schema_migrations WHERE version = 1"
+            ).fetchone()[0]
+        self.assertEqual(digest, "f" * 64)
+
+    def test_invalid_migration_timestamps_fail_without_repair(self) -> None:
+        self.store.close()
+        for index, applied_at in enumerate(("private-marker", float("inf"))):
+            database = Path(self.temporary.name) / f"timestamp-{index}.sqlite3"
+            store = SQLiteStateStore(database)
+            store.close()
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute(
+                    "DROP TRIGGER state_schema_migrations_no_update"
+                )
+                connection.execute(
+                    "UPDATE state_schema_migrations SET applied_at = ?",
+                    (applied_at,),
+                )
+                connection.execute(
+                    """
+                    CREATE TRIGGER state_schema_migrations_no_update
+                    BEFORE UPDATE ON state_schema_migrations BEGIN
+                        SELECT RAISE(ABORT, 'schema migrations are append-only');
+                    END
+                    """
+                )
+                connection.commit()
+
+            with self.subTest(applied_at=applied_at):
+                with self.assertRaisesRegex(
+                    ConfigurationError, "migration ledger is invalid"
+                ):
+                    SQLiteStateStore(database)
+
+            with closing(sqlite3.connect(database)) as connection:
+                persisted = connection.execute(
+                    "SELECT applied_at FROM state_schema_migrations"
+                ).fetchone()[0]
+            self.assertEqual(persisted, applied_at)
+
+    def test_view_only_database_is_not_mistaken_for_empty_state(self) -> None:
+        database = Path(self.temporary.name) / "view-only.sqlite3"
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute("CREATE VIEW private_view AS SELECT 1 AS value")
+            connection.commit()
+
+        with self.assertRaises(ConfigurationError):
+            SQLiteStateStore(database)
+
+        with closing(sqlite3.connect(database)) as connection:
+            objects = connection.execute(
+                """
+                SELECT type, name FROM sqlite_master
+                WHERE name NOT GLOB 'sqlite_*'
+                ORDER BY type, name
+                """
+            ).fetchall()
+        self.assertEqual(objects, [("view", "private_view")])
+
+    def test_public_status_event_type_remains_reopen_compatible(self) -> None:
+        self._run()
+        self.store.append_event(
+            "run-1",
+            "runner_started",
+            status=RunStatus.RUNNING,
+            occurred_at=101.0,
+        )
+        self.store.close()
+
+        self.store = SQLiteStateStore(self.database)
+
+        self.assertEqual(self.store.current_status("run-1"), RunStatus.RUNNING)
+
+    def test_foreign_key_and_terminal_history_corruption_fail_closed(self) -> None:
+        self.store.close()
+        foreign_key_database = Path(self.temporary.name) / "orphan.sqlite3"
+        store = SQLiteStateStore(foreign_key_database)
+        store.close()
+        with closing(sqlite3.connect(foreign_key_database)) as connection:
+            connection.execute("PRAGMA foreign_keys = OFF")
+            connection.execute(
+                """
+                INSERT INTO run_events (
+                    event_id, run_id, event_type, status, payload_json, occurred_at
+                ) VALUES ('orphan-event', 'missing-run', 'status', 'created', '{}', 1.0)
+                """
+            )
+            connection.commit()
+        with self.assertRaisesRegex(ConfigurationError, "history is invalid"):
+            SQLiteStateStore(foreign_key_database)
+
+        terminal_database = Path(self.temporary.name) / "terminal.sqlite3"
+        store = SQLiteStateStore(terminal_database, clock=lambda: 1.0)
+        record = RunRecord(
+            run_id="terminal-run",
+            task_id="lint",
+            task_version="v1",
+            runner_id="mock",
+            workspace="/worktree",
+            run_directory="/runs/terminal-run",
+            context_digest="a" * 64,
+            permission_class=PermissionClass.LOCAL_DRAFT,
+            timeout_seconds=60,
+            attempt=1,
+            created_at=1.0,
+        )
+        store.create_run(record)
+        store.append_event(
+            record.run_id, "status", status=RunStatus.RUNNING, occurred_at=2.0
+        )
+        store.append_event(
+            record.run_id, "status", status=RunStatus.SUCCEEDED, occurred_at=3.0
+        )
+        store.close()
+        with closing(sqlite3.connect(terminal_database)) as connection:
+            connection.execute(
+                """
+                INSERT INTO run_events (
+                    event_id, run_id, event_type, status, payload_json, occurred_at
+                ) VALUES (
+                    'invalid-restart', 'terminal-run', 'status', 'running', '{}', 4.0
+                )
+                """
+            )
+            connection.commit()
+        with self.assertRaisesRegex(ConfigurationError, "history is invalid"):
+            SQLiteStateStore(terminal_database)
+
+    def test_unowned_malformed_foreign_key_does_not_block_baseline_open(self) -> None:
+        database = Path(self.temporary.name) / "extension.sqlite3"
+        store = SQLiteStateStore(database)
+        store.close()
+        with closing(sqlite3.connect(database)) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE private_parent(identifier TEXT);
+                CREATE TABLE private_child(
+                    parent_id TEXT REFERENCES private_parent(identifier)
+                );
+                CREATE INDEX private_child_parent
+                    ON private_child(parent_id);
+                CREATE VIEW private_child_view AS
+                    SELECT parent_id FROM private_child;
+                CREATE TRIGGER private_child_noop
+                AFTER INSERT ON private_child BEGIN
+                    SELECT 1;
+                END;
+                INSERT INTO private_child(parent_id) VALUES ('private-value');
+                """
+            )
+
+        reopened = SQLiteStateStore(database)
+        reopened.close()
+        with closing(sqlite3.connect(database)) as connection:
+            value = connection.execute(
+                "SELECT parent_id FROM private_child"
+            ).fetchone()[0]
+        self.assertEqual(value, "private-value")
+
+    def test_nonprefixed_trigger_on_baseline_table_is_rejected(self) -> None:
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                """
+                CREATE TRIGGER private_run_side_effect
+                AFTER INSERT ON runs BEGIN
+                    SELECT 1;
+                END
+                """
+            )
+            connection.commit()
+
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "schema objects do not match",
+        ):
+            SQLiteStateStore(self.database)
+
+    def test_current_supervisor_schema_is_accepted_by_baseline_store(self) -> None:
+        from ordomata.supervisor import SQLiteSupervisorStore
+
+        database = Path(self.temporary.name) / "supervisor.sqlite3"
+        supervisor = SQLiteSupervisorStore(database, clock=lambda: 100.0)
+        supervisor.close()
+
+        store = SQLiteStateStore(database)
+        store.close()
 
     def test_secret_like_event_payload_is_never_inserted(self) -> None:
         self._run()

@@ -38,7 +38,11 @@ from .authorization import (
 )
 from .errors import ConfigurationError
 from .models import PermissionClass, RunStatus
-from .state import RecordNotFoundError
+from .state import (
+    RecordNotFoundError,
+    _BASELINE_TABLE_NAMES,
+    _state_schema_integrity_issues,
+)
 
 
 AUTHORIZATION_SHADOW_EVENT_TYPE = "authorization_shadow_decision"
@@ -220,6 +224,7 @@ class AuthorizationInspectionReport:
     authority_ceiling_mismatch_count: int
     coverage_gap_count: int
     integrity_issue_count: int
+    integrity_issues: tuple[str, ...]
     runs: tuple[RunAuthorizationInspection, ...]
 
     @property
@@ -247,6 +252,7 @@ class AuthorizationInspectionReport:
             ),
             "coverage_gap_count": self.coverage_gap_count,
             "integrity_issue_count": self.integrity_issue_count,
+            "integrity_issues": list(self.integrity_issues),
             "runs": [run.to_mapping() for run in self.runs],
         }
 
@@ -331,15 +337,36 @@ def inspect_authorization_shadows(
                         "query-only mode was not established"
                     )
                 connection.execute("PRAGMA temp_store = MEMORY")
-                facts, run_truncated = _read_run_facts(
-                    connection,
-                    requested_run_id=requested_run_id,
-                )
-                if requested_run_id is not None and not facts:
-                    raise RecordNotFoundError(
-                        "requested authorization run was not found"
+                connection.execute("BEGIN")
+                schema_issues = _state_schema_integrity_issues(connection)
+                tables = {
+                    row["name"]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    ).fetchall()
+                }
+                baseline_projection_safe = not {
+                    "baseline_schema_missing",
+                    "baseline_schema_mismatch",
+                }.intersection(schema_issues)
+                if (
+                    baseline_projection_safe
+                    and _BASELINE_TABLE_NAMES.issubset(tables)
+                ):
+                    facts, run_truncated = _read_run_facts(
+                        connection,
+                        requested_run_id=requested_run_id,
                     )
-                event_rows = _read_shadow_events(connection, facts)
+                    if requested_run_id is not None and not facts:
+                        raise RecordNotFoundError(
+                            "requested authorization run was not found"
+                        )
+                    event_rows = _read_shadow_events(connection, facts)
+                else:
+                    facts = ()
+                    event_rows = ()
+                    run_truncated = False
+                connection.rollback()
             finally:
                 if connection is not None:
                     connection.close()
@@ -460,7 +487,7 @@ def inspect_authorization_shadows(
         for event in run.events
     )
     coverage_gap_count = sum(len(run.missing_scopes) for run in all_runs)
-    integrity_issue_count = sum(
+    integrity_issue_count = len(schema_issues) + sum(
         len(run.integrity_issues)
         + sum(len(event.integrity_issues) for event in run.events)
         for run in all_runs
@@ -481,6 +508,7 @@ def inspect_authorization_shadows(
         authority_ceiling_mismatch_count=authority_ceiling_mismatch_count,
         coverage_gap_count=coverage_gap_count,
         integrity_issue_count=integrity_issue_count,
+        integrity_issues=schema_issues,
         runs=projected_runs,
     )
 
@@ -501,6 +529,7 @@ def _empty_report(
         authority_ceiling_mismatch_count=0,
         coverage_gap_count=0,
         integrity_issue_count=0,
+        integrity_issues=(),
         runs=(),
     )
 

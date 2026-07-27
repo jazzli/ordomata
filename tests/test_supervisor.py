@@ -10,12 +10,14 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import ordomata.supervisor as supervisor_module
 from ordomata.authorization import (
     AuthorizationEffect,
     ShadowAuthorizationEvaluator,
 )
 from ordomata.errors import ConfigurationError
 from ordomata.models import PermissionClass
+from ordomata.state import SQLiteStateStore
 from ordomata.supervisor import (
     AdmissionConflictError,
     ClaimLostError,
@@ -165,11 +167,49 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
             "6076ff9c09a329bc60f1bdc79fd61d3251990219047005691eff8bbd9e9178e6",
         )
 
+    def test_multi_version_migration_failure_rolls_back_every_version(self) -> None:
+        database = Path(self.temporary.name) / "migration-rollback.sqlite3"
+        baseline = SQLiteStateStore(database)
+        baseline.close()
+        original_execute = supervisor_module._execute_schema_script
+
+        def fail_after_v3_schema(
+            connection: sqlite3.Connection,
+            script: str,
+        ) -> None:
+            original_execute(connection, script)
+            if script == supervisor_module._SCHEMA_V3:
+                raise RuntimeError("injected v3 migration failure")
+
+        with patch(
+            "ordomata.supervisor._execute_schema_script",
+            side_effect=fail_after_v3_schema,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "injected v3 migration failure",
+            ):
+                SQLiteSupervisorStore(database)
+
+        with closing(sqlite3.connect(database)) as connection:
+            versions = connection.execute(
+                "SELECT version FROM state_schema_migrations ORDER BY version"
+            ).fetchall()
+            supervisor_objects = connection.execute(
+                """
+                SELECT type, name FROM sqlite_master
+                WHERE name GLOB 'supervisor_*'
+                """
+            ).fetchall()
+        self.assertEqual(versions, [(1,)])
+        self.assertEqual(supervisor_objects, [])
+
     def test_v3_migration_baselines_preexisting_supervisor_history(self) -> None:
         spec = self._flow()
         self.store.admit_flow(spec)
         self.store.close()
         with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v4_schema(connection)
             connection.executescript(
                 """
                 DROP TRIGGER supervisor_authorization_observations_no_update;
@@ -268,6 +308,40 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
             ],
         )
 
+    def test_v4_migration_ignores_unowned_malformed_foreign_key(self) -> None:
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v4_schema(connection)
+            connection.executescript(
+                """
+                CREATE TABLE private_parent(identifier TEXT);
+                CREATE TABLE private_child(
+                    parent_id TEXT REFERENCES private_parent(identifier)
+                );
+                CREATE INDEX private_child_parent
+                    ON private_child(parent_id);
+                CREATE VIEW private_child_view AS
+                    SELECT parent_id FROM private_child;
+                CREATE TRIGGER private_child_noop
+                AFTER INSERT ON private_child BEGIN
+                    SELECT 1;
+                END;
+                INSERT INTO private_child(parent_id) VALUES ('private-value');
+                """
+            )
+
+        self.store = self._open_store()
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            version = connection.execute(
+                "SELECT MAX(version) FROM state_schema_migrations"
+            ).fetchone()[0]
+            value = connection.execute(
+                "SELECT parent_id FROM private_child"
+            ).fetchone()[0]
+        self.assertEqual(version, 4)
+        self.assertEqual(value, "private-value")
+
     def test_missing_v3_schema_is_a_finding_even_without_flows(self) -> None:
         self.store.close()
         with closing(sqlite3.connect(self.database)) as connection:
@@ -292,7 +366,10 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         audit = inspect_supervisor_authorization(self.database)
         self.assertFalse(audit.clean)
         self.assertEqual(audit.expected_observation_count, 0)
-        self.assertEqual(audit.findings[0].code, "authorization_schema_missing")
+        self.assertIn(
+            "authorization_schema_missing",
+            {finding.code for finding in audit.findings},
+        )
 
     def test_missing_v4_schema_is_a_finding_without_bookkeeping_events(self) -> None:
         self.store.close()
@@ -321,9 +398,9 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         audit = inspect_supervisor_authorization(self.database)
         self.assertFalse(audit.clean)
         self.assertEqual(audit.expected_observation_count, 0)
-        self.assertEqual(
-            audit.findings[0].code,
+        self.assertIn(
             "bookkeeping_authorization_schema_missing",
+            {finding.code for finding in audit.findings},
         )
 
     def test_missing_core_supervisor_schema_cannot_audit_clean(self) -> None:
@@ -367,6 +444,166 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         ):
             SQLiteSupervisorStore(self.database)
 
+    def test_rejected_supervisor_schema_does_not_change_journal_mode(self) -> None:
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            mode = connection.execute("PRAGMA journal_mode = DELETE").fetchone()[0]
+            self.assertEqual(mode, "delete")
+            connection.execute(
+                "DROP TRIGGER supervisor_flow_revisions_no_update"
+            )
+            connection.commit()
+
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "schema objects do not match",
+        ):
+            self._open_store()
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+        self.assertEqual(mode, "delete")
+
+    def test_audit_reports_missing_baseline_guard_without_repair(self) -> None:
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute("DROP TRIGGER runs_no_update")
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+
+        self.assertFalse(audit.clean)
+        self.assertFalse(audit.schema_present)
+        self.assertIn(
+            "baseline_schema_mismatch",
+            {finding.code for finding in audit.findings},
+        )
+        with closing(sqlite3.connect(self.database)) as connection:
+            trigger = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'runs_no_update'"
+            ).fetchone()
+        self.assertIsNone(trigger)
+
+    def test_malformed_supervisor_columns_return_bounded_audit(self) -> None:
+        self.store.admit_flow(self._flow())
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                """
+                ALTER TABLE supervisor_flows
+                RENAME COLUMN task_id TO private_task_id
+                """
+            )
+            connection.commit()
+
+        authorization = inspect_supervisor_authorization(self.database)
+        plan, combined = inspect_supervisor_audit(self.database, now=100.0)
+
+        self.assertFalse(authorization.schema_present)
+        self.assertEqual(
+            {finding.code for finding in authorization.findings},
+            {"authorization_schema_mismatch"},
+        )
+        self.assertEqual(plan.findings, ())
+        self.assertEqual(combined, authorization)
+
+    def test_malformed_migration_columns_return_bounded_audit(self) -> None:
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                """
+                ALTER TABLE state_schema_migrations
+                RENAME COLUMN name TO migration_name
+                """
+            )
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+
+        self.assertFalse(audit.schema_present)
+        self.assertIn(
+            "migration_schema_mismatch",
+            {finding.code for finding in audit.findings},
+        )
+
+    def test_supervisor_audit_reports_invalid_migration_timestamp(self) -> None:
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                "DROP TRIGGER state_schema_migrations_no_update"
+            )
+            connection.execute(
+                """
+                UPDATE state_schema_migrations
+                SET applied_at = 'private-timestamp-marker'
+                WHERE version = 2
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER state_schema_migrations_no_update
+                BEFORE UPDATE ON state_schema_migrations BEGIN
+                    SELECT RAISE(ABORT, 'schema migrations are append-only');
+                END
+                """
+            )
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+
+        self.assertIn(
+            "migration_applied_at_invalid",
+            {finding.code for finding in audit.findings},
+        )
+
+    def test_baseline_only_audit_reports_shared_guards_and_rogue_view(self) -> None:
+        baseline_guard = Path(self.temporary.name) / "baseline-guard.sqlite3"
+        store = SQLiteStateStore(baseline_guard)
+        store.close()
+        with closing(sqlite3.connect(baseline_guard)) as connection:
+            connection.execute("DROP TRIGGER runs_no_update")
+            connection.commit()
+        self.assertIn(
+            "baseline_schema_mismatch",
+            {
+                finding.code
+                for finding in inspect_supervisor_authorization(
+                    baseline_guard
+                ).findings
+            },
+        )
+
+        migration_guard = Path(self.temporary.name) / "migration-guard.sqlite3"
+        store = SQLiteStateStore(migration_guard)
+        store.close()
+        with closing(sqlite3.connect(migration_guard)) as connection:
+            connection.execute(
+                "DROP TRIGGER state_schema_migrations_no_update"
+            )
+            connection.commit()
+        self.assertIn(
+            "migration_schema_mismatch",
+            {
+                finding.code
+                for finding in inspect_supervisor_authorization(
+                    migration_guard
+                ).findings
+            },
+        )
+
+        rogue_view = Path(self.temporary.name) / "rogue-view.sqlite3"
+        store = SQLiteStateStore(rogue_view)
+        store.close()
+        with closing(sqlite3.connect(rogue_view)) as connection:
+            connection.execute(
+                "CREATE VIEW supervisor_private AS SELECT 1 AS value"
+            )
+            connection.commit()
+        audit = inspect_supervisor_authorization(rogue_view)
+        codes = {finding.code for finding in audit.findings}
+        self.assertIn("supervisor_schema_missing", codes)
+        self.assertIn("authorization_schema_mismatch", codes)
+
     def test_reopen_rejects_unexpected_trigger_on_supervisor_table(self) -> None:
         self.store.close()
         with closing(sqlite3.connect(self.database)) as connection:
@@ -384,6 +621,34 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
             "schema objects do not match",
         ):
             SQLiteSupervisorStore(self.database)
+
+    def test_supervisor_schema_name_collision_is_rejected(self) -> None:
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                """
+                CREATE TABLE supervisor_flow_revisions_no_update(
+                    private_marker TEXT
+                )
+                """
+            )
+            connection.commit()
+
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "schema objects do not match",
+        ):
+            self._open_store()
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            object_types = connection.execute(
+                """
+                SELECT type FROM sqlite_master
+                WHERE name = 'supervisor_flow_revisions_no_update'
+                ORDER BY type
+                """
+            ).fetchall()
+        self.assertEqual(object_types, [("table",), ("trigger",)])
 
     def test_admission_is_idempotent_and_conflicting_replays_fail(self) -> None:
         spec = self._flow()
@@ -1362,6 +1627,29 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
             status = inspect_supervisor_status(self.database, now=100.0)
             self.assertEqual(status.flow_counts, {"queued": 1})
             pinned_reader.rollback()
+
+    def test_immutable_inspection_rejects_concurrent_wal_creation(self) -> None:
+        self.store.admit_flow(self._flow())
+        self.store.close()
+        original_audit = supervisor_module._audit_connection
+
+        def mutate_after_snapshot(connection, now):
+            with closing(sqlite3.connect(self.database)) as writer:
+                writer.execute(
+                    "CREATE TABLE private_concurrent_marker(value TEXT)"
+                )
+                writer.commit()
+            return original_audit(connection, now)
+
+        with patch(
+            "ordomata.supervisor._audit_connection",
+            side_effect=mutate_after_snapshot,
+        ):
+            with self.assertRaisesRegex(
+                ConfigurationError,
+                "changed during inspection",
+            ):
+                inspect_reconciliation(self.database, now=100.0)
 
     def test_two_connections_cannot_claim_the_same_flow(self) -> None:
         spec = self._flow()

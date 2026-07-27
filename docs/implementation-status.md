@@ -135,6 +135,14 @@ operator safety path. This does not enable Class 2/3; current policy remains
 Class 0/1 only.
 Startup verifies canonical baseline, migration-ledger, and supervisor schema
 objects, including non-prefixed triggers targeting owned tables, before use.
+Fresh baseline creation and exact pre-ledger baseline adoption are atomic; all
+schema statements and frozen migration rows commit together or not at all.
+Existing databases must carry a contiguous known v1-v4 migration prefix whose
+identities agree with the installed supervisor tables. Baseline foreign keys,
+the atomic first `created` event, and subsequent status-transition lineage are
+also checked. Missing guards, partial schemas, ledger gaps, future versions,
+identity changes, and version/schema disagreement fail closed without repair;
+WAL mode is not selected until the baseline has been accepted.
 Read-only status and audit do not create absent state. Reconciliation is
 preview-first and apply requires the exact current plan digest. The
 `ordomata supervisor` command group exposes enqueue and explicit control,
@@ -154,9 +162,11 @@ cells, runtime authorization enforcement, and soak evidence remain planned.
 - `ordomata profiles` and `ordomata route`: versioned execution profiles, exact billing lanes, capability filters, and auditable ranking.
 - `ordomata task-validate` and `context-inspect`: strict contract/schema loading and immutable local context construction.
 - `ordomata auth-inspect`: source-preserving, SQLite read-only inspection of
-  authorization shadow integrity, authenticated freshness, legacy and
-  authority-ceiling parity, and expected Chief-of-Staff boundary
-  coverage/order.
+  baseline schema/history and frozen migration-ledger integrity, authorization
+  shadow integrity, authenticated freshness, legacy and authority-ceiling
+  parity, and expected Chief-of-Staff boundary coverage/order. Global state
+  findings are bounded value-free codes and never trigger repair; an exact
+  pre-ledger baseline remains readable without mutation.
 - `ordomata demo`: end-to-end deterministic Chief of Staff Lite run with append-only state and a validated local artifact.
 - Billing Hard-Stop v2: independent route/capacity/protection/balance axes; strict account-bound, short-lived attestations; a necessary-but-insufficient live gate; and explicit rejection of credits, overage, APIs, cloud routes, and unknown evidence.
 - Post-run billing disposition: normalized capacity/paid/account-change evidence, typed paid-capacity and incremental-AI-charge accounting, quarantine before promotion, durable append-only capacity state, atomic capacity persistence before lease release, restart-safe capacity blocking, and account/profile circuit breakers.

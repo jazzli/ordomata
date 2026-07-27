@@ -18,9 +18,11 @@ The control plane is deterministic. Coding harnesses are bounded workers used on
 `Ordomata` is the product name, pronounced **or-doh-MAH-tuh** (four syllables,
 primary stress on “MAH”; IPA: `/ˌɔːr.doʊˈmɑː.tə/`). The repository,
 distribution, import package, and CLI use `ordomata`. New runtime state uses
-`.ordomata/`. A sole legacy `.agentops/` root is selected in place without
-mutation; the presence of both roots is an integrity conflict and fails closed.
-This preserves append-only records and their original absolute-path provenance.
+`.ordomata/`. A sole legacy `.agentops/` root is selected and used in place
+without moving the root or rewriting existing records; normal versioned SQLite
+initialization may append migration metadata. The presence of both roots is an
+integrity conflict and fails closed. This preserves append-only records and
+their original absolute-path provenance.
 
 The canonical live gate is `ORDOMATA_ALLOW_SUBSCRIPTION_RUNS=1`. The legacy
 `AGENTOPS_ALLOW_SUBSCRIPTION_RUNS` spelling is accepted only as an exact,
@@ -314,7 +316,14 @@ append-only optimistic control, flow, and attempt revisions; sticky
 cancellation; fenced multi-resource claim library APIs; and an internal local
 completion outbox with idempotency keys and append-only delivery receipts.
 Startup fingerprints every baseline-, migration-, and supervisor-owned schema
-object and fails closed on missing, replaced, or unexpected triggers.
+object and fails closed on missing, replaced, or unexpected triggers. A new
+baseline, or the migration-ledger adoption of an exact legacy baseline, is
+created statement-by-statement in one explicit transaction. Existing state is
+verified before any schema DDL: the ledger must be a contiguous prefix of the
+frozen v1-v4 identities, its version must agree with the installed supervisor
+tables, baseline foreign keys and run-status lineage must remain valid, and a
+rejected database is not repaired. WAL mode is selected only after baseline
+acceptance.
 Status and audit open existing state read-only and return empty reports for
 absent state without creating it.
 Reconciliation is preview-first and its apply step must present the exact
@@ -322,8 +331,10 @@ current plan digest.
 
 Flow admission, library-only attempt claims, operator control transitions, and
 sticky cancellation append separate, non-enforcing ABAC shadow observations.
-The read-only supervisor audit holds one SQLite snapshot while independently
-recomputing their requests and decisions and checking coverage, order, parity,
+The read-only authorization inspector and supervisor audit each hold one
+SQLite snapshot while checking baseline and migration integrity. The
+supervisor audit also independently recomputes shadow requests and decisions
+and checks coverage, order, parity,
 append-only guards, and migration provenance. Frozen migration baselines
 exclude history created before each shadow schema. These observations do not
 authorize a worker or replace the deterministic control path.

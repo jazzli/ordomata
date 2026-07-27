@@ -48,7 +48,8 @@ The repository already provides the foundation this plan extends:
 - versioned runner/model/role/settings profiles;
 - billing-lane-aware deterministic routing;
 - isolated per-run directories and read-only/tool-disabled synthesis runs;
-- append-only SQLite runs, events, artifacts, schedule claims, and leases;
+- append-only SQLite runs, events, artifacts, schedule claims, and leases, with
+  transactional baseline initialization and frozen migration-ledger integrity;
 - a versioned additive SQLite supervisor migration with immutable mock-only
   flow admission, append-only optimistic control/flow/attempt revisions, sticky
   cancellation, fenced multi-resource claim APIs, and an internal local
@@ -228,6 +229,18 @@ Every selection persists an immutable routing decision containing the policy/pro
 
 Extend the existing SQLite state rather than replacing it. Migrations must be versioned, transactional, backward-compatible when possible, and covered by fixture databases.
 
+**Implemented integrity checkpoint:** baseline creation and adoption of an
+exact pre-ledger baseline execute statement-by-statement in one explicit
+transaction. Every ordinary state open verifies the exact baseline schema,
+baseline foreign-key and run-status lineage, append-only migration guards, a
+contiguous frozen v1-v4 identity prefix, and agreement between the recorded
+version and installed supervisor tables before use. Partial schemas, missing
+guards, gaps, future versions, or changed identities fail closed without
+automatic repair. Read-only authorization inspection exposes only bounded
+global finding codes and accepts an exact pre-ledger baseline without mutating
+it. This hardens the existing Class 0/1 state substrate; it does not enable a
+worker, runtime ABAC enforcement, Class 2/3 effects, or any live model route.
+
 Planned logical records:
 
 - **authorization policy bundles:** immutable schema and rule versions,
@@ -388,6 +401,9 @@ loop are implemented. Admission, library-only claim, operator control
 transitions, and sticky cancellation now emit append-only authorization
 shadows, and the read-only audit independently verifies their digests, parity,
 coverage/order, schema guards, and migration provenance. The loop deliberately
+uses the shared verified migration ledger; missing v2-v4 schema statements and
+their immutable ledger rows commit atomically or roll back together. It
+deliberately
 does not call the claim API or any
 runner. Runtime ABAC enforcement remains a prerequisite for dispatch. No live
 model, worker subprocess, network action, repository worker, Class 2/3 effect,
