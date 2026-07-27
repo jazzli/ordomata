@@ -1,6 +1,6 @@
 # Runtime authorization model
 
-Status: target architecture adopted; Chief-of-Staff three-boundary shadow slice implemented; enforcement planned
+Status: target architecture adopted; Chief-of-Staff three-boundary shadow and local-candidate receipt slice implemented; enforcement planned
 
 Date: 2026-07-26
 
@@ -116,6 +116,12 @@ That effect is local, reversible, and bounded, derives at least Class 1, and
 inherits task protection, sensitivity, and confidentiality/integrity/
 availability impact so higher impact is never relabeled as low;
 `required_before_promotion` does not apply to that private candidate write.
+New task attempts bind immutable run inputs and the controller-resolved typed
+authorization intent before admission. Dispatch also binds the persisted
+preflight billing assessment, while schema-v2 execution accounting links to the
+schema-v5 publication shadow plus schema-v2 pre-effect/action receipts. Those
+receipts make the legacy gate's local effect durably inspectable; they remain
+non-enforcing and cannot turn a shadow permit into authority.
 Policy activation, Git/remote publication, deployment, and other shared effects
 remain separate unimplemented typed actions whose exact resource version and
 digest must receive fresh authorization and any required approval.
@@ -180,9 +186,10 @@ effective value from an authoritative source.
 
 The canonical decision is immutable before enforcement and contains the fields
 below. Phase 1C implements the value type and non-authoritative Chief-of-Staff
-shadow events. Controlled comparisons also persist a non-enforcing pre-effect
-and observed-action receipt around the private artifact mutation. These records
-do not issue an executable permit or a durable enforcement receipt:
+shadow events. Newly bound Chief-of-Staff attempts and controlled comparisons
+also persist non-enforcing pre-effect and observed-action receipts around their
+separately bounded private artifact mutations. These records do not issue an
+executable permit or a durable enforcement receipt:
 
 - decision, request, and policy identifiers and digests;
 - an effect, fixed reason codes, and matched rule identifiers;
@@ -384,14 +391,19 @@ violation, not an instruction to follow.
    exist. The task contract independently declares its action, resource, and
    consequence intent. The run path appends non-authoritative canonical
    `task_attempt_admission_only`, `runner_model_dispatch_only`, and
-   `local_candidate_publication_only` observations. Build, evaluation, and
-   audit-write failures are sanitized and best-effort; no shadow outcome can
-   allow or block legacy work. A read-only inspector recomputes canonical
+   `local_candidate_publication_only` observations. Shadow build, evaluation,
+   and append failures are sanitized and cannot allow or block legacy work.
+   Newly bound task attempts add required non-enforcing publication receipts;
+   failure to prove those audit records or the exact local effect fails closed
+   without changing the underlying authorization decision. A read-only
+   inspector recomputes canonical
    digests, evidence authenticity/freshness, legacy executability from the
    persisted run, the class from validated typed request attributes,
    derived-class authority-ceiling parity, and expected boundary coverage and
    controller-event order. Class-ceiling mismatches are evidence, not
-   enforcement. Controlled comparison trials add a versioned Class 0 binding,
+   enforcement. Ordinary candidates add a digest-only attempt binding,
+   receipt-bound billing accounting, and exact metadata/filesystem
+   reconciliation. Controlled comparison trials add a versioned Class 0 binding,
    admission/dispatch shadows, and a separately bounded Class 1 private-
    publication shadow with pre-effect/action-receipt evidence. Historical v1
    trials remain valid partial evidence. Other current decision paths remain

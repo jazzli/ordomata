@@ -73,11 +73,22 @@ class from validated request attributes, and detects class-ceiling mismatches
 plus missing, duplicate, swapped, or controller-event-misordered boundaries
 without creating state.
 The inspector can prove ordering against persisted billing, running,
-runner-event, accounting, and terminal markers. Exact publication-before-first-
-filesystem-mutation placement in the ordinary Chief-of-Staff path is covered by
-orchestrator call-order tests but does not yet have a separate durable staging
-marker. The controlled comparison path now has its own durable pre-effect and
-post-effect receipt pair.
+runner-event, accounting, and terminal markers. New ordinary Chief-of-Staff
+attempts have a digest-only controller binding, schema-v2 execution accounting,
+a schema-v5 publication shadow, and linked schema-v2 pre-effect/action receipts
+before and after the local candidate mutation. Historical unbound task attempts
+remain readable as legacy shadow-only evidence and are not reinterpreted as
+receipt-complete. The controlled comparison path has its own separately bounded
+pre-effect and post-effect receipt pair.
+
+Ordinary accounting persists only a digest reference for runner version text
+and a fixed controller-known execution-mode label. Its billing and accounting
+events use deterministic identifiers with exact commit readback, so an
+ambiguous local audit write cannot silently strand an attempt before
+publication.
+The inspector also reports a fixed incomplete-history finding when either
+bound path reaches billing or accounting without a controller-owned terminal
+record; pre-billing task attempts remain eligible to be in progress.
 
 **Adopted architecture and remaining runtime migration:** the
 [runtime authorization model](authorization-model.md) defines versioned
@@ -99,10 +110,15 @@ their bindings, source evidence, independently recomputed billing-disposition
 digest, request projection, cardinality, and order. Coverage declarations name
 the expected instrumentation; the inspector, not the declaration, determines
 whether an observed history is complete.
-Private publication also has durable namespace reconciliation: staged bytes and
-directory entries are fsynced, action receipts use deterministic identifiers
-for exact post-error readback, and unresolved temp/final/receipt state is
-quarantined rather than reported as an ordinary failed write.
+Ordinary candidate and comparison private publication also have durable
+namespace reconciliation: staged bytes and directory entries are fsynced,
+verified parent and inode descriptors remain leased through receipt
+reconciliation, unexpected hard-link aliases fail closed, action receipts use
+deterministic identifiers for exact post-error readback, and unresolved
+temp/final/receipt state is quarantined rather than reported as an ordinary
+failed write. Ordinary immutable artifact metadata is treated as a proposal
+until a succeeded action receipt proves publication; commit-then-raise metadata
+and receipt writes are reconciled by exact readback.
 Controller-derived post-run billing disposition governs quarantine, circuit
 scope, output withholding, and terminal reporting; adapter flags cannot make
 unknown or changed evidence succeed. Historical schema-v1 comparison evidence

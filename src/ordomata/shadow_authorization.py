@@ -56,6 +56,7 @@ from .models import (
 SHADOW_EVENT_SCHEMA_VERSION = 2
 COMPARISON_SHADOW_EVENT_SCHEMA_VERSION = 3
 COMPARISON_REVIEW_ARTIFACT_SHADOW_EVENT_SCHEMA_VERSION = 4
+TASK_CANDIDATE_ARTIFACT_SHADOW_EVENT_SCHEMA_VERSION = 5
 ADMISSION_ACTION_SCOPE = "task_attempt_admission_only"
 DISPATCH_ACTION_SCOPE = "runner_model_dispatch_only"
 PUBLICATION_ACTION_SCOPE = "local_candidate_publication_only"
@@ -81,6 +82,7 @@ def build_task_admission_shadow_event(
     context_digest: str,
     prompt_digest: str,
     project_root: Path,
+    task_attempt_binding_digest: str,
     evaluated_at: float,
     legacy_executable: bool,
 ) -> dict[str, Any]:
@@ -103,7 +105,9 @@ def build_task_admission_shadow_event(
         parameters={
             "context_digest": context_digest,
             "prompt_digest": prompt_digest,
+            "task_attempt_binding_digest": task_attempt_binding_digest,
         },
+        task_attempt_binding_digest=task_attempt_binding_digest,
     )
 
 
@@ -116,10 +120,12 @@ def build_runner_model_dispatch_shadow_event(
     context_digest: str,
     prompt_digest: str,
     project_root: Path,
+    task_attempt_binding_digest: str,
     runner_overrides: Mapping[str, Any],
     timeout_seconds: int,
     attempt: int,
     billing_assessment: BillingRouteAssessment,
+    billing_assessment_digest: str,
     evaluated_at: float,
     legacy_executable: bool,
 ) -> dict[str, Any]:
@@ -145,11 +151,16 @@ def build_runner_model_dispatch_shadow_event(
         apply_pre_run_approval=True,
         parameters={
             "attempt": attempt,
+            "billing_assessment_digest": billing_assessment_digest,
             "context_digest": context_digest,
             "prompt_digest": prompt_digest,
-            "runner_overrides": dict(runner_overrides),
+            "runner_overrides_digest": canonical_digest(
+                dict(runner_overrides)
+            ),
+            "task_attempt_binding_digest": task_attempt_binding_digest,
             "timeout_seconds": timeout_seconds,
         },
+        task_attempt_binding_digest=task_attempt_binding_digest,
     )
 
 
@@ -310,6 +321,7 @@ def build_local_candidate_publication_shadow_event(
     artifact_size_bytes: int,
     artifact_kind: str,
     destination_digest: str,
+    task_attempt_binding_digest: str,
     evaluation_accepted: bool,
     credential_scan_passed: bool,
     billing_disposition: Mapping[str, Any],
@@ -347,7 +359,10 @@ def build_local_candidate_publication_shadow_event(
             "credential_scan_passed": credential_scan_passed,
             "destination_digest": destination_digest,
             "evaluation_accepted": evaluation_accepted,
+            "task_attempt_binding_digest": task_attempt_binding_digest,
         },
+        schema_version=TASK_CANDIDATE_ARTIFACT_SHADOW_EVENT_SCHEMA_VERSION,
+        task_attempt_binding_digest=task_attempt_binding_digest,
     )
 
 
@@ -372,6 +387,7 @@ def _build_shadow_event(
     requested_permission_class: PermissionClass | None = None,
     schema_version: int = SHADOW_EVENT_SCHEMA_VERSION,
     comparison_binding_digest: str | None = None,
+    task_attempt_binding_digest: str | None = None,
     use_comparison_policy: bool = False,
     use_comparison_publication_policy: bool = False,
 ) -> dict[str, Any]:
@@ -431,6 +447,7 @@ def _build_shadow_event(
             requested_permission_class=selected_permission_class,
             schema_version=schema_version,
             comparison_binding_digest=comparison_binding_digest,
+            task_attempt_binding_digest=task_attempt_binding_digest,
         )
 
     try:
@@ -448,6 +465,7 @@ def _build_shadow_event(
             requested_permission_class=selected_permission_class,
             schema_version=schema_version,
             comparison_binding_digest=comparison_binding_digest,
+            task_attempt_binding_digest=task_attempt_binding_digest,
         )
 
     shadow_executable = decision.effect is AuthorizationEffect.PERMIT
@@ -481,6 +499,8 @@ def _build_shadow_event(
     }
     if comparison_binding_digest is not None:
         payload["comparison_binding_digest"] = comparison_binding_digest
+    if task_attempt_binding_digest is not None:
+        payload["task_attempt_binding_digest"] = task_attempt_binding_digest
     return payload
 
 
@@ -524,6 +544,13 @@ def _resolve_intent(
         ),
         "legacy_permission_class_fallback",
     )
+
+
+def task_authorization_intent_digest(contract: TaskContract) -> str:
+    """Return the resolved task intent digest used at task boundaries."""
+
+    intent, _ = _resolve_intent(contract)
+    return intent.digest
 
 
 def _low_consequence_intent() -> TaskConsequenceIntent:
@@ -918,6 +945,7 @@ def _failure_payload(
     requested_permission_class: PermissionClass,
     schema_version: int,
     comparison_binding_digest: str | None,
+    task_attempt_binding_digest: str | None = None,
     request: AuthorizationRequest | None = None,
     policy: PolicyBundle | None = None,
 ) -> dict[str, Any]:
@@ -952,6 +980,8 @@ def _failure_payload(
     }
     if comparison_binding_digest is not None:
         payload["comparison_binding_digest"] = comparison_binding_digest
+    if task_attempt_binding_digest is not None:
+        payload["task_attempt_binding_digest"] = task_attempt_binding_digest
     return payload
 
 
@@ -963,10 +993,12 @@ __all__ = [
     "PUBLICATION_ACTION_SCOPE",
     "SHADOW_ACTION_SCOPE",
     "SHADOW_EVENT_SCHEMA_VERSION",
+    "TASK_CANDIDATE_ARTIFACT_SHADOW_EVENT_SCHEMA_VERSION",
     "build_comparison_review_artifact_publication_shadow_event",
     "build_comparison_trial_admission_shadow_event",
     "build_comparison_trial_dispatch_shadow_event",
     "build_local_candidate_publication_shadow_event",
     "build_runner_model_dispatch_shadow_event",
     "build_task_admission_shadow_event",
+    "task_authorization_intent_digest",
 ]

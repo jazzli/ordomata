@@ -14,11 +14,23 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import time
 from typing import Any
 from uuid import uuid4
 
 from .approval import ApprovalPolicy
+from .artifact_filesystem import (
+    ARTIFACT_ABSENT,
+    ARTIFACT_MATCHES,
+    ARTIFACT_UNVERIFIABLE,
+    StagedArtifact,
+    fsync_artifact_parent,
+    publish_staged_artifact,
+    published_artifact_state,
+    remove_owned_published_artifact,
+    stage_artifact,
+)
 from .authorization import canonical_digest
 from .billing import BillingPolicy, BillingPostRunDisposition
 from .context import (
@@ -48,9 +60,11 @@ from .models import (
     CircuitBreakerState,
     IncrementalAICharge,
     PaidCapacityConsumed,
+    PermissionClass,
     RunRequest,
     RunnerExecutionResult,
     RunStatus,
+    UsageObservation,
 )
 from .paths import resolve_state_root
 from .runners.base import AgentRunner
@@ -61,13 +75,41 @@ from .shadow_authorization import (
     build_local_candidate_publication_shadow_event,
     build_runner_model_dispatch_shadow_event,
     build_task_admission_shadow_event,
+    task_authorization_intent_digest,
 )
 from .state import ArtifactRecord, SQLiteStateStore
+from .task_evidence import (
+    TASK_ATTEMPT_AUTHORIZATION_BINDING_EVENT_TYPE,
+    TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
+    TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
+    artifact_record_digest,
+    build_candidate_artifact_action_receipt,
+    build_candidate_artifact_pre_effect_receipt,
+    build_task_attempt_binding_event,
+    build_task_execution_accounting,
+    task_publication_billing_digest,
+    task_publication_billing_projection,
+    task_execution_mode,
+    task_runner_version_reference,
+)
 
 
 DEFAULT_TASK = Path("tasks/chief-of-staff-lite.json")
 DEFAULT_EXPECTATIONS = Path("fixtures/chief_of_staff/expectations.json")
 DEFAULT_MOCK_OUTPUT = Path("fixtures/chief_of_staff/valid-output.json")
+
+
+class _CandidateArtifactPublicationUncertain(ConfigurationError):
+    """The local effect may exist without a complete durable audit chain."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        artifact_observed: bool = True,
+    ) -> None:
+        super().__init__(message)
+        self.artifact_observed = artifact_observed
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,6 +349,40 @@ async def run_chief_of_staff(
             runner_id=active_runner.runner_id,
             context_digest=prepared.context_pack.snapshot_hash,
         )
+        task_binding = build_task_attempt_binding_event(
+            contract=prepared.contract,
+            request=request,
+            runner_id=active_runner.runner_id,
+            context_digest=prepared.context_pack.snapshot_hash,
+            prompt_digest=prompt_digest,
+            project_root=str(root),
+            profile_id=profile_id,
+            authorization_intent_digest=(
+                task_authorization_intent_digest(prepared.contract)
+            ),
+        )
+        task_binding_digest = task_binding["binding_digest"]
+        assert isinstance(task_binding_digest, str)
+        try:
+            _append_required_event(
+                state,
+                selected_run_id,
+                TASK_ATTEMPT_AUTHORIZATION_BINDING_EVENT_TYPE,
+                task_binding,
+                event_id=task_binding_digest,
+            )
+        except BaseException as binding_error:
+            _best_effort_terminal_status(
+                state,
+                selected_run_id,
+                status=(
+                    RunStatus.CANCELLED
+                    if not isinstance(binding_error, Exception)
+                    else RunStatus.FAILED
+                ),
+                phase="task_attempt_binding",
+            )
+            raise
         _best_effort_shadow_observation(
             state,
             selected_run_id,
@@ -318,6 +394,7 @@ async def run_chief_of_staff(
                 context_digest=prepared.context_pack.snapshot_hash,
                 prompt_digest=prompt_digest,
                 project_root=root,
+                task_attempt_binding_digest=task_binding_digest,
                 evaluated_at=time.time(),
                 legacy_executable=legacy_executable,
             ),
@@ -326,32 +403,73 @@ async def run_chief_of_staff(
             preflight_assessment = await active_runner.inspect_billing_route()
             _assert_runner_billing_route(active_runner.runner_id, preflight_assessment)
         except OrdomataError:
-            state.append_event(
+            _append_terminal_event(
+                state,
                 selected_run_id,
-                "status",
                 {"phase": "billing_preflight"},
                 status=RunStatus.BLOCKED,
             )
             raise
         except BaseException:
-            state.append_event(
+            _append_terminal_event(
+                state,
                 selected_run_id,
-                "status",
                 {"phase": "billing_preflight"},
                 status=RunStatus.FAILED,
             )
             raise
-        state.append_event(
-            selected_run_id,
-            "billing_assessment",
-            _billing_metadata(preflight_assessment),
-        )
-        state.append_event(
-            selected_run_id,
-            "status",
-            {"phase": "runner_execution"},
-            status=RunStatus.RUNNING,
-        )
+        billing_metadata = _billing_metadata(preflight_assessment)
+        try:
+            _append_required_event(
+                state,
+                selected_run_id,
+                "billing_assessment",
+                billing_metadata,
+                event_id=_controller_event_id(
+                    selected_run_id,
+                    "billing_assessment",
+                    billing_metadata,
+                ),
+            )
+        except BaseException as billing_evidence_error:
+            _best_effort_terminal_status(
+                state,
+                selected_run_id,
+                status=(
+                    RunStatus.CANCELLED
+                    if not isinstance(billing_evidence_error, Exception)
+                    else RunStatus.FAILED
+                ),
+                phase="billing_assessment_persistence",
+            )
+            raise
+        running_payload = {"phase": "runner_execution"}
+        try:
+            _append_required_event(
+                state,
+                selected_run_id,
+                "status",
+                running_payload,
+                event_id=_controller_event_id(
+                    selected_run_id,
+                    "status",
+                    running_payload,
+                    status=RunStatus.RUNNING,
+                ),
+                status=RunStatus.RUNNING,
+            )
+        except BaseException as running_evidence_error:
+            _best_effort_terminal_status(
+                state,
+                selected_run_id,
+                status=(
+                    RunStatus.CANCELLED
+                    if not isinstance(running_evidence_error, Exception)
+                    else RunStatus.FAILED
+                ),
+                phase="runner_execution_transition",
+            )
+            raise
         _best_effort_shadow_observation(
             state,
             selected_run_id,
@@ -363,10 +481,14 @@ async def run_chief_of_staff(
                 context_digest=prepared.context_pack.snapshot_hash,
                 prompt_digest=prompt_digest,
                 project_root=root,
+                task_attempt_binding_digest=task_binding_digest,
                 runner_overrides=request.runner_overrides,
                 timeout_seconds=request.timeout_seconds,
                 attempt=request.attempt,
                 billing_assessment=preflight_assessment,
+                billing_assessment_digest=billing_metadata[
+                    "assessment_digest"
+                ],
                 evaluated_at=time.time(),
                 legacy_executable=legacy_executable,
             ),
@@ -409,9 +531,9 @@ async def run_chief_of_staff(
                     ),
                     billing_matches=False,
                 )
-            state.append_event(
+            _append_terminal_event(
+                state,
                 selected_run_id,
-                "status",
                 {"phase": "execution"},
                 status=(
                     RunStatus.QUARANTINED
@@ -454,6 +576,7 @@ async def run_chief_of_staff(
                 expected_runner_id=active_runner.runner_id,
                 profile_id=profile_id,
                 legacy_executable=legacy_executable,
+                task_attempt_binding_digest=task_binding_digest,
             )
         except ValidationError:
             _best_effort_terminal_status(
@@ -463,12 +586,28 @@ async def run_chief_of_staff(
                 phase="result_finalization",
             )
             raise
-        except BaseException:
+        except BaseException as finalization_error:
+            uncertainty = _candidate_publication_uncertainty(
+                finalization_error
+            )
             _best_effort_terminal_status(
                 state,
                 selected_run_id,
-                status=RunStatus.FAILED,
+                status=(
+                    RunStatus.QUARANTINED
+                    if uncertainty is not None
+                    else RunStatus.CANCELLED
+                    if not isinstance(finalization_error, Exception)
+                    else RunStatus.FAILED
+                ),
                 phase="result_finalization",
+                details={
+                    "artifact_observed": (
+                        uncertainty.artifact_observed
+                        if uncertainty is not None
+                        else False
+                    )
+                },
             )
             raise
 
@@ -485,6 +624,7 @@ def _finalize_result(
     expected_runner_id: str,
     profile_id: str | None,
     legacy_executable: bool,
+    task_attempt_binding_digest: str,
 ) -> TaskRunReport:
     persisted_runner_id = state.get_run(request.run_id).runner_id
     if (
@@ -560,29 +700,28 @@ def _finalize_result(
         disposition=billing_disposition,
         billing_matches=billing_matches,
     )
-    state.append_event(
+    publication_billing_digest = task_publication_billing_digest(
+        identity_matches=True,
+        billing_matches=billing_matches,
+        billing_disposition=billing_disposition,
+    )
+    accounting_payload = build_task_execution_accounting(
+        result=result,
+        billing_matches=billing_matches,
+        billing_disposition=billing_disposition,
+        runner_event_count=event_count,
+        incremental_api_charge=incremental_api_charge,
+    )
+    _append_required_event(
+        state,
         request.run_id,
         "execution_accounting",
-        {
-            "runner_version": result.runner_version,
-            "execution_mode": result.execution_mode,
-            "harness_process_started": result.harness_process_started,
-            "live_model_execution_occurred": result.live_model_execution_occurred,
-            "incremental_api_charge": incremental_api_charge,
-            "incremental_ai_charge": billing_disposition.incremental_ai_charge.value,
-            "subscription_capacity_consumed": (
-                result.subscription_capacity_consumed if billing_matches else None
-            ),
-            "paid_capacity_consumed": billing_disposition.paid_capacity_consumed.value,
-            "included_capacity_state": billing_disposition.capacity_state.value,
-            "billing_quarantine_required": billing_disposition.quarantine_required,
-            "billing_circuit_breaker_required": (
-                billing_disposition.circuit_breaker_required
-            ),
-            "billing_disposition_reasons": list(billing_disposition.reasons),
-            "usage_observation": result.usage_observation.value,
-            "wall_seconds": result.wall_seconds,
-        },
+        accounting_payload,
+        event_id=_controller_event_id(
+            request.run_id,
+            "execution_accounting",
+            accounting_payload,
+        ),
     )
     evaluation: EvaluationResult | None = None
     artifact_path: Path | None = None
@@ -609,78 +748,36 @@ def _finalize_result(
             else RunStatus.QUARANTINED
         )
         if final_status is RunStatus.SUCCEEDED:
-            candidate_artifact_path = _contained_path(
-                root,
-                request.run_directory / prepared.contract.expected_output.local_destination,
-            )
-            artifact_bytes = _canonical_artifact_bytes(result.output)
-            artifact_digest = hashlib.sha256(artifact_bytes).hexdigest()
-            _best_effort_shadow_observation(
-                state,
-                request.run_id,
-                lambda: build_local_candidate_publication_shadow_event(
-                    contract=prepared.contract,
-                    run_id=request.run_id,
-                    runner_id=expected_runner_id,
-                    profile_id=profile_id,
-                    project_root=root,
-                    artifact_digest="sha256:" + artifact_digest,
-                    artifact_size_bytes=len(artifact_bytes),
-                    artifact_kind=(
-                        prepared.contract.expected_output.artifact_kind
-                    ),
-                    destination_digest=canonical_digest(
-                        {
-                            "local_destination": (
-                                prepared.contract.expected_output.local_destination
-                            )
-                        }
-                    ),
-                    evaluation_accepted=evaluation.accepted,
-                    credential_scan_passed=credential_scan_passed,
-                    billing_disposition={
-                        "billing_matches": billing_matches,
-                        "capacity_state": billing_disposition.capacity_state.value,
-                        "circuit_breaker_required": (
-                            billing_disposition.circuit_breaker_required
-                        ),
-                        "incremental_ai_charge": (
-                            billing_disposition.incremental_ai_charge.value
-                        ),
-                        "paid_capacity_consumed": (
-                            billing_disposition.paid_capacity_consumed.value
-                        ),
-                        "quarantine_required": (
-                            billing_disposition.quarantine_required
-                        ),
-                        "reason_codes": list(billing_disposition.reasons),
-                    },
-                    evaluated_at=time.time(),
-                    legacy_executable=legacy_executable,
+            candidate_artifact_path = _candidate_artifact_path(
+                root=root,
+                run_directory=request.run_directory,
+                local_destination=(
+                    prepared.contract.expected_output.local_destination
                 ),
             )
-            staged_path = _stage_artifact(candidate_artifact_path, artifact_bytes)
-            try:
-                # Record the immutable metadata before the final artifact name
-                # becomes visible. If publication fails, the terminal failed
-                # event makes the incomplete metadata record auditable; the
-                # inverse (an artifact with no metadata) cannot occur.
-                state.append_artifact(
-                    ArtifactRecord(
-                        artifact_id=f"{request.run_id}:chief-of-staff",
-                        run_id=request.run_id,
-                        kind=prepared.contract.expected_output.artifact_kind,
-                        path=str(candidate_artifact_path),
-                        sha256=artifact_digest,
-                        media_type="application/json",
-                        size_bytes=len(artifact_bytes),
-                        created_at=time.time(),
-                    )
-                )
-                _promote_staged_artifact(staged_path, candidate_artifact_path)
-                artifact_path = candidate_artifact_path
-            finally:
-                staged_path.unlink(missing_ok=True)
+            artifact_bytes = _canonical_artifact_bytes(result.output)
+            artifact_digest = _publish_candidate_artifact(
+                state=state,
+                path=candidate_artifact_path,
+                content=artifact_bytes,
+                contract=prepared.contract,
+                run_id=request.run_id,
+                runner_id=expected_runner_id,
+                profile_id=profile_id,
+                project_root=root,
+                task_attempt_binding_digest=(
+                    task_attempt_binding_digest
+                ),
+                requested_permission_class=request.permission_class,
+                artifact_kind=(
+                    prepared.contract.expected_output.artifact_kind
+                ),
+                billing_disposition=billing_disposition,
+                billing_matches=billing_matches,
+                billing_disposition_digest=publication_billing_digest,
+                legacy_executable=legacy_executable,
+            )
+            artifact_path = candidate_artifact_path
     elif result.status not in {
         RunStatus.FAILED,
         RunStatus.BLOCKED,
@@ -689,22 +786,38 @@ def _finalize_result(
     }:
         final_status = RunStatus.FAILED
 
-    state.append_event(
-        request.run_id,
-        "status",
-        {
-            "accepted": bool(evaluation and evaluation.accepted),
-            "artifact_recorded": artifact_path is not None,
-            "runner_status": result.status.value,
-            "billing_assessment_matched_preflight": billing_matches,
-            "billing_quarantine_required": billing_disposition.quarantine_required,
-            "billing_circuit_breaker_required": (
-                billing_disposition.circuit_breaker_required
-            ),
-            "artifact_credential_scan_passed": credential_scan_passed,
-        },
-        status=final_status,
-    )
+    terminal_payload = {
+        "accepted": bool(evaluation and evaluation.accepted),
+        "artifact_recorded": artifact_path is not None,
+        "artifact_observed": artifact_path is not None,
+        "runner_status": result.status.value,
+        "billing_assessment_matched_preflight": billing_matches,
+        "billing_quarantine_required": (
+            billing_disposition.quarantine_required
+        ),
+        "billing_circuit_breaker_required": (
+            billing_disposition.circuit_breaker_required
+        ),
+        "artifact_credential_scan_passed": credential_scan_passed,
+    }
+    try:
+        _append_terminal_event(
+            state,
+            request.run_id,
+            terminal_payload,
+            status=final_status,
+        )
+    except BaseException as terminal_error:
+        if artifact_path is not None:
+            terminal_error.add_note(
+                "Ordomata preserved a verified candidate artifact after the "
+                "terminal audit write failed."
+            )
+            raise terminal_error from _CandidateArtifactPublicationUncertain(
+                "candidate artifact terminal evidence is uncertain",
+                artifact_observed=True,
+            )
+        raise
     return TaskRunReport(
         run_id=request.run_id,
         runner_id=result.runner_id,
@@ -725,8 +838,8 @@ def _finalize_result(
         billing_confidence=result.billing_assessment.confidence.value,
         subscription_name=_safe_subscription_name(result.billing_assessment),
         artifact_credential_scan_passed=credential_scan_passed,
-        runner_version=result.runner_version,
-        execution_mode=result.execution_mode,
+        runner_version=task_runner_version_reference(result.runner_version),
+        execution_mode=task_execution_mode(result),
         harness_process_started=result.harness_process_started,
         live_model_execution_occurred=result.live_model_execution_occurred,
         incremental_api_charge=incremental_api_charge,
@@ -812,7 +925,8 @@ def _attestation_security_semantics(attestation: Any) -> tuple[Any, ...] | None:
 def _billing_metadata(assessment: BillingRouteAssessment) -> dict[str, Any]:
     """Return the only billing fields safe and necessary for immutable audit."""
 
-    return {
+    payload = {
+        "schema_version": 1,
         "runner_id": assessment.runner_id,
         "route": assessment.route.value,
         "confidence": assessment.confidence.value,
@@ -828,6 +942,8 @@ def _billing_metadata(assessment: BillingRouteAssessment) -> dict[str, Any]:
         is not None,
         "attestation_present": assessment.attestation is not None,
     }
+    payload["assessment_digest"] = canonical_digest(payload)
+    return payload
 
 
 _BILLING_DISPOSITION_REASON_CODES = frozenset(
@@ -890,18 +1006,32 @@ def _resolve_billing_disposition(
                 preflight_assessment.route is BillingRoute.SUBSCRIPTION_INCLUDED
             ),
         )
-    if preflight_assessment.route is not BillingRoute.SUBSCRIPTION_INCLUDED:
+    if preflight_assessment.route in {
+        BillingRoute.MOCK,
+        BillingRoute.LOCAL_NON_AI,
+    }:
+        if not _non_ai_result_is_consistent(
+            result,
+            preflight_assessment=preflight_assessment,
+        ):
+            return _unknown_billing_disposition(
+                "post_run_billing_disposition_inconsistent"
+            )
         return BillingPostRunDisposition(
             capacity_state=CapacityState.NOT_APPLICABLE,
-            paid_capacity_consumed=result.paid_capacity_consumed,
-            incremental_ai_charge=result.incremental_ai_charge,
-            quarantine_required=result.billing_quarantine_required,
-            circuit_breaker_required=result.billing_circuit_breaker_required,
-            reasons=tuple(
-                reason
-                for reason in result.billing_disposition_reasons
-                if reason in _BILLING_DISPOSITION_REASON_CODES
-            ),
+            paid_capacity_consumed=PaidCapacityConsumed.NOT_APPLICABLE,
+            incremental_ai_charge=IncrementalAICharge.NONE,
+            quarantine_required=False,
+            circuit_breaker_required=False,
+            reasons=(),
+        )
+
+    if (
+        preflight_assessment.route is BillingRoute.SUBSCRIPTION_INCLUDED
+        and task_execution_mode(result) is None
+    ):
+        return _unknown_billing_disposition(
+            "post_run_billing_disposition_inconsistent"
         )
 
     reported_reasons = tuple(dict.fromkeys(result.billing_disposition_reasons))
@@ -1054,6 +1184,32 @@ def _more_conservative_ai_charge(
     return IncrementalAICharge.NONE
 
 
+def _non_ai_result_is_consistent(
+    result: RunnerExecutionResult,
+    *,
+    preflight_assessment: BillingRouteAssessment,
+) -> bool:
+    """Require explicit no-AI accounting before any local publication."""
+
+    return bool(
+        result.live_model_execution_occurred is False
+        and result.subscription_capacity_consumed is False
+        and result.paid_capacity_consumed
+        is PaidCapacityConsumed.NOT_APPLICABLE
+        and result.incremental_ai_charge is IncrementalAICharge.NONE
+        and result.billing_quarantine_required is False
+        and result.billing_circuit_breaker_required is False
+        and result.billing_disposition_reasons == ()
+        and result.usage_observation is UsageObservation.NOT_APPLICABLE
+        and result.postflight_billing_assessment is None
+        and task_execution_mode(result) is not None
+        and (
+            preflight_assessment.route is not BillingRoute.MOCK
+            or result.harness_process_started is False
+        )
+    )
+
+
 def _unknown_billing_disposition(
     reason: str,
     *,
@@ -1089,8 +1245,19 @@ def _incremental_api_charge(
         }
     ):
         return "unknown"
-    if preflight_assessment.route in {BillingRoute.MOCK, BillingRoute.LOCAL_NON_AI}:
-        return "none"
+    if preflight_assessment.route in {
+        BillingRoute.MOCK,
+        BillingRoute.LOCAL_NON_AI,
+    }:
+        return (
+            "none"
+            if not disposition.quarantine_required
+            and _non_ai_result_is_consistent(
+                result,
+                preflight_assessment=preflight_assessment,
+            )
+            else "unknown"
+        )
     postflight = result.postflight_billing_assessment
     if not result.harness_process_started and result.live_model_execution_occurred is False:
         return "none"
@@ -1262,6 +1429,42 @@ def _contained_path(root: Path, candidate: Path) -> Path:
     return resolved
 
 
+def _candidate_artifact_path(
+    *,
+    root: Path,
+    run_directory: Path,
+    local_destination: str,
+) -> Path:
+    """Resolve a run-local destination lexically without following its name."""
+
+    candidate = Path(
+        os.path.abspath(run_directory / Path(local_destination))
+    )
+    try:
+        candidate.relative_to(root)
+        relative_parent = candidate.parent.relative_to(run_directory)
+    except ValueError as exc:
+        raise ConfigurationError(
+            "candidate artifact destination escapes the isolated run"
+        ) from exc
+    current = run_directory
+    for component in relative_parent.parts:
+        current = current / component
+        try:
+            metadata = os.lstat(current)
+        except FileNotFoundError:
+            break
+        except OSError as exc:
+            raise ConfigurationError(
+                "candidate artifact parent is not safely inspectable"
+            ) from exc
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise ConfigurationError(
+                "candidate artifact parent is not an ordinary directory"
+            )
+    return candidate
+
+
 def _validate_run_identifier(run_id: str) -> None:
     if not run_id or len(run_id) > 160:
         raise ValidationError("run identifier must contain 1-160 characters")
@@ -1294,43 +1497,680 @@ def _canonical_artifact_bytes(output: Any) -> bytes:
     return (encoded + "\n").encode("utf-8")
 
 
-def _stage_artifact(path: Path, content: bytes) -> Path:
-    """Durably stage content without exposing it at its final artifact path."""
+def _publish_candidate_artifact(
+    *,
+    state: SQLiteStateStore,
+    path: Path,
+    content: bytes,
+    contract: TaskContract,
+    run_id: str,
+    runner_id: str,
+    profile_id: str | None,
+    project_root: Path,
+    task_attempt_binding_digest: str,
+    requested_permission_class: PermissionClass,
+    artifact_kind: str,
+    billing_disposition: BillingPostRunDisposition,
+    billing_matches: bool,
+    billing_disposition_digest: str,
+    legacy_executable: bool,
+) -> str:
+    """Publish one local candidate with a reconciled receipt chain.
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists() or path.is_symlink():
-        raise ValidationError("artifact destination already exists")
-    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    Authorization is still owned by the existing Class 0/1 gate.  Required
+    evidence persistence and exact effect reconciliation only make that legacy
+    decision observable and fail closed; neither can widen it.
+    """
+
+    artifact_sha256 = hashlib.sha256(content).hexdigest()
+    canonical_artifact_digest = "sha256:" + artifact_sha256
+    artifact_size_bytes = len(content)
+    destination_digest = canonical_digest({"artifact_path": str(path)})
+    started_at = time.time()
+    record = ArtifactRecord(
+        artifact_id=f"{run_id}:chief-of-staff",
+        run_id=run_id,
+        kind=artifact_kind,
+        path=str(path),
+        sha256=artifact_sha256,
+        media_type="application/json",
+        size_bytes=artifact_size_bytes,
+        created_at=started_at,
+    )
+    metadata_digest = artifact_record_digest(record)
+    billing_projection = task_publication_billing_projection(
+        identity_matches=True,
+        billing_matches=billing_matches,
+        billing_disposition=billing_disposition,
+    )
+    billing_projection["billing_disposition_digest"] = (
+        billing_disposition_digest
+    )
+    publication_shadow = build_local_candidate_publication_shadow_event(
+        contract=contract,
+        run_id=run_id,
+        runner_id=runner_id,
+        profile_id=profile_id,
+        project_root=project_root,
+        artifact_digest=canonical_artifact_digest,
+        artifact_size_bytes=artifact_size_bytes,
+        artifact_kind=artifact_kind,
+        destination_digest=destination_digest,
+        task_attempt_binding_digest=task_attempt_binding_digest,
+        evaluation_accepted=True,
+        credential_scan_passed=True,
+        billing_disposition=billing_projection,
+        evaluated_at=started_at,
+        legacy_executable=legacy_executable,
+    )
+    shadow_persisted = _best_effort_shadow_observation(
+        state,
+        run_id,
+        lambda: publication_shadow,
+    )
+    pre_effect_receipt = build_candidate_artifact_pre_effect_receipt(
+        task_attempt_binding_digest=task_attempt_binding_digest,
+        publication_shadow=publication_shadow,
+        publication_shadow_persisted=shadow_persisted,
+        requested_permission_class=requested_permission_class,
+        artifact_kind=artifact_kind,
+        destination_digest=destination_digest,
+        artifact_digest=canonical_artifact_digest,
+        artifact_size_bytes=artifact_size_bytes,
+        artifact_metadata_digest=metadata_digest,
+        billing_disposition_digest=billing_disposition_digest,
+        started_at=started_at,
+    )
+    pre_effect_event_id = pre_effect_receipt["receipt_digest"]
+    assert isinstance(pre_effect_event_id, str)
+    _append_required_event(
+        state,
+        run_id,
+        TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
+        pre_effect_receipt,
+        event_id=pre_effect_event_id,
+    )
+
+    stage = StagedArtifact(
+        path.with_name(
+            f".{path.name}.{pre_effect_event_id.removeprefix('sha256:')}.tmp"
+        )
+    )
     try:
-        descriptor = os.open(temporary, flags, 0o600)
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-    except BaseException:
-        temporary.unlink(missing_ok=True)
+        _stage_artifact(path, content, stage=stage)
+        if stage.identity is None:
+            raise ConfigurationError(
+                "candidate artifact staging verification failed"
+            )
+        if not fsync_artifact_parent(stage.path):
+            raise ConfigurationError(
+                "candidate artifact staging namespace sync failed"
+            )
+        _append_artifact_with_readback(state, record)
+        _promote_staged_artifact(stage, path)
+        if not fsync_artifact_parent(path):
+            raise ConfigurationError(
+                "candidate artifact namespace sync failed"
+            )
+        if published_artifact_state(
+            path,
+            content,
+            expected_identity=stage.identity,
+            expected_parent_identity=stage.parent_identity,
+            stage=stage,
+        ) != ARTIFACT_MATCHES:
+            raise ConfigurationError(
+                "candidate artifact verification failed"
+            )
+        # Publication already removes and verifies the staging name while the
+        # parent and inode descriptors are leased.  Keep those leases through
+        # action-receipt reconciliation; no second pathname cleanup is needed.
+    except BaseException as publication_error:
+        final_effect_absent = _safe_remove_owned_artifact(
+            path,
+            staged_identity=stage.identity,
+            expected_parent_identity=stage.parent_identity,
+            stage=stage,
+        )
+        staged_effect_absent = _safe_remove_owned_artifact(
+            stage.path,
+            staged_identity=stage.identity,
+            expected_parent_identity=stage.parent_identity,
+            stage=stage,
+        )
+        stage.close()
+        effect_unknown = not (
+            final_effect_absent and staged_effect_absent
+        )
+        if effect_unknown:
+            outcome = "unknown"
+            failure_code = "artifact_publication_outcome_unknown"
+        elif not isinstance(publication_error, Exception):
+            outcome = "cancelled"
+            failure_code = "artifact_persistence_interrupted"
+        else:
+            outcome = "failed"
+            failure_code = "artifact_persistence_failed"
+        try:
+            receipt = build_candidate_artifact_action_receipt(
+                task_attempt_binding_digest=task_attempt_binding_digest,
+                pre_effect_receipt=pre_effect_receipt,
+                publication_shadow=publication_shadow,
+                publication_shadow_persisted=shadow_persisted,
+                requested_permission_class=requested_permission_class,
+                artifact_kind=artifact_kind,
+                destination_digest=destination_digest,
+                intended_artifact_digest=canonical_artifact_digest,
+                intended_artifact_size_bytes=artifact_size_bytes,
+                artifact_metadata_digest=metadata_digest,
+                billing_disposition_digest=billing_disposition_digest,
+                started_at=started_at,
+                completed_at=time.time(),
+                outcome=outcome,
+                result_digest=None,
+                observed_artifact_size_bytes=None,
+                failure_code=failure_code,
+            )
+        except BaseException as receipt_build_error:
+            if effect_unknown:
+                uncertain = _CandidateArtifactPublicationUncertain(
+                    "candidate artifact failure receipt is unavailable",
+                    artifact_observed=True,
+                )
+                if isinstance(receipt_build_error, Exception):
+                    raise uncertain from receipt_build_error
+                receipt_build_error.add_note(
+                    "Ordomata could not build the interruption receipt."
+                )
+                raise receipt_build_error from uncertain
+            raise
+        _append_action_receipt_or_raise(
+            state,
+            run_id,
+            receipt,
+            artifact_observed=effect_unknown,
+        )
+        if effect_unknown:
+            raise _CandidateArtifactPublicationUncertain(
+                "candidate artifact publication outcome is uncertain",
+                artifact_observed=True,
+            ) from publication_error
         raise
-    return temporary
-
-
-def _promote_staged_artifact(staged_path: Path, artifact_path: Path) -> None:
-    """Publish a staged file without overwriting an existing filesystem entry."""
-
-    if artifact_path.exists() or artifact_path.is_symlink():
-        raise ValidationError("artifact destination already exists")
     try:
-        os.link(staged_path, artifact_path, follow_symlinks=False)
-    except OSError as exc:
-        raise ConfigurationError("staged artifact could not be published safely") from exc
-    # The final path is now a hard link to the already-fsynced bytes. Failure to
-    # remove the staging name does not invalidate the published artifact.
+        success_receipt = build_candidate_artifact_action_receipt(
+            task_attempt_binding_digest=task_attempt_binding_digest,
+            pre_effect_receipt=pre_effect_receipt,
+            publication_shadow=publication_shadow,
+            publication_shadow_persisted=shadow_persisted,
+            requested_permission_class=requested_permission_class,
+            artifact_kind=artifact_kind,
+            destination_digest=destination_digest,
+            intended_artifact_digest=canonical_artifact_digest,
+            intended_artifact_size_bytes=artifact_size_bytes,
+            artifact_metadata_digest=metadata_digest,
+            billing_disposition_digest=billing_disposition_digest,
+            started_at=started_at,
+            completed_at=time.time(),
+            outcome="succeeded",
+            result_digest=canonical_artifact_digest,
+            observed_artifact_size_bytes=artifact_size_bytes,
+            failure_code=None,
+        )
+    except BaseException as receipt_build_error:
+        final_effect_absent = _safe_remove_owned_artifact(
+            path,
+            staged_identity=stage.identity,
+            expected_parent_identity=stage.parent_identity,
+            stage=stage,
+        )
+        staged_effect_absent = _safe_remove_owned_artifact(
+            stage.path,
+            staged_identity=stage.identity,
+            expected_parent_identity=stage.parent_identity,
+            stage=stage,
+        )
+        stage.close()
+        if not (final_effect_absent and staged_effect_absent):
+            uncertain = _CandidateArtifactPublicationUncertain(
+                "candidate artifact receipt construction is uncertain",
+                artifact_observed=True,
+            )
+            if isinstance(receipt_build_error, Exception):
+                raise uncertain from receipt_build_error
+            receipt_build_error.add_note(
+                "Ordomata could not reconcile the published candidate."
+            )
+            raise receipt_build_error from uncertain
+        raise
     try:
-        staged_path.unlink()
-    except OSError:
-        pass
+        _append_action_receipt(state, run_id, success_receipt)
+    except BaseException as receipt_error:
+        try:
+            receipt_persistence = _event_persistence_state(
+                state,
+                run_id,
+                TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
+                success_receipt,
+                event_id=success_receipt.get("receipt_id"),
+            )
+        except BaseException as readback_error:
+            stage.close()
+            readback_error.add_note(
+                "Ordomata candidate action receipt readback was interrupted."
+            )
+            raise readback_error from _CandidateArtifactPublicationUncertain(
+                "candidate artifact action receipt readback is uncertain",
+                artifact_observed=True,
+            )
+        if receipt_persistence is True:
+            if _safe_published_artifact_state(
+                path,
+                content,
+                expected_identity=stage.identity,
+                expected_parent_identity=stage.parent_identity,
+                stage=stage,
+            ) != ARTIFACT_MATCHES:
+                stage.close()
+                raise _CandidateArtifactPublicationUncertain(
+                    "candidate artifact receipt and effect disagree",
+                    artifact_observed=True,
+                ) from receipt_error
+            if isinstance(receipt_error, Exception):
+                stage.close()
+                return artifact_sha256
+            stage.close()
+            receipt_error.add_note(
+                "Ordomata reconciled the interrupted candidate receipt."
+            )
+            raise receipt_error from _CandidateArtifactPublicationUncertain(
+                "candidate artifact committed before interruption",
+                artifact_observed=True,
+            )
+        if receipt_persistence is None:
+            observed_state = _safe_published_artifact_state(
+                path,
+                content,
+                expected_identity=stage.identity,
+                expected_parent_identity=stage.parent_identity,
+                stage=stage,
+            )
+            stage.close()
+            raise _CandidateArtifactPublicationUncertain(
+                "candidate artifact action receipt is uncertain",
+                artifact_observed=(observed_state != ARTIFACT_ABSENT),
+            ) from receipt_error
+        removed = _safe_remove_owned_artifact(
+            path,
+            staged_identity=stage.identity,
+            expected_parent_identity=stage.parent_identity,
+            stage=stage,
+        )
+        stage.close()
+        if not removed:
+            raise _CandidateArtifactPublicationUncertain(
+                "candidate artifact action receipt is missing",
+                artifact_observed=True,
+            ) from receipt_error
+        failure_receipt = build_candidate_artifact_action_receipt(
+            task_attempt_binding_digest=task_attempt_binding_digest,
+            pre_effect_receipt=pre_effect_receipt,
+            publication_shadow=publication_shadow,
+            publication_shadow_persisted=shadow_persisted,
+            requested_permission_class=requested_permission_class,
+            artifact_kind=artifact_kind,
+            destination_digest=destination_digest,
+            intended_artifact_digest=canonical_artifact_digest,
+            intended_artifact_size_bytes=artifact_size_bytes,
+            artifact_metadata_digest=metadata_digest,
+            billing_disposition_digest=billing_disposition_digest,
+            started_at=started_at,
+            completed_at=time.time(),
+            outcome=(
+                "cancelled"
+                if not isinstance(receipt_error, Exception)
+                else "failed"
+            ),
+            result_digest=None,
+            observed_artifact_size_bytes=None,
+            failure_code=(
+                "artifact_persistence_interrupted"
+                if not isinstance(receipt_error, Exception)
+                else "artifact_persistence_failed"
+            ),
+        )
+        _append_action_receipt_or_raise(
+            state,
+            run_id,
+            failure_receipt,
+            artifact_observed=False,
+        )
+        raise
+    if _safe_published_artifact_state(
+        path,
+        content,
+        expected_identity=stage.identity,
+        expected_parent_identity=stage.parent_identity,
+        stage=stage,
+    ) != ARTIFACT_MATCHES:
+        stage.close()
+        raise _CandidateArtifactPublicationUncertain(
+            "candidate artifact changed after action receipt",
+            artifact_observed=True,
+        )
+    stage.close()
+    return artifact_sha256
+
+
+def _safe_published_artifact_state(
+    path: Path,
+    content: bytes,
+    *,
+    expected_identity: tuple[int, int] | None,
+    expected_parent_identity: tuple[int, int] | None,
+    stage: StagedArtifact,
+) -> str:
+    """Classify an effect without allowing interruption to look absent."""
+
+    try:
+        return published_artifact_state(
+            path,
+            content,
+            expected_identity=expected_identity,
+            expected_parent_identity=expected_parent_identity,
+            stage=stage,
+        )
+    except BaseException:
+        return ARTIFACT_UNVERIFIABLE
+
+
+def _safe_remove_owned_artifact(
+    path: Path,
+    *,
+    staged_identity: tuple[int, int] | None,
+    expected_parent_identity: tuple[int, int] | None,
+    stage: StagedArtifact,
+) -> bool:
+    """Return false whenever inode-owned cleanup cannot be proven complete."""
+
+    try:
+        return remove_owned_published_artifact(
+            path,
+            staged_identity=staged_identity,
+            expected_parent_identity=expected_parent_identity,
+            stage=stage,
+        )
+    except BaseException:
+        return False
+
+
+def _stage_artifact(
+    path: Path,
+    content: bytes,
+    *,
+    stage: StagedArtifact,
+) -> None:
+    """Patchable controller wrapper around shared durable staging."""
+
+    stage_artifact(path, content, stage=stage)
+
+
+def _promote_staged_artifact(
+    stage: StagedArtifact,
+    artifact_path: Path,
+) -> None:
+    """Patchable wrapper around descriptor-anchored publication."""
+
+    publish_staged_artifact(artifact_path, stage=stage)
+
+
+def _append_required_event(
+    state: SQLiteStateStore,
+    run_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+    *,
+    event_id: str,
+    status: RunStatus | None = None,
+) -> None:
+    """Append an idempotent event, accepting only exact committed readback."""
+
+    try:
+        state.append_event(
+            run_id,
+            event_type,
+            payload,
+            event_id=event_id,
+            status=status,
+        )
+    except BaseException as append_error:
+        persisted = _event_persistence_state(
+            state,
+            run_id,
+            event_type,
+            payload,
+            event_id=event_id,
+            status=status,
+        )
+        if persisted is True and isinstance(append_error, Exception):
+            return
+        if persisted is None:
+            raise ConfigurationError(
+                "required controller evidence persistence is uncertain"
+            ) from append_error
+        raise
+
+
+def _append_terminal_event(
+    state: SQLiteStateStore,
+    run_id: str,
+    payload: dict[str, Any],
+    *,
+    status: RunStatus,
+) -> None:
+    """Append a deterministic terminal event with exact post-error readback."""
+
+    event_id = _controller_event_id(
+        run_id,
+        "status",
+        payload,
+        status=status,
+    )
+    try:
+        state.append_event(
+            run_id,
+            "status",
+            payload,
+            status=status,
+            event_id=event_id,
+        )
+    except BaseException as append_error:
+        persisted = _event_persistence_state(
+            state,
+            run_id,
+            "status",
+            payload,
+            event_id=event_id,
+            status=status,
+        )
+        if persisted is True and isinstance(append_error, Exception):
+            return
+        if persisted is None:
+            raise ConfigurationError(
+                "terminal controller evidence persistence is uncertain"
+            ) from append_error
+        raise
+
+
+def _controller_event_id(
+    run_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+    *,
+    status: RunStatus | None = None,
+) -> str:
+    """Content-address one controller event within its immutable run."""
+
+    material: dict[str, Any] = {
+        "event_type": event_type,
+        "payload": payload,
+        "run_id": run_id,
+    }
+    if status is not None:
+        material["status"] = status.value
+    return canonical_digest(material)
+
+
+def _append_action_receipt(
+    state: SQLiteStateStore,
+    run_id: str,
+    payload: dict[str, Any],
+) -> None:
+    receipt_id = payload.get("receipt_id")
+    if not isinstance(receipt_id, str):
+        raise ValidationError("candidate action receipt identifier is missing")
+    state.append_event(
+        run_id,
+        TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
+        payload,
+        event_id=receipt_id,
+    )
+
+
+def _append_action_receipt_or_raise(
+    state: SQLiteStateStore,
+    run_id: str,
+    payload: dict[str, Any],
+    *,
+    artifact_observed: bool,
+) -> None:
+    """Persist a terminal action receipt or surface conservative uncertainty."""
+
+    try:
+        _append_action_receipt(state, run_id, payload)
+    except BaseException as receipt_error:
+        try:
+            persisted = _event_persistence_state(
+                state,
+                run_id,
+                TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
+                payload,
+                event_id=payload.get("receipt_id"),
+            )
+        except BaseException as readback_error:
+            readback_error.add_note(
+                "Ordomata candidate receipt readback was interrupted."
+            )
+            raise readback_error from _CandidateArtifactPublicationUncertain(
+                "candidate artifact receipt readback is uncertain",
+                artifact_observed=artifact_observed,
+            )
+        if persisted is True and isinstance(receipt_error, Exception):
+            return
+        if persisted is True:
+            receipt_error.add_note(
+                "Ordomata reconciled the interrupted candidate receipt."
+            )
+            raise receipt_error from (
+                _CandidateArtifactPublicationUncertain(
+                    "candidate artifact receipt committed before interruption",
+                    artifact_observed=artifact_observed,
+                )
+            )
+        if persisted is None or artifact_observed:
+            raise _CandidateArtifactPublicationUncertain(
+                "candidate artifact receipt persistence is uncertain",
+                artifact_observed=artifact_observed,
+            ) from receipt_error
+        raise ConfigurationError(
+            "candidate artifact action receipt could not be persisted"
+        ) from receipt_error
+
+
+def _event_persistence_state(
+    state: SQLiteStateStore,
+    run_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+    *,
+    event_id: Any,
+    status: RunStatus | None = None,
+) -> bool | None:
+    """Return true/false for exact readback, or null when unprovable."""
+
+    if not isinstance(event_id, str):
+        return None
+    try:
+        matches = tuple(
+            event
+            for event in state.list_events(run_id)
+            if event.event_id == event_id
+        )
+    except Exception:
+        return None
+    if not matches:
+        return False
+    if (
+        len(matches) == 1
+        and matches[0].event_type == event_type
+        and matches[0].status is status
+        and matches[0].payload == payload
+    ):
+        return True
+    return None
+
+
+def _append_artifact_with_readback(
+    state: SQLiteStateStore,
+    record: ArtifactRecord,
+) -> None:
+    """Append immutable metadata, reconciling a commit-then-raise failure."""
+
+    try:
+        state.append_artifact(record)
+    except BaseException as append_error:
+        persisted = _artifact_record_persistence_state(state, record)
+        if persisted is True and isinstance(append_error, Exception):
+            return
+        if persisted is None:
+            raise _CandidateArtifactPublicationUncertain(
+                "candidate artifact metadata persistence is uncertain",
+                artifact_observed=False,
+            ) from append_error
+        raise
+
+
+def _artifact_record_persistence_state(
+    state: SQLiteStateStore,
+    record: ArtifactRecord,
+) -> bool | None:
+    try:
+        matches = tuple(
+            candidate
+            for candidate in state.list_artifacts(record.run_id)
+            if candidate.artifact_id == record.artifact_id
+        )
+    except Exception:
+        return None
+    if not matches:
+        return False
+    if len(matches) == 1 and matches[0] == record:
+        return True
+    return None
+
+
+def _candidate_publication_uncertainty(
+    error: BaseException,
+) -> _CandidateArtifactPublicationUncertain | None:
+    """Find a bounded publication uncertainty in a direct exception chain."""
+
+    current: BaseException | None = error
+    observed: set[int] = set()
+    while current is not None and id(current) not in observed:
+        observed.add(id(current))
+        if isinstance(current, _CandidateArtifactPublicationUncertain):
+            return current
+        current = current.__cause__ or current.__context__
+    return None
 
 
 def _best_effort_terminal_status(
@@ -1339,16 +2179,20 @@ def _best_effort_terminal_status(
     *,
     status: RunStatus,
     phase: str,
+    details: dict[str, Any] | None = None,
 ) -> bool:
     """Append one terminal event when possible without masking the root failure."""
 
     try:
-        if state.current_status(run_id) is not RunStatus.RUNNING:
+        if state.current_status(run_id) not in {
+            RunStatus.CREATED,
+            RunStatus.RUNNING,
+        }:
             return False
-        state.append_event(
+        _append_terminal_event(
+            state,
             run_id,
-            "status",
-            {"phase": phase},
+            {"phase": phase, **dict(details or {})},
             status=status,
         )
     except BaseException:
@@ -1363,11 +2207,36 @@ def _best_effort_shadow_observation(
 ) -> bool:
     """Append non-authoritative evidence without changing legacy behavior."""
 
+    payload: dict[str, Any] | None = None
+    event_id: str | None = None
     try:
         payload = builder()
-        state.append_event(run_id, "authorization_shadow_decision", payload)
+        event_id = canonical_digest(
+            {
+                "event_type": "authorization_shadow_decision",
+                "payload": payload,
+                "run_id": run_id,
+            }
+        )
+        state.append_event(
+            run_id,
+            "authorization_shadow_decision",
+            payload,
+            event_id=event_id,
+        )
     except Exception:
-        return False
+        return (
+            _event_persistence_state(
+                state,
+                run_id,
+                "authorization_shadow_decision",
+                payload,
+                event_id=event_id,
+            )
+            is True
+            if payload is not None and event_id is not None
+            else False
+        )
     return True
 
 

@@ -16,6 +16,7 @@ from ordomata.authorization_inspection import (
     COMPARISON_REVIEW_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
     DISPATCH_SCOPE,
     PUBLICATION_SCOPE,
+    _task_billing_policy_consistent,
     inspect_authorization_shadows,
 )
 from ordomata.errors import ConfigurationError
@@ -95,6 +96,32 @@ class AuthorizationInspectionTests(unittest.TestCase):
             "billing_circuit_breaker_required": False,
             "failure_code": None,
             "wall_seconds": 1.0,
+        }
+
+    @staticmethod
+    def _task_billing_payload() -> dict[str, object]:
+        payload: dict[str, object] = {
+            "schema_version": 1,
+            "runner_id": "mock",
+            "route": "mock",
+            "confidence": "high",
+            "subscription_name": None,
+            "capacity_state": "not_applicable",
+            "paid_continuation_protection": "not_applicable",
+            "paid_credit_balance": "not_applicable",
+            "account_identity_verified": False,
+            "attestation_present": False,
+        }
+        payload["assessment_digest"] = canonical_digest(payload)
+        return payload
+
+    @classmethod
+    def _task_execution_accounting_payload(cls) -> dict[str, object]:
+        return {
+            **cls._comparison_execution_accounting_payload(),
+            "runner_version": None,
+            "execution_mode": "in_memory_mock",
+            "incremental_api_charge": "none",
         }
 
     def _create_run(
@@ -198,6 +225,138 @@ class AuthorizationInspectionTests(unittest.TestCase):
             payload["authorization_action_receipt_coverage"] = (
                 COMPARISON_ACTION_RECEIPT_COVERAGE
             )
+        return payload
+
+    def _task_binding_payload(self) -> dict[str, object]:
+        authorization_intent_digest = self._shadow_payload(
+            ADMISSION_SCOPE
+        )["intent_digest"]
+        self.assertIsInstance(authorization_intent_digest, str)
+        binding = {
+            "kind": "task_attempt",
+            "run_ref": canonical_digest({"run_id": "run-inspect"}),
+            "task_id": "inspect-task",
+            "task_version": "1.0.0",
+            "task_definition_digest": canonical_digest(
+                {"task_definition": "bounded"}
+            ),
+            "authorization_intent_digest": authorization_intent_digest,
+            "context_digest": "sha256:" + ("a" * 64),
+            "prompt_digest": canonical_digest({"prompt": "bounded"}),
+            "output_schema_digest": canonical_digest(
+                {"output_schema": "bounded"}
+            ),
+            "repository_ref": canonical_digest(
+                {"repository": "private-repository-marker"}
+            ),
+            "profile_ref": canonical_digest(
+                {"profile_id": "private-profile-marker"}
+            ),
+            "runner_overrides_digest": canonical_digest(
+                {"runner_overrides": {}}
+            ),
+            "runner_id": "mock",
+            "timeout_seconds": 60,
+            "attempt": 1,
+            "permission_class": 1,
+        }
+        return {
+            "schema_version": 1,
+            "authorization_shadow_coverage": (
+                "task_attempt_admission_dispatch_publication_shadow"
+            ),
+            "authorization_action_receipt_coverage": (
+                "task_attempt_candidate_artifact_pre_effect_action_receipt"
+            ),
+            "binding": binding,
+            "binding_digest": canonical_digest(binding),
+        }
+
+    def _bound_task_shadow_payload(
+        self,
+        scope: str,
+        binding_payload: dict[str, object],
+        *,
+        billing_assessment_digest: str | None = None,
+    ) -> dict[str, object]:
+        self.assertIn(scope, (ADMISSION_SCOPE, DISPATCH_SCOPE))
+        payload = self._shadow_payload(scope)
+        binding = binding_payload["binding"]
+        binding_digest = binding_payload["binding_digest"]
+        request = payload["request"]
+        self.assertIsInstance(binding, dict)
+        self.assertIsInstance(binding_digest, str)
+        self.assertIsInstance(request, dict)
+        assert isinstance(binding, dict)
+        assert isinstance(binding_digest, str)
+        assert isinstance(request, dict)
+        action = request["action"]
+        subject = request["subject"]
+        resource = request["resource"]
+        self.assertIsInstance(action, dict)
+        self.assertIsInstance(subject, dict)
+        self.assertIsInstance(resource, dict)
+        assert isinstance(action, dict)
+        assert isinstance(subject, dict)
+        assert isinstance(resource, dict)
+
+        payload["task_attempt_binding_digest"] = binding_digest
+        payload["intent_digest"] = binding["authorization_intent_digest"]
+        subject["profile_id"] = binding["profile_ref"]
+        subject["runner_id"] = binding["runner_id"]
+        resource["repository_id"] = binding["repository_ref"]
+        resource["version"] = binding["task_definition_digest"]
+        if scope == ADMISSION_SCOPE:
+            resource["content_digest"] = binding["context_digest"]
+            parameters = {
+                "context_digest": binding["context_digest"],
+                "prompt_digest": binding["prompt_digest"],
+                "task_attempt_binding_digest": binding_digest,
+            }
+        else:
+            resource["content_digest"] = binding["prompt_digest"]
+            parameters = {
+                "attempt": binding["attempt"],
+                "billing_assessment_digest": (
+                    canonical_digest({"billing": "bounded"})
+                    if billing_assessment_digest is None
+                    else billing_assessment_digest
+                ),
+                "context_digest": binding["context_digest"],
+                "prompt_digest": binding["prompt_digest"],
+                "runner_overrides_digest": binding[
+                    "runner_overrides_digest"
+                ],
+                "task_attempt_binding_digest": binding_digest,
+                "timeout_seconds": binding["timeout_seconds"],
+            }
+        action["parameters_digest"] = canonical_digest(
+            {
+                "action_scope": scope,
+                "intent_digest": payload["intent_digest"],
+                "intent_source": payload["intent_source"],
+                "legacy_permission_class": 1,
+                "output_schema_digest": binding["output_schema_digest"],
+                "parameters": parameters,
+                "profile_ref": binding["profile_ref"],
+                "runner_id": binding["runner_id"],
+                "task_definition_digest": binding[
+                    "task_definition_digest"
+                ],
+                "task_id": "inspect-task",
+                "task_version": "1.0.0",
+            }
+        )
+        evidence = request["evidence"]
+        self.assertIsInstance(evidence, list)
+        assert isinstance(evidence, list)
+        for item in evidence:
+            self.assertIsInstance(item, dict)
+            assert isinstance(item, dict)
+            attribute = item.get("attribute")
+            if isinstance(attribute, str) and attribute in request:
+                item["value_digest"] = canonical_digest(request[attribute])
+        self._resign_payload(payload)
         return payload
 
     def _comparison_shadow_payload(
@@ -688,10 +847,18 @@ class AuthorizationInspectionTests(unittest.TestCase):
             ),
             occurred_at=110.0,
         )
+        billing_payload = self._comparison_billing_payload()
         store.append_event(
             "run-comparison",
             "billing_assessment",
-            self._comparison_billing_payload(),
+            billing_payload,
+            event_id=canonical_digest(
+                {
+                    "event_type": "billing_assessment",
+                    "payload": billing_payload,
+                    "run_id": "run-comparison",
+                }
+            ),
             occurred_at=110.5,
         )
         store.append_event(
@@ -711,13 +878,21 @@ class AuthorizationInspectionTests(unittest.TestCase):
             occurred_at=112.0,
         )
         if include_accounting:
+            selected_accounting_payload = (
+                self._comparison_execution_accounting_payload()
+                if accounting_payload is None
+                else accounting_payload
+            )
             store.append_event(
                 "run-comparison",
                 "execution_accounting",
-                (
-                    self._comparison_execution_accounting_payload()
-                    if accounting_payload is None
-                    else accounting_payload
+                selected_accounting_payload,
+                event_id=canonical_digest(
+                    {
+                        "event_type": "execution_accounting",
+                        "payload": selected_accounting_payload,
+                        "run_id": "run-comparison",
+                    }
                 ),
                 occurred_at=112.5,
             )
@@ -1423,10 +1598,18 @@ class AuthorizationInspectionTests(unittest.TestCase):
                 ),
                 occurred_at=110.0,
             )
+            billing_payload = self._comparison_billing_payload()
             store.append_event(
                 "run-comparison",
                 "billing_assessment",
-                self._comparison_billing_payload(),
+                billing_payload,
+                event_id=canonical_digest(
+                    {
+                        "event_type": "billing_assessment",
+                        "payload": billing_payload,
+                        "run_id": "run-comparison",
+                    }
+                ),
                 occurred_at=110.5,
             )
             store.append_event(
@@ -1609,6 +1792,105 @@ class AuthorizationInspectionTests(unittest.TestCase):
             projection = json.dumps(report.to_mapping(), sort_keys=True)
             for marker in _PRIVATE_MARKERS:
                 self.assertNotIn(marker, projection)
+
+    def test_comparison_controller_event_identifiers_are_checked(self) -> None:
+        cases = (
+            (
+                "billing_assessment",
+                "comparison_billing_event_identifier_mismatch",
+            ),
+            (
+                "execution_accounting",
+                "comparison_execution_accounting_event_identifier_mismatch",
+            ),
+        )
+        for event_type, expected_issue in cases:
+            with (
+                self.subTest(event_type=event_type),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                database = Path(temporary) / "state.sqlite3"
+                binding_payload = self._comparison_binding_payload(
+                    schema_version=2
+                )
+                binding = binding_payload["binding"]
+                self.assertIsInstance(binding, dict)
+                assert isinstance(binding, dict)
+                store = self._create_run(
+                    database,
+                    run_id="run-comparison",
+                    permission_class=PermissionClass.READ_ONLY,
+                    context_digest=str(binding["context_digest"]),
+                )
+                self._append_v2_comparison_prefix(store, binding_payload)
+                publication, pre_effect, action_receipt = (
+                    self._comparison_publication_chain(binding_payload)
+                )
+                store.append_event(
+                    "run-comparison",
+                    "authorization_shadow_decision",
+                    publication,
+                    occurred_at=113.0,
+                )
+                store.append_event(
+                    "run-comparison",
+                    "comparison_review_artifact_intent",
+                    pre_effect,
+                    occurred_at=114.0,
+                )
+                store.append_event(
+                    "run-comparison",
+                    COMPARISON_REVIEW_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
+                    action_receipt,
+                    occurred_at=115.0,
+                )
+                store.append_event(
+                    "run-comparison",
+                    "status",
+                    {"phase": "complete", "artifact_observed": True},
+                    status=RunStatus.SUCCEEDED,
+                    occurred_at=116.0,
+                )
+                store.close()
+                baseline = inspect_authorization_shadows(
+                    database,
+                    now=120.0,
+                )
+                self.assertTrue(baseline.clean, baseline.to_mapping())
+
+                with closing(sqlite3.connect(database)) as connection:
+                    connection.execute("DROP TRIGGER run_events_no_update")
+                    cursor = connection.execute(
+                        """
+                        UPDATE run_events
+                        SET event_id = ?
+                        WHERE run_id = ? AND event_type = ?
+                        """,
+                        (
+                            canonical_digest(
+                                {
+                                    "event_type": event_type,
+                                    "tampered": True,
+                                }
+                            ),
+                            "run-comparison",
+                            event_type,
+                        ),
+                    )
+                    self.assertEqual(cursor.rowcount, 1)
+                    connection.execute(
+                        """
+                        CREATE TRIGGER run_events_no_update
+                        BEFORE UPDATE ON run_events BEGIN
+                            SELECT RAISE(ABORT, 'run events are append-only');
+                        END
+                        """
+                    )
+                    connection.commit()
+
+                report = inspect_authorization_shadows(database, now=120.0)
+                self.assertFalse(report.clean)
+                self.assertIn(expected_issue, report.runs[0].integrity_issues)
 
     def test_comparison_v2_receipt_failures_are_fixed_and_value_free(
         self,
@@ -2886,7 +3168,586 @@ class AuthorizationInspectionTests(unittest.TestCase):
                     "admission_boundary_order_invalid",
                     "dispatch_boundary_order_invalid",
                     "publication_boundary_order_invalid",
+                    "runner_event_order_invalid",
                 ),
+            )
+
+    def test_task_binding_preflight_block_does_not_require_accounting(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "state.sqlite3"
+            store = self._create_run(database)
+            binding_payload = self._task_binding_payload()
+            store.append_event(
+                "run-inspect",
+                "task_attempt_authorization_binding",
+                binding_payload,
+                occurred_at=105.0,
+                event_id=binding_payload["binding_digest"],
+            )
+            admission_payload = self._bound_task_shadow_payload(
+                ADMISSION_SCOPE,
+                binding_payload,
+            )
+            store.append_event(
+                "run-inspect",
+                "authorization_shadow_decision",
+                admission_payload,
+                occurred_at=106.0,
+                event_id=canonical_digest(
+                    {
+                        "event_type": "authorization_shadow_decision",
+                        "payload": admission_payload,
+                        "run_id": "run-inspect",
+                    }
+                ),
+            )
+            store.append_event(
+                "run-inspect",
+                "status",
+                {"phase": "billing_preflight"},
+                status=RunStatus.BLOCKED,
+                occurred_at=107.0,
+            )
+            store.close()
+
+            report = inspect_authorization_shadows(database, now=120.0)
+
+            self.assertTrue(report.clean)
+            self.assertEqual(
+                report.runs[0].authorization_action_receipt_coverage,
+                "task_attempt_candidate_artifact_pre_effect_action_receipt",
+            )
+            self.assertEqual(report.runs[0].integrity_issues, ())
+
+    def test_bound_pre_billing_history_can_remain_in_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "state.sqlite3"
+            store = self._create_run(database)
+            binding_payload = self._task_binding_payload()
+            store.append_event(
+                "run-inspect",
+                "task_attempt_authorization_binding",
+                binding_payload,
+                occurred_at=105.0,
+                event_id=binding_payload["binding_digest"],
+            )
+            admission_payload = self._bound_task_shadow_payload(
+                ADMISSION_SCOPE,
+                binding_payload,
+            )
+            store.append_event(
+                "run-inspect",
+                "authorization_shadow_decision",
+                admission_payload,
+                occurred_at=110.0,
+                event_id=canonical_digest(
+                    {
+                        "event_type": "authorization_shadow_decision",
+                        "payload": admission_payload,
+                        "run_id": "run-inspect",
+                    }
+                ),
+            )
+            store.close()
+
+            report = inspect_authorization_shadows(database, now=120.0)
+
+            self.assertTrue(report.clean)
+            self.assertEqual(report.runs[0].integrity_issues, ())
+
+    def test_bound_task_billing_without_terminal_is_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "state.sqlite3"
+            store = self._create_run(database)
+            binding_payload = self._task_binding_payload()
+            store.append_event(
+                "run-inspect",
+                "task_attempt_authorization_binding",
+                binding_payload,
+                occurred_at=105.0,
+                event_id=binding_payload["binding_digest"],
+            )
+            admission_payload = self._bound_task_shadow_payload(
+                ADMISSION_SCOPE,
+                binding_payload,
+            )
+            store.append_event(
+                "run-inspect",
+                "authorization_shadow_decision",
+                admission_payload,
+                occurred_at=110.0,
+                event_id=canonical_digest(
+                    {
+                        "event_type": "authorization_shadow_decision",
+                        "payload": admission_payload,
+                        "run_id": "run-inspect",
+                    }
+                ),
+            )
+            billing_payload = self._task_billing_payload()
+            store.append_event(
+                "run-inspect",
+                "billing_assessment",
+                billing_payload,
+                occurred_at=110.5,
+                event_id=canonical_digest(
+                    {
+                        "event_type": "billing_assessment",
+                        "payload": billing_payload,
+                        "run_id": "run-inspect",
+                    }
+                ),
+            )
+            store.close()
+
+            report = inspect_authorization_shadows(database, now=120.0)
+
+            self.assertFalse(report.clean)
+            self.assertEqual(
+                report.runs[0].integrity_issues,
+                ("bound_run_history_incomplete",),
+            )
+
+    def test_bound_task_accounting_without_terminal_is_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "state.sqlite3"
+            store = self._create_run(database)
+            binding_payload = self._task_binding_payload()
+            store.append_event(
+                "run-inspect",
+                "task_attempt_authorization_binding",
+                binding_payload,
+                occurred_at=105.0,
+                event_id=binding_payload["binding_digest"],
+            )
+            admission_payload = self._bound_task_shadow_payload(
+                ADMISSION_SCOPE,
+                binding_payload,
+            )
+            store.append_event(
+                "run-inspect",
+                "authorization_shadow_decision",
+                admission_payload,
+                occurred_at=110.0,
+                event_id=canonical_digest(
+                    {
+                        "event_type": "authorization_shadow_decision",
+                        "payload": admission_payload,
+                        "run_id": "run-inspect",
+                    }
+                ),
+            )
+            billing_payload = self._task_billing_payload()
+            store.append_event(
+                "run-inspect",
+                "billing_assessment",
+                billing_payload,
+                occurred_at=110.5,
+                event_id=canonical_digest(
+                    {
+                        "event_type": "billing_assessment",
+                        "payload": billing_payload,
+                        "run_id": "run-inspect",
+                    }
+                ),
+            )
+            store.append_event(
+                "run-inspect",
+                "status",
+                {"phase": "runner_execution"},
+                status=RunStatus.RUNNING,
+                occurred_at=111.0,
+            )
+            dispatch_payload = self._bound_task_shadow_payload(
+                DISPATCH_SCOPE,
+                binding_payload,
+                billing_assessment_digest=str(
+                    billing_payload["assessment_digest"]
+                ),
+            )
+            store.append_event(
+                "run-inspect",
+                "authorization_shadow_decision",
+                dispatch_payload,
+                occurred_at=112.0,
+                event_id=canonical_digest(
+                    {
+                        "event_type": "authorization_shadow_decision",
+                        "payload": dispatch_payload,
+                        "run_id": "run-inspect",
+                    }
+                ),
+            )
+            accounting_payload = self._task_execution_accounting_payload()
+            store.append_event(
+                "run-inspect",
+                "execution_accounting",
+                accounting_payload,
+                occurred_at=112.5,
+                event_id=canonical_digest(
+                    {
+                        "event_type": "execution_accounting",
+                        "payload": accounting_payload,
+                        "run_id": "run-inspect",
+                    }
+                ),
+            )
+            store.close()
+
+            report = inspect_authorization_shadows(database, now=120.0)
+
+            self.assertFalse(report.clean)
+            self.assertEqual(
+                report.runs[0].integrity_issues,
+                ("bound_run_history_incomplete",),
+            )
+
+    def test_bound_comparison_billing_without_terminal_is_incomplete(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "state.sqlite3"
+            binding_payload = self._comparison_binding_payload()
+            binding = binding_payload["binding"]
+            self.assertIsInstance(binding, dict)
+            assert isinstance(binding, dict)
+            store = self._create_run(
+                database,
+                run_id="run-comparison",
+                permission_class=PermissionClass.READ_ONLY,
+                context_digest=str(binding["context_digest"]),
+            )
+            store.append_event(
+                "run-comparison",
+                "comparison_trial_binding",
+                binding_payload,
+                occurred_at=105.0,
+            )
+            admission_payload = self._comparison_shadow_payload(
+                ADMISSION_SCOPE,
+                binding_payload,
+            )
+            store.append_event(
+                "run-comparison",
+                "authorization_shadow_decision",
+                admission_payload,
+                occurred_at=110.0,
+            )
+            billing_payload = self._comparison_billing_payload()
+            store.append_event(
+                "run-comparison",
+                "billing_assessment",
+                billing_payload,
+                occurred_at=110.5,
+                event_id=canonical_digest(
+                    {
+                        "event_type": "billing_assessment",
+                        "payload": billing_payload,
+                        "run_id": "run-comparison",
+                    }
+                ),
+            )
+            store.close()
+
+            report = inspect_authorization_shadows(database, now=120.0)
+
+            self.assertFalse(report.clean)
+            self.assertEqual(
+                report.runs[0].integrity_issues,
+                ("bound_run_history_incomplete",),
+            )
+
+    def test_bound_comparison_billing_after_terminal_is_incomplete(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "state.sqlite3"
+            binding_payload = self._comparison_binding_payload()
+            binding = binding_payload["binding"]
+            self.assertIsInstance(binding, dict)
+            assert isinstance(binding, dict)
+            store = self._create_run(
+                database,
+                run_id="run-comparison",
+                permission_class=PermissionClass.READ_ONLY,
+                context_digest=str(binding["context_digest"]),
+            )
+            store.append_event(
+                "run-comparison",
+                "comparison_trial_binding",
+                binding_payload,
+                occurred_at=105.0,
+            )
+            admission_payload = self._comparison_shadow_payload(
+                ADMISSION_SCOPE,
+                binding_payload,
+            )
+            store.append_event(
+                "run-comparison",
+                "authorization_shadow_decision",
+                admission_payload,
+                occurred_at=110.0,
+            )
+            store.append_event(
+                "run-comparison",
+                "status",
+                {"phase": "failed"},
+                status=RunStatus.FAILED,
+                occurred_at=110.5,
+            )
+            billing_payload = self._comparison_billing_payload()
+            store.append_event(
+                "run-comparison",
+                "billing_assessment",
+                billing_payload,
+                occurred_at=111.0,
+                event_id=canonical_digest(
+                    {
+                        "event_type": "billing_assessment",
+                        "payload": billing_payload,
+                        "run_id": "run-comparison",
+                    }
+                ),
+            )
+            store.close()
+
+            report = inspect_authorization_shadows(database, now=120.0)
+
+            self.assertFalse(report.clean)
+            self.assertEqual(
+                report.runs[0].integrity_issues,
+                ("bound_run_history_incomplete",),
+            )
+
+    def test_bound_comparison_accounting_after_terminal_is_incomplete(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "state.sqlite3"
+            binding_payload = self._comparison_binding_payload(
+                schema_version=2,
+            )
+            binding = binding_payload["binding"]
+            self.assertIsInstance(binding, dict)
+            assert isinstance(binding, dict)
+            store = self._create_run(
+                database,
+                run_id="run-comparison",
+                permission_class=PermissionClass.READ_ONLY,
+                context_digest=str(binding["context_digest"]),
+            )
+            store.append_event(
+                "run-comparison",
+                "comparison_trial_binding",
+                binding_payload,
+                occurred_at=105.0,
+            )
+            admission_payload = self._comparison_shadow_payload(
+                ADMISSION_SCOPE,
+                binding_payload,
+            )
+            store.append_event(
+                "run-comparison",
+                "authorization_shadow_decision",
+                admission_payload,
+                occurred_at=110.0,
+            )
+            billing_payload = self._comparison_billing_payload()
+            store.append_event(
+                "run-comparison",
+                "billing_assessment",
+                billing_payload,
+                occurred_at=110.5,
+                event_id=canonical_digest(
+                    {
+                        "event_type": "billing_assessment",
+                        "payload": billing_payload,
+                        "run_id": "run-comparison",
+                    }
+                ),
+            )
+            store.append_event(
+                "run-comparison",
+                "status",
+                {"phase": "runner_execution"},
+                status=RunStatus.RUNNING,
+                occurred_at=111.0,
+            )
+            dispatch_payload = self._comparison_shadow_payload(
+                DISPATCH_SCOPE,
+                binding_payload,
+            )
+            store.append_event(
+                "run-comparison",
+                "authorization_shadow_decision",
+                dispatch_payload,
+                occurred_at=112.0,
+            )
+            store.append_event(
+                "run-comparison",
+                "status",
+                {"phase": "failed"},
+                status=RunStatus.FAILED,
+                occurred_at=112.5,
+            )
+            accounting_payload = self._comparison_execution_accounting_payload()
+            store.append_event(
+                "run-comparison",
+                "execution_accounting",
+                accounting_payload,
+                occurred_at=113.0,
+                event_id=canonical_digest(
+                    {
+                        "event_type": "execution_accounting",
+                        "payload": accounting_payload,
+                        "run_id": "run-comparison",
+                    }
+                ),
+            )
+            store.close()
+
+            report = inspect_authorization_shadows(database, now=120.0)
+
+            self.assertFalse(report.clean)
+            self.assertEqual(
+                report.runs[0].integrity_issues,
+                ("bound_run_history_incomplete",),
+            )
+
+    def test_task_billing_policy_projection_matches_runtime_gates(self) -> None:
+        mock = {
+            "runner_id": "mock",
+            "route": "mock",
+            "confidence": "high",
+        }
+        self.assertTrue(_task_billing_policy_consistent(mock))
+        self.assertFalse(
+            _task_billing_policy_consistent(
+                {**mock, "confidence": "low"}
+            )
+        )
+
+        codex = {
+            "runner_id": "codex",
+            "route": "subscription_included",
+            "confidence": "high",
+            "capacity_state": "available",
+            "account_identity_verified": True,
+            "attestation_present": True,
+            "paid_continuation_protection": (
+                "verified_zero_balance_and_auto_top_up_disabled"
+            ),
+            "paid_credit_balance": "zero",
+        }
+        self.assertTrue(_task_billing_policy_consistent(codex))
+        for field, unsafe_value in (
+            ("route", "local_non_ai"),
+            ("capacity_state", "unknown"),
+            ("account_identity_verified", False),
+            ("attestation_present", False),
+            ("paid_continuation_protection", "enabled"),
+            ("paid_credit_balance", "positive"),
+        ):
+            with self.subTest(field=field):
+                self.assertFalse(
+                    _task_billing_policy_consistent(
+                        {**codex, field: unsafe_value}
+                    )
+                )
+
+        claude = {
+            **codex,
+            "runner_id": "claude",
+            "paid_continuation_protection": "provider_enforced_disabled",
+            "paid_credit_balance": "unknown",
+        }
+        self.assertTrue(_task_billing_policy_consistent(claude))
+
+    def test_task_receipt_without_binding_is_fixed_and_redacted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "state.sqlite3"
+            store = self._create_run(database)
+            store.append_event(
+                "run-inspect",
+                "authorization_shadow_decision",
+                self._shadow_payload(ADMISSION_SCOPE),
+                occurred_at=105.0,
+            )
+            store.append_event(
+                "run-inspect",
+                "task_attempt_candidate_artifact_action_receipt",
+                {"private-receipt-marker": "/private/worktree-marker"},
+                occurred_at=106.0,
+            )
+            store.close()
+
+            report = inspect_authorization_shadows(database, now=120.0)
+            projection = json.dumps(report.to_mapping(), sort_keys=True)
+
+            self.assertFalse(report.clean)
+            self.assertIn(
+                "task_binding_missing",
+                report.runs[0].integrity_issues,
+            )
+            self.assertIn(
+                "task_publication_receipt_binding_invalid",
+                report.runs[0].integrity_issues,
+            )
+            for marker in _PRIVATE_MARKERS:
+                self.assertNotIn(marker, projection)
+
+    def test_task_metadata_alone_is_not_publication_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "state.sqlite3"
+            store = self._create_run(database)
+            binding_payload = self._task_binding_payload()
+            store.append_event(
+                "run-inspect",
+                "task_attempt_authorization_binding",
+                binding_payload,
+                occurred_at=105.0,
+                event_id=binding_payload["binding_digest"],
+            )
+            store.append_event(
+                "run-inspect",
+                "authorization_shadow_decision",
+                self._shadow_payload(ADMISSION_SCOPE),
+                occurred_at=106.0,
+            )
+            store.append_artifact(
+                ArtifactRecord(
+                    artifact_id="private-artifact-id-marker",
+                    run_id="run-inspect",
+                    kind="local_draft",
+                    path="/private/worktree-marker/candidate.json",
+                    sha256="b" * 64,
+                    media_type="application/json",
+                    size_bytes=10,
+                    created_at=107.0,
+                )
+            )
+            store.append_event(
+                "run-inspect",
+                "status",
+                {"artifact_observed": False},
+                status=RunStatus.FAILED,
+                occurred_at=108.0,
+            )
+            store.close()
+
+            report = inspect_authorization_shadows(database, now=120.0)
+
+            self.assertFalse(report.clean)
+            self.assertEqual(report.runs[0].missing_scopes, ())
+            self.assertNotIn(
+                PUBLICATION_SCOPE,
+                report.runs[0].expected_scopes,
+            )
+            self.assertIn(
+                "task_artifact_metadata_unlinked",
+                report.runs[0].integrity_issues,
             )
 
     def test_malformed_event_and_database_return_only_fixed_failures(self) -> None:

@@ -1400,6 +1400,57 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
             persisted = "\n".join(event.payload_json for event in events)
             self.assertNotIn("private action receipt diagnostic", persisted)
 
+    async def test_action_receipt_builder_failure_rolls_back_private_artifact(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, prepared, profiles, plan = self._artifact_recovery_setup(
+                temporary,
+                "receipt-builder-failure",
+            )
+            with patch(
+                "ordomata.comparison."
+                "_comparison_review_artifact_action_receipt",
+                side_effect=RuntimeError(
+                    "private comparison receipt builder diagnostic"
+                ),
+            ):
+                report = await run_controlled_comparison(
+                    root,
+                    prepared=prepared,
+                    plan=plan,
+                    profiles=profiles,
+                    runner_factory=lambda _profile: RecordingMockRunner(
+                        requests=[],
+                        output=load_mock_chief_of_staff_output(root, prepared),
+                    ),
+                )
+
+            self.assertEqual(len(report.rows), 1)
+            row = report.rows[0]
+            self.assertIs(row.status, RunStatus.FAILED)
+            self.assertIsNone(row.review_artifact_path)
+            artifact_path = (
+                root
+                / ".ordomata/comparisons/receipt-builder-failure/trials/001"
+                / "review-output.json"
+            )
+            self.assertFalse(artifact_path.exists())
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                events = state.list_events(row.run_id)
+            self.assertFalse(
+                any(
+                    event.event_type
+                    == "comparison_review_artifact_action_receipt"
+                    for event in events
+                )
+            )
+            self.assertFalse(events[-1].payload["artifact_observed"])
+            self.assertNotIn(
+                "private comparison receipt builder diagnostic",
+                "\n".join(event.payload_json for event in events),
+            )
+
     async def test_committed_action_receipt_is_reconciled_after_append_error(
         self,
     ) -> None:
@@ -1727,12 +1778,13 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                 temporary,
                 "internal-staging-cleanup",
             )
-            original_unlink = Path.unlink
+            original_unlink = os.unlink
 
             def reject_staging_unlink(path, *args, **kwargs):
+                name = Path(os.fspath(path)).name
                 if (
-                    path.name.startswith(".review-output.json.")
-                    and path.name.endswith(".tmp")
+                    name.startswith(".review-output.json.")
+                    and name.endswith(".tmp")
                 ):
                     raise OSError("private staging cleanup diagnostic")
                 return original_unlink(path, *args, **kwargs)
@@ -1742,7 +1794,10 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                     "ordomata.orchestrator.os.fsync",
                     side_effect=OSError("private staging fsync diagnostic"),
                 ),
-                patch.object(Path, "unlink", new=reject_staging_unlink),
+                patch(
+                    "ordomata.artifact_filesystem.os.unlink",
+                    new=reject_staging_unlink,
+                ),
             ):
                 report = await run_controlled_comparison(
                     root,
@@ -1955,14 +2010,14 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                 temporary,
                 "unremovable-publication",
             )
-            original_unlink = Path.unlink
+            original_unlink = os.unlink
 
             def expose_then_raise(staged_path, artifact_path):
                 _promote_staged_artifact(staged_path, artifact_path)
                 raise OSError("private post-promotion diagnostic")
 
             def reject_final_unlink(path, *args, **kwargs):
-                if path.name == "review-output.json":
+                if Path(os.fspath(path)).name == "review-output.json":
                     raise OSError("private unlink diagnostic")
                 return original_unlink(path, *args, **kwargs)
 
@@ -1971,7 +2026,10 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                     "ordomata.comparison._promote_staged_artifact",
                     new=expose_then_raise,
                 ),
-                patch.object(Path, "unlink", new=reject_final_unlink),
+                patch(
+                    "ordomata.artifact_filesystem.os.unlink",
+                    new=reject_final_unlink,
+                ),
             ):
                 report = await run_controlled_comparison(
                     root,
@@ -2017,13 +2075,19 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                 temporary,
                 "unremovable-staging",
             )
-            original_unlink = Path.unlink
+            original_unlink = os.unlink
 
-            def retain_staging_name(staged_path, artifact_path):
-                os.link(staged_path, artifact_path, follow_symlinks=False)
+            def retain_staging_name(stage, artifact_path):
+                os.link(
+                    stage.path,
+                    artifact_path,
+                    follow_symlinks=False,
+                )
 
             def reject_staging_unlink(path, *args, **kwargs):
-                if path.name.startswith(".review-output.json."):
+                if Path(os.fspath(path)).name.startswith(
+                    ".review-output.json."
+                ):
                     raise OSError("private staging unlink diagnostic")
                 return original_unlink(path, *args, **kwargs)
 
@@ -2032,7 +2096,10 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                     "ordomata.comparison._promote_staged_artifact",
                     new=retain_staging_name,
                 ),
-                patch.object(Path, "unlink", new=reject_staging_unlink),
+                patch(
+                    "ordomata.artifact_filesystem.os.unlink",
+                    new=reject_staging_unlink,
+                ),
             ):
                 report = await run_controlled_comparison(
                     root,
@@ -2148,7 +2215,7 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "unremovable-receipt-gap",
             )
             original_append_event = SQLiteStateStore.append_event
-            original_unlink = Path.unlink
+            original_unlink = os.unlink
 
             def reject_action_receipt(
                 store, run_id, event_type, payload=None, **kwargs
@@ -2164,7 +2231,7 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                 )
 
             def reject_final_unlink(path, *args, **kwargs):
-                if path.name == "review-output.json":
+                if Path(os.fspath(path)).name == "review-output.json":
                     raise OSError("private unlink diagnostic")
                 return original_unlink(path, *args, **kwargs)
 
@@ -2174,7 +2241,10 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                     "append_event",
                     new=reject_action_receipt,
                 ),
-                patch.object(Path, "unlink", new=reject_final_unlink),
+                patch(
+                    "ordomata.artifact_filesystem.os.unlink",
+                    new=reject_final_unlink,
+                ),
             ):
                 report = await run_controlled_comparison(
                     root,

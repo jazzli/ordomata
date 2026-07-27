@@ -1,8 +1,11 @@
 import asyncio
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import shutil
+import sqlite3
+import stat
 import tempfile
 import time
 import unittest
@@ -10,7 +13,12 @@ from unittest.mock import patch
 
 from ordomata.authorization import canonical_digest
 from ordomata.authorization_inspection import inspect_authorization_shadows
-from ordomata.errors import BillingRouteBlocked, ValidationError
+from ordomata.artifact_filesystem import remove_owned_published_artifact
+from ordomata.errors import (
+    BillingRouteBlocked,
+    ConfigurationError,
+    ValidationError,
+)
 from ordomata.models import (
     AgentEvent,
     AssessmentConfidence,
@@ -28,12 +36,13 @@ from ordomata.models import (
     UsageObservation,
 )
 from ordomata.orchestrator import (
+    _promote_staged_artifact,
     load_mock_chief_of_staff_output,
     prepare_chief_of_staff,
     run_chief_of_staff,
 )
 from ordomata.runners.mock import MockRunner
-from ordomata.state import SQLiteStateStore
+from ordomata.state import ArtifactRecord, SQLiteStateStore
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
@@ -128,7 +137,7 @@ class OrchestratorTests(unittest.TestCase):
                 output=output,
                 usage_observation=UsageObservation.UNAVAILABLE,
                 runner_version="fixture",
-                execution_mode="fixture_first_party_cli",
+                execution_mode="codex_exec_jsonl_read_only_ephemeral",
                 harness_process_started=True,
                 live_model_execution_occurred=True,
                 subscription_capacity_consumed=True,
@@ -152,8 +161,21 @@ class OrchestratorTests(unittest.TestCase):
     def test_mock_run_validates_and_records_local_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = self._project(temporary)
+            private_instruction = "private-operator-instruction-7f3b"
+            private_output = "private-runner-output-8c4d"
+            prepared = prepare_chief_of_staff(
+                root,
+                operator_instructions=(private_instruction,),
+            )
+            runner_output = load_mock_chief_of_staff_output(root, prepared)
+            runner_output["executive_summary"] += f" {private_output}"
             report = asyncio.run(
-                run_chief_of_staff(root, run_id="mock-success")
+                run_chief_of_staff(
+                    root,
+                    runner=MockRunner(output=runner_output),
+                    operator_instructions=(private_instruction,),
+                    run_id="mock-success",
+                )
             )
             self.assertEqual(report.status, RunStatus.SUCCEEDED)
             self.assertTrue(report.accepted)
@@ -161,7 +183,10 @@ class OrchestratorTests(unittest.TestCase):
             self.assertEqual(report.billing_route, "mock")
             self.assertEqual(report.billing_confidence, "high")
             self.assertTrue(report.artifact_credential_scan_passed)
-            self.assertEqual(report.runner_version, "deterministic")
+            self.assertEqual(
+                report.runner_version,
+                canonical_digest({"runner_version": "deterministic"}),
+            )
             self.assertEqual(report.execution_mode, "in_memory_mock")
             self.assertFalse(report.harness_process_started)
             self.assertFalse(report.live_model_execution_occurred)
@@ -172,6 +197,7 @@ class OrchestratorTests(unittest.TestCase):
             artifact = Path(report.artifact_path or "")
             self.assertTrue(artifact.is_file())
             output = json.loads(artifact.read_text(encoding="utf-8"))
+            self.assertIn(private_output, output["executive_summary"])
             self.assertEqual(
                 output["metadata"]["snapshot_hash"], report.context_snapshot
             )
@@ -183,6 +209,50 @@ class OrchestratorTests(unittest.TestCase):
                 )
                 self.assertEqual(len(state.list_artifacts("mock-success")), 1)
                 events = state.list_events("mock-success")
+                self.assertEqual(
+                    [(event.event_type, event.status) for event in events],
+                    [
+                        ("status", RunStatus.CREATED),
+                        ("task_attempt_authorization_binding", None),
+                        ("authorization_shadow_decision", None),
+                        ("billing_assessment", None),
+                        ("status", RunStatus.RUNNING),
+                        ("authorization_shadow_decision", None),
+                        ("execution_accounting", None),
+                        ("authorization_shadow_decision", None),
+                        ("task_attempt_candidate_artifact_intent", None),
+                        (
+                            "task_attempt_candidate_artifact_action_receipt",
+                            None,
+                        ),
+                        ("status", RunStatus.SUCCEEDED),
+                    ],
+                )
+                binding_event = next(
+                    event
+                    for event in events
+                    if event.event_type
+                    == "task_attempt_authorization_binding"
+                )
+                binding = binding_event.payload
+                self.assertEqual(binding["schema_version"], 1)
+                self.assertEqual(
+                    binding["authorization_shadow_coverage"],
+                    "task_attempt_admission_dispatch_publication_shadow",
+                )
+                self.assertEqual(
+                    binding["authorization_action_receipt_coverage"],
+                    "task_attempt_candidate_artifact_pre_effect_action_receipt",
+                )
+                self.assertEqual(
+                    binding["binding_digest"],
+                    canonical_digest(binding["binding"]),
+                )
+                self.assertEqual(binding_event.event_id, binding["binding_digest"])
+                self.assertEqual(
+                    binding["binding"]["repository_ref"],
+                    canonical_digest({"project_root": str(root.resolve())}),
+                )
                 shadow_events = [
                     event
                     for event in events
@@ -199,6 +269,12 @@ class OrchestratorTests(unittest.TestCase):
                         "runner_model_dispatch_only",
                         "local_candidate_publication_only",
                     ],
+                )
+                publication_shadow = shadow_events[2].payload
+                self.assertEqual(publication_shadow["schema_version"], 5)
+                self.assertEqual(
+                    publication_shadow["task_attempt_binding_digest"],
+                    binding["binding_digest"],
                 )
                 self.assertLess(
                     shadow_events[0].sequence,
@@ -283,12 +359,118 @@ class OrchestratorTests(unittest.TestCase):
                     if event.event_type == "execution_accounting"
                 ]
                 self.assertEqual(len(accounting_events), 1)
+                accounting = accounting_events[0].payload
+                self.assertEqual(accounting["schema_version"], 2)
                 self.assertEqual(
-                    accounting_events[0].payload["incremental_api_charge"],
+                    accounting["incremental_api_charge"],
                     "none",
                 )
                 self.assertFalse(
-                    accounting_events[0].payload["subscription_capacity_consumed"]
+                    accounting["subscription_capacity_consumed"]
+                )
+                intent_event = next(
+                    event
+                    for event in events
+                    if event.event_type
+                    == "task_attempt_candidate_artifact_intent"
+                )
+                intent = intent_event.payload
+                self.assertEqual(intent["schema_version"], 2)
+                self.assertEqual(intent["receipt_kind"], "pre_effect")
+                self.assertEqual(
+                    intent["receipt_digest"],
+                    canonical_digest(
+                        {
+                            key: value
+                            for key, value in intent.items()
+                            if key != "receipt_digest"
+                        }
+                    ),
+                )
+                self.assertEqual(intent_event.event_id, intent["receipt_digest"])
+                self.assertEqual(
+                    intent["task_attempt_binding_digest"],
+                    binding["binding_digest"],
+                )
+                self.assertEqual(
+                    intent["publication_request_digest"],
+                    publication_shadow["request_digest"],
+                )
+                self.assertEqual(
+                    intent["publication_decision_digest"],
+                    publication_shadow["decision_digest"],
+                )
+                self.assertEqual(
+                    intent["billing_disposition_digest"],
+                    accounting["billing_disposition_digest"],
+                )
+                self.assertEqual(
+                    intent["artifact_digest"],
+                    "sha256:" + (report.artifact_sha256 or ""),
+                )
+                self.assertEqual(
+                    intent["destination_digest"],
+                    canonical_digest({"artifact_path": str(artifact)}),
+                )
+                action_event = next(
+                    event
+                    for event in events
+                    if event.event_type
+                    == "task_attempt_candidate_artifact_action_receipt"
+                )
+                action = action_event.payload
+                self.assertEqual(action["schema_version"], 2)
+                self.assertEqual(action["receipt_kind"], "action")
+                self.assertEqual(action["outcome"], "succeeded")
+                self.assertIsNone(action["failure_code"])
+                self.assertEqual(action_event.event_id, action["receipt_id"])
+                self.assertEqual(
+                    action["receipt_digest"],
+                    canonical_digest(
+                        {
+                            key: value
+                            for key, value in action.items()
+                            if key != "receipt_digest"
+                        }
+                    ),
+                )
+                self.assertEqual(
+                    action["task_attempt_binding_digest"],
+                    binding["binding_digest"],
+                )
+                self.assertEqual(
+                    action["pre_effect_receipt_digest"],
+                    intent["receipt_digest"],
+                )
+                self.assertEqual(
+                    action["publication_request_digest"],
+                    publication_shadow["request_digest"],
+                )
+                self.assertEqual(
+                    action["publication_decision_digest"],
+                    publication_shadow["decision_digest"],
+                )
+                self.assertEqual(
+                    action["result_digest"], intent["artifact_digest"]
+                )
+                self.assertEqual(
+                    action["artifact_record_digest"],
+                    intent["artifact_record_digest"],
+                )
+                private_evidence_json = json.dumps(
+                    [binding, intent, action],
+                    sort_keys=True,
+                )
+                for raw_private_value in (
+                    str(root),
+                    str(artifact),
+                    private_instruction,
+                    private_output,
+                ):
+                    self.assertNotIn(raw_private_value, private_evidence_json)
+                self.assertNotIn(
+                    runner_output["executive_summary"],
+                    private_evidence_json,
                 )
 
     def test_pre_run_approval_is_a_shadow_defer_without_changing_execution(self) -> None:
@@ -736,6 +918,62 @@ class OrchestratorTests(unittest.TestCase):
             self.assertNotIn("do not persist this", serialized)
             self.assertNotIn("private_source_text", serialized)
 
+            database = root / ".ordomata" / "state.sqlite3"
+            baseline = inspect_authorization_shadows(
+                database,
+                run_id="event-redaction",
+            )
+            self.assertTrue(baseline.clean, baseline.to_mapping())
+            connection = sqlite3.connect(database)
+            try:
+                trigger_sql = connection.execute(
+                    """
+                    SELECT sql FROM sqlite_master
+                    WHERE type = 'trigger' AND name = 'run_events_no_update'
+                    """
+                ).fetchone()[0]
+                connection.execute("DROP TRIGGER run_events_no_update")
+                connection.execute(
+                    """
+                    UPDATE run_events
+                    SET payload_json = ?, occurred_at = ?
+                    WHERE run_id = ?
+                      AND event_type = 'runner_event_observed'
+                    """,
+                    (
+                        json.dumps(
+                            {
+                                "ordinal": 999,
+                                "private_source_text": "do not project this",
+                            }
+                        ),
+                        float("inf"),
+                        "event-redaction",
+                    ),
+                )
+                connection.execute(trigger_sql)
+                connection.commit()
+            finally:
+                connection.close()
+
+            inspection = inspect_authorization_shadows(
+                database,
+                run_id="event-redaction",
+            )
+            self.assertFalse(inspection.clean)
+            self.assertIn(
+                "runner_event_payload_invalid",
+                inspection.runs[0].integrity_issues,
+            )
+            self.assertIn(
+                "runner_event_timestamp_invalid",
+                inspection.runs[0].integrity_issues,
+            )
+            self.assertNotIn(
+                "do not project this",
+                json.dumps(inspection.to_mapping(), sort_keys=True),
+            )
+
     def test_credential_shaped_accepted_output_is_quarantined(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = self._project(temporary)
@@ -774,6 +1012,74 @@ class OrchestratorTests(unittest.TestCase):
             self.assertFalse(report.accepted)
             self.assertFalse(report.artifact_credential_scan_passed)
             self.assertIsNone(report.artifact_path)
+
+    def test_mock_accounting_spoofs_are_quarantined_before_publication(
+        self,
+    ) -> None:
+        cases = (
+            ("live_model_execution_occurred", True),
+            ("incremental_ai_charge", IncrementalAICharge.CONFIRMED),
+            ("paid_capacity_consumed", PaidCapacityConsumed.YES),
+            ("execution_mode", "private_unregistered_mode"),
+        )
+        for field, value in cases:
+            with (
+                self.subTest(field=field),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = self._project(temporary)
+                prepared = prepare_chief_of_staff(root)
+                report = asyncio.run(
+                    run_chief_of_staff(
+                        root,
+                        runner=SpoofedResultRunner(
+                            spoofed_field=field,
+                            spoofed_value=value,
+                            output=load_mock_chief_of_staff_output(
+                                root,
+                                prepared,
+                            ),
+                        ),
+                        run_id=f"mock-accounting-{field}",
+                    )
+                )
+                self.assertEqual(report.status, RunStatus.QUARANTINED)
+                self.assertIsNone(report.artifact_path)
+                self.assertTrue(report.billing_quarantine_required)
+                self.assertEqual(report.incremental_ai_charge, "unknown")
+                self.assertEqual(report.incremental_api_charge, "unknown")
+
+    def test_runner_version_is_persisted_only_as_a_digest_reference(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            prepared = prepare_chief_of_staff(root)
+            private_version = "/private/worktree-marker/runner-build"
+            report = asyncio.run(
+                run_chief_of_staff(
+                    root,
+                    runner=SpoofedResultRunner(
+                        spoofed_field="runner_version",
+                        spoofed_value=private_version,
+                        output=load_mock_chief_of_staff_output(root, prepared),
+                    ),
+                    run_id="private-runner-version",
+                )
+            )
+            self.assertEqual(report.status, RunStatus.SUCCEEDED)
+            self.assertEqual(
+                report.runner_version,
+                canonical_digest({"runner_version": private_version}),
+            )
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                persisted = "\n".join(
+                    event.payload_json
+                    for event in state.list_events(
+                        "private-runner-version"
+                    )
+                )
+            self.assertNotIn(private_version, persisted)
 
     def test_paid_postflight_is_quarantined_and_opens_durable_breaker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1232,55 +1538,698 @@ class OrchestratorTests(unittest.TestCase):
                     state.current_status("staging-failure"), RunStatus.FAILED
                 )
                 self.assertEqual(state.list_artifacts("staging-failure"), ())
+                events = state.list_events("staging-failure")
                 scopes = [
                     event.payload["action_scope"]
-                    for event in state.list_events("staging-failure")
+                    for event in events
                     if event.event_type == "authorization_shadow_decision"
                 ]
+                intent = next(
+                    event
+                    for event in events
+                    if event.event_type
+                    == "task_attempt_candidate_artifact_intent"
+                )
+                receipt = next(
+                    event
+                    for event in events
+                    if event.event_type
+                    == "task_attempt_candidate_artifact_action_receipt"
+                )
             self.assertEqual(scopes[-1], "local_candidate_publication_only")
+            self.assertLess(intent.sequence, receipt.sequence)
+            self.assertEqual(receipt.payload["outcome"], "failed")
+            self.assertEqual(
+                receipt.payload["failure_code"],
+                "artifact_persistence_failed",
+            )
+            self.assertIsNone(receipt.payload["result_digest"])
+            self.assertFalse(events[-1].payload["artifact_observed"])
 
-    def test_artifact_metadata_failure_cleans_stage_and_final_path(self) -> None:
+    def test_artifact_metadata_commit_then_raise_is_reconciled(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            original_append_artifact = SQLiteStateStore.append_artifact
+
+            def commit_then_raise(store, record):
+                original_append_artifact(store, record)
+                raise RuntimeError("injected metadata commit interruption")
+
+            with patch.object(
+                SQLiteStateStore,
+                "append_artifact",
+                new=commit_then_raise,
+            ):
+                report = asyncio.run(
+                    run_chief_of_staff(root, run_id="metadata-committed")
+                )
+            artifact_directory = root / ".ordomata/runs/metadata-committed/artifacts"
+            artifact = artifact_directory / "chief-of-staff-lite.json"
+            self.assertEqual(report.status, RunStatus.SUCCEEDED)
+            self.assertTrue(artifact.is_file())
+            self.assertEqual(tuple(artifact_directory.glob(".*.tmp")), ())
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
+                self.assertEqual(
+                    state.current_status("metadata-committed"),
+                    RunStatus.SUCCEEDED,
+                )
+                self.assertEqual(len(state.list_artifacts("metadata-committed")), 1)
+                receipts = [
+                    event.payload
+                    for event in state.list_events("metadata-committed")
+                    if event.event_type
+                    == "task_attempt_candidate_artifact_action_receipt"
+                ]
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(receipts[0]["outcome"], "succeeded")
+
+    def test_artifact_metadata_precommit_failure_records_failed_receipt(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = self._project(temporary)
             with patch.object(
                 SQLiteStateStore,
                 "append_artifact",
-                side_effect=RuntimeError("injected metadata failure"),
+                side_effect=RuntimeError("injected metadata precommit failure"),
             ):
-                with self.assertRaisesRegex(RuntimeError, "injected metadata failure"):
-                    asyncio.run(run_chief_of_staff(root, run_id="metadata-failure"))
-            artifact_directory = root / ".ordomata/runs/metadata-failure/artifacts"
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "injected metadata precommit failure",
+                ):
+                    asyncio.run(
+                        run_chief_of_staff(
+                            root,
+                            run_id="metadata-rejected",
+                        )
+                    )
+
+            artifact_directory = root / ".ordomata/runs/metadata-rejected/artifacts"
             artifact = artifact_directory / "chief-of-staff-lite.json"
             self.assertFalse(artifact.exists())
             self.assertEqual(tuple(artifact_directory.glob(".*.tmp")), ())
             with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 self.assertEqual(
-                    state.current_status("metadata-failure"), RunStatus.FAILED
+                    state.current_status("metadata-rejected"),
+                    RunStatus.FAILED,
                 )
-                self.assertEqual(state.list_artifacts("metadata-failure"), ())
+                self.assertEqual(state.list_artifacts("metadata-rejected"), ())
+                events = state.list_events("metadata-rejected")
+                receipts = [
+                    event.payload
+                    for event in events
+                    if event.event_type
+                    == "task_attempt_candidate_artifact_action_receipt"
+                ]
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(receipts[0]["outcome"], "failed")
+            self.assertFalse(events[-1].payload["artifact_observed"])
 
-    def test_publication_failure_never_exposes_untracked_artifact(self) -> None:
+    def test_promotion_link_then_raise_rolls_back_owned_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+
+            def link_then_raise(stage, artifact_path):
+                _promote_staged_artifact(stage, artifact_path)
+                raise RuntimeError("injected promotion interruption")
+
+            with patch(
+                "ordomata.orchestrator._promote_staged_artifact",
+                new=link_then_raise,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "injected promotion interruption",
+                ):
+                    asyncio.run(
+                        run_chief_of_staff(root, run_id="promotion-interrupted")
+                    )
+            artifact_directory = (
+                root / ".ordomata/runs/promotion-interrupted/artifacts"
+            )
+            artifact = artifact_directory / "chief-of-staff-lite.json"
+            self.assertFalse(artifact.exists())
+            self.assertEqual(tuple(artifact_directory.glob(".*.tmp")), ())
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
+                self.assertEqual(
+                    state.current_status("promotion-interrupted"),
+                    RunStatus.FAILED,
+                )
+                records = state.list_artifacts("promotion-interrupted")
+                self.assertEqual(len(records), 1)
+                self.assertEqual(records[0].path, str(artifact.resolve()))
+                receipts = [
+                    event.payload
+                    for event in state.list_events("promotion-interrupted")
+                    if event.event_type
+                    == "task_attempt_candidate_artifact_action_receipt"
+                ]
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(receipts[0]["outcome"], "failed")
+            self.assertEqual(
+                receipts[0]["failure_code"],
+                "artifact_persistence_failed",
+            )
+
+    def test_interrupted_reconciliation_quarantines_visible_artifact(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            cleanup_interrupted = False
+
+            def publish_then_cancel(stage, artifact_path):
+                _promote_staged_artifact(stage, artifact_path)
+                raise asyncio.CancelledError(
+                    "injected post-publication cancellation"
+                )
+
+            def interrupt_final_cleanup(
+                path,
+                *,
+                staged_identity,
+                expected_parent_identity=None,
+                stage=None,
+            ):
+                nonlocal cleanup_interrupted
+                if (
+                    not cleanup_interrupted
+                    and path.name == "chief-of-staff-lite.json"
+                ):
+                    cleanup_interrupted = True
+                    raise asyncio.CancelledError(
+                        "injected cleanup cancellation"
+                    )
+                return remove_owned_published_artifact(
+                    path,
+                    staged_identity=staged_identity,
+                    expected_parent_identity=expected_parent_identity,
+                    stage=stage,
+                )
+
+            with (
+                patch(
+                    "ordomata.orchestrator._promote_staged_artifact",
+                    new=publish_then_cancel,
+                ),
+                patch(
+                    "ordomata.orchestrator.remove_owned_published_artifact",
+                    new=interrupt_final_cleanup,
+                ),
+                self.assertRaisesRegex(
+                    ConfigurationError,
+                    "publication outcome is uncertain",
+                ),
+            ):
+                asyncio.run(
+                    run_chief_of_staff(
+                        root,
+                        run_id="reconciliation-interrupted",
+                    )
+                )
+
+            self.assertTrue(cleanup_interrupted)
+            artifact = (
+                root
+                / ".ordomata/runs/reconciliation-interrupted/artifacts"
+                / "chief-of-staff-lite.json"
+            )
+            self.assertTrue(artifact.is_file())
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                self.assertEqual(
+                    state.current_status("reconciliation-interrupted"),
+                    RunStatus.QUARANTINED,
+                )
+                events = state.list_events("reconciliation-interrupted")
+                receipts = [
+                    event.payload
+                    for event in events
+                    if event.event_type
+                    == "task_attempt_candidate_artifact_action_receipt"
+                ]
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(receipts[0]["outcome"], "unknown")
+            self.assertTrue(events[-1].payload["artifact_observed"])
+
+    def test_parent_swap_after_publication_removes_relocated_owned_inode(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            artifact_directory = (
+                root / ".ordomata/runs/post-publish-parent-swap/artifacts"
+            )
+            relocated_directory = root / "relocated-artifacts"
+
+            def publish_then_swap_parent(stage, artifact_path):
+                _promote_staged_artifact(stage, artifact_path)
+                artifact_directory.rename(relocated_directory)
+                artifact_directory.mkdir(mode=0o700)
+
+            with (
+                patch(
+                    "ordomata.orchestrator._promote_staged_artifact",
+                    new=publish_then_swap_parent,
+                ),
+                self.assertRaisesRegex(
+                    ConfigurationError,
+                    "publication outcome is uncertain",
+                ),
+            ):
+                asyncio.run(
+                    run_chief_of_staff(
+                        root,
+                        run_id="post-publish-parent-swap",
+                    )
+                )
+
+            self.assertFalse(
+                (artifact_directory / "chief-of-staff-lite.json").exists()
+            )
+            self.assertFalse(
+                (relocated_directory / "chief-of-staff-lite.json").exists()
+            )
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                self.assertEqual(
+                    state.current_status("post-publish-parent-swap"),
+                    RunStatus.QUARANTINED,
+                )
+                events = state.list_events("post-publish-parent-swap")
+                receipt = next(
+                    event.payload
+                    for event in events
+                    if event.event_type
+                    == "task_attempt_candidate_artifact_action_receipt"
+                )
+            self.assertEqual(receipt["outcome"], "unknown")
+            self.assertTrue(events[-1].payload["artifact_observed"])
+
+    def test_untracked_staging_hardlink_is_detected_and_quarantined(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            escaped_alias = root / "outside-run-private-copy.json"
+
+            def alias_then_publish(stage, artifact_path):
+                os.link(
+                    stage.path,
+                    escaped_alias,
+                    follow_symlinks=False,
+                )
+                _promote_staged_artifact(stage, artifact_path)
+
+            with (
+                patch(
+                    "ordomata.orchestrator._promote_staged_artifact",
+                    new=alias_then_publish,
+                ),
+                self.assertRaisesRegex(
+                    ConfigurationError,
+                    "publication outcome is uncertain",
+                ),
+            ):
+                asyncio.run(
+                    run_chief_of_staff(
+                        root,
+                        run_id="untracked-staging-hardlink",
+                    )
+                )
+
+            self.assertTrue(escaped_alias.is_file())
+            artifact = (
+                root
+                / ".ordomata/runs/untracked-staging-hardlink/artifacts"
+                / "chief-of-staff-lite.json"
+            )
+            self.assertFalse(artifact.exists())
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                self.assertEqual(
+                    state.current_status("untracked-staging-hardlink"),
+                    RunStatus.QUARANTINED,
+                )
+                events = state.list_events("untracked-staging-hardlink")
+                receipt = next(
+                    event.payload
+                    for event in events
+                    if event.event_type
+                    == "task_attempt_candidate_artifact_action_receipt"
+                )
+            self.assertEqual(receipt["outcome"], "unknown")
+            self.assertTrue(events[-1].payload["artifact_observed"])
+
+    def test_hardlink_created_during_staging_is_quarantined(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            run_id = "staging-fsync-hardlink"
+            artifact_directory = (
+                root / f".ordomata/runs/{run_id}/artifacts"
+            )
+            escaped_alias = root / "outside-staging-private-copy.json"
+            original_fsync = os.fsync
+            aliased = False
+
+            def alias_during_staged_file_fsync(descriptor):
+                nonlocal aliased
+                if (
+                    not aliased
+                    and stat.S_ISREG(os.fstat(descriptor).st_mode)
+                ):
+                    staged_paths = tuple(
+                        artifact_directory.glob(".*.tmp")
+                    )
+                    self.assertEqual(len(staged_paths), 1)
+                    os.link(
+                        staged_paths[0],
+                        escaped_alias,
+                        follow_symlinks=False,
+                    )
+                    aliased = True
+                return original_fsync(descriptor)
+
+            with (
+                patch(
+                    "ordomata.artifact_filesystem.os.fsync",
+                    new=alias_during_staged_file_fsync,
+                ),
+                self.assertRaisesRegex(
+                    ConfigurationError,
+                    "publication outcome is uncertain",
+                ),
+            ):
+                asyncio.run(
+                    run_chief_of_staff(
+                        root,
+                        run_id=run_id,
+                    )
+                )
+
+            self.assertTrue(aliased)
+            self.assertTrue(escaped_alias.is_file())
+            self.assertFalse(
+                (artifact_directory / "chief-of-staff-lite.json").exists()
+            )
+            self.assertEqual(tuple(artifact_directory.glob(".*.tmp")), ())
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                self.assertEqual(
+                    state.current_status(run_id),
+                    RunStatus.QUARANTINED,
+                )
+                events = state.list_events(run_id)
+                receipt = next(
+                    event.payload
+                    for event in events
+                    if event.event_type
+                    == "task_attempt_candidate_artifact_action_receipt"
+                )
+            self.assertEqual(receipt["outcome"], "unknown")
+            self.assertTrue(events[-1].payload["artifact_observed"])
+
+    def test_action_receipt_commit_then_raise_is_reconciled(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            original_append_event = SQLiteStateStore.append_event
+            injected = False
+
+            def commit_receipt_then_raise(
+                store,
+                run_id,
+                event_type,
+                payload=None,
+                **kwargs,
+            ):
+                nonlocal injected
+                result = original_append_event(
+                    store,
+                    run_id,
+                    event_type,
+                    payload,
+                    **kwargs,
+                )
+                if (
+                    not injected
+                    and event_type
+                    == "task_attempt_candidate_artifact_action_receipt"
+                ):
+                    injected = True
+                    raise RuntimeError("injected receipt commit interruption")
+                return result
+
+            with patch.object(
+                SQLiteStateStore,
+                "append_event",
+                new=commit_receipt_then_raise,
+            ):
+                report = asyncio.run(
+                    run_chief_of_staff(root, run_id="receipt-committed")
+                )
+
+            self.assertTrue(injected)
+            self.assertEqual(report.status, RunStatus.SUCCEEDED)
+            artifact = Path(report.artifact_path or "")
+            self.assertTrue(artifact.is_file())
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
+                self.assertEqual(
+                    state.current_status("receipt-committed"),
+                    RunStatus.SUCCEEDED,
+                )
+                receipts = [
+                    event
+                    for event in state.list_events("receipt-committed")
+                    if event.event_type
+                    == "task_attempt_candidate_artifact_action_receipt"
+                ]
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(receipts[0].payload["outcome"], "succeeded")
+            self.assertEqual(receipts[0].event_id, receipts[0].payload["receipt_id"])
+
+    def test_action_receipt_precommit_failure_rolls_back_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            original_append_event = SQLiteStateStore.append_event
+            rejected = False
+
+            def reject_first_action_receipt(
+                store,
+                run_id,
+                event_type,
+                payload=None,
+                **kwargs,
+            ):
+                nonlocal rejected
+                if (
+                    not rejected
+                    and event_type
+                    == "task_attempt_candidate_artifact_action_receipt"
+                ):
+                    rejected = True
+                    raise RuntimeError("injected receipt precommit failure")
+                return original_append_event(
+                    store,
+                    run_id,
+                    event_type,
+                    payload,
+                    **kwargs,
+                )
+
+            with patch.object(
+                SQLiteStateStore,
+                "append_event",
+                new=reject_first_action_receipt,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "injected receipt precommit failure",
+                ):
+                    asyncio.run(
+                        run_chief_of_staff(root, run_id="receipt-rejected")
+                    )
+
+            self.assertTrue(rejected)
+            artifact = (
+                root
+                / ".ordomata/runs/receipt-rejected/artifacts/chief-of-staff-lite.json"
+            )
+            self.assertFalse(artifact.exists())
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
+                self.assertEqual(
+                    state.current_status("receipt-rejected"),
+                    RunStatus.FAILED,
+                )
+                self.assertEqual(len(state.list_artifacts("receipt-rejected")), 1)
+                events = state.list_events("receipt-rejected")
+                receipts = [
+                    event
+                    for event in events
+                    if event.event_type
+                    == "task_attempt_candidate_artifact_action_receipt"
+                ]
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(receipts[0].payload["outcome"], "failed")
+            self.assertEqual(
+                receipts[0].payload["failure_code"],
+                "artifact_persistence_failed",
+            )
+            self.assertFalse(events[-1].payload["artifact_observed"])
+
+    def test_action_receipt_builder_failure_rolls_back_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            run_id = "receipt-builder-failure"
+            with (
+                patch(
+                    "ordomata.orchestrator."
+                    "build_candidate_artifact_action_receipt",
+                    side_effect=RuntimeError(
+                        "private receipt builder diagnostic"
+                    ),
+                ),
+                self.assertRaisesRegex(
+                    RuntimeError,
+                    "private receipt builder diagnostic",
+                ),
+            ):
+                asyncio.run(run_chief_of_staff(root, run_id=run_id))
+
+            artifact_directory = root / f".ordomata/runs/{run_id}/artifacts"
+            self.assertFalse(
+                (artifact_directory / "chief-of-staff-lite.json").exists()
+            )
+            self.assertEqual(tuple(artifact_directory.glob(".*.tmp")), ())
+            with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
+                self.assertEqual(
+                    state.current_status(run_id),
+                    RunStatus.FAILED,
+                )
+                events = state.list_events(run_id)
+            self.assertFalse(
+                any(
+                    event.event_type
+                    == "task_attempt_candidate_artifact_action_receipt"
+                    for event in events
+                )
+            )
+            self.assertFalse(events[-1].payload["artifact_observed"])
+            self.assertNotIn(
+                "private receipt builder diagnostic",
+                "\n".join(event.payload_json for event in events),
+            )
+
+    def test_publication_cancellation_records_cancelled_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = self._project(temporary)
             with patch(
                 "ordomata.orchestrator._promote_staged_artifact",
-                side_effect=OSError("injected publication failure"),
+                side_effect=asyncio.CancelledError(
+                    "injected publication cancellation"
+                ),
             ):
-                with self.assertRaisesRegex(OSError, "injected publication failure"):
-                    asyncio.run(run_chief_of_staff(root, run_id="publication-failure"))
-            artifact_directory = root / ".ordomata/runs/publication-failure/artifacts"
+                with self.assertRaisesRegex(
+                    asyncio.CancelledError,
+                    "injected publication cancellation",
+                ):
+                    asyncio.run(
+                        run_chief_of_staff(root, run_id="publication-cancelled")
+                    )
+
+            artifact_directory = (
+                root / ".ordomata/runs/publication-cancelled/artifacts"
+            )
             artifact = artifact_directory / "chief-of-staff-lite.json"
             self.assertFalse(artifact.exists())
             self.assertEqual(tuple(artifact_directory.glob(".*.tmp")), ())
             with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 self.assertEqual(
-                    state.current_status("publication-failure"), RunStatus.FAILED
+                    state.current_status("publication-cancelled"),
+                    RunStatus.CANCELLED,
                 )
-                records = state.list_artifacts("publication-failure")
-                self.assertEqual(len(records), 1)
-                self.assertEqual(records[0].path, str(artifact.resolve()))
+                events = state.list_events("publication-cancelled")
+                receipts = [
+                    event
+                    for event in events
+                    if event.event_type
+                    == "task_attempt_candidate_artifact_action_receipt"
+                ]
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(receipts[0].payload["outcome"], "cancelled")
+            self.assertEqual(
+                receipts[0].payload["failure_code"],
+                "artifact_persistence_interrupted",
+            )
+            self.assertFalse(events[-1].payload["artifact_observed"])
 
-    def test_terminal_audit_failure_is_retried_as_failed(self) -> None:
+    def test_preexisting_candidate_destinations_are_preserved_as_unknown(self) -> None:
+        for destination_kind in ("file", "symlink"):
+            with self.subTest(destination_kind=destination_kind):
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = self._project(temporary)
+                    run_id = f"preexisting-{destination_kind}"
+                    sentinel = f"preserve-{destination_kind}".encode()
+                    symlink_target = root / f"{destination_kind}-target.txt"
+
+                    def inject_preexisting_destination(path, content, *, stage):
+                        del content, stage
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        if destination_kind == "file":
+                            path.write_bytes(sentinel)
+                        else:
+                            symlink_target.write_bytes(sentinel)
+                            path.symlink_to(symlink_target)
+                        raise ValidationError(
+                            "artifact destination already exists"
+                        )
+
+                    with patch(
+                        "ordomata.orchestrator._stage_artifact",
+                        new=inject_preexisting_destination,
+                    ):
+                        with self.assertRaisesRegex(
+                            ConfigurationError,
+                            "publication outcome is uncertain",
+                        ):
+                            asyncio.run(
+                                run_chief_of_staff(root, run_id=run_id)
+                            )
+
+                    artifact = (
+                        root
+                        / ".ordomata"
+                        / "runs"
+                        / run_id
+                        / "artifacts"
+                        / "chief-of-staff-lite.json"
+                    )
+                    self.assertEqual(artifact.read_bytes(), sentinel)
+                    self.assertEqual(
+                        artifact.is_symlink(),
+                        destination_kind == "symlink",
+                    )
+                    with SQLiteStateStore(
+                        root / ".ordomata" / "state.sqlite3"
+                    ) as state:
+                        self.assertEqual(
+                            state.current_status(run_id),
+                            RunStatus.QUARANTINED,
+                        )
+                        self.assertEqual(state.list_artifacts(run_id), ())
+                        events = state.list_events(run_id)
+                        receipts = [
+                            event
+                            for event in events
+                            if event.event_type
+                            == "task_attempt_candidate_artifact_action_receipt"
+                        ]
+                    self.assertEqual(len(receipts), 1)
+                    self.assertEqual(receipts[0].payload["outcome"], "unknown")
+                    self.assertEqual(
+                        receipts[0].payload["failure_code"],
+                        "artifact_publication_outcome_unknown",
+                    )
+                    self.assertTrue(events[-1].payload["artifact_observed"])
+
+    def test_terminal_audit_failure_preserves_artifact_and_quarantines(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = self._project(temporary)
             original_append_event = SQLiteStateStore.append_event
@@ -1310,11 +2259,769 @@ class OrchestratorTests(unittest.TestCase):
             self.assertTrue(artifact.is_file())
             with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 self.assertEqual(
-                    state.current_status("audit-failure"), RunStatus.FAILED
+                    state.current_status("audit-failure"),
+                    RunStatus.QUARANTINED,
                 )
                 records = state.list_artifacts("audit-failure")
                 self.assertEqual(len(records), 1)
                 self.assertEqual(records[0].path, str(artifact.resolve()))
+                events = state.list_events("audit-failure")
+                receipts = [
+                    event.payload
+                    for event in events
+                    if event.event_type
+                    == "task_attempt_candidate_artifact_action_receipt"
+                ]
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(receipts[0]["outcome"], "succeeded")
+            self.assertEqual(events[-1].payload["phase"], "result_finalization")
+            self.assertTrue(events[-1].payload["artifact_observed"])
+
+    def test_required_billing_and_accounting_commit_then_raise_are_reconciled(
+        self,
+    ) -> None:
+        for target_event_type in (
+            "billing_assessment",
+            "execution_accounting",
+        ):
+            with (
+                self.subTest(event_type=target_event_type),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = self._project(temporary)
+                original_append_event = SQLiteStateStore.append_event
+                injected = False
+
+                def commit_then_raise(
+                    store,
+                    run_id,
+                    event_type,
+                    payload=None,
+                    **kwargs,
+                ):
+                    nonlocal injected
+                    result = original_append_event(
+                        store,
+                        run_id,
+                        event_type,
+                        payload,
+                        **kwargs,
+                    )
+                    if not injected and event_type == target_event_type:
+                        injected = True
+                        raise OSError("private commit diagnostic")
+                    return result
+
+                with patch.object(
+                    SQLiteStateStore,
+                    "append_event",
+                    new=commit_then_raise,
+                ):
+                    report = asyncio.run(
+                        run_chief_of_staff(
+                            root,
+                            run_id=f"commit-{target_event_type}",
+                        )
+                    )
+
+                self.assertTrue(injected)
+                self.assertEqual(report.status, RunStatus.SUCCEEDED)
+                with SQLiteStateStore(
+                    root / ".ordomata/state.sqlite3"
+                ) as state:
+                    events = state.list_events(report.run_id)
+                    self.assertEqual(
+                        sum(
+                            event.event_type == target_event_type
+                            for event in events
+                        ),
+                        1,
+                    )
+                    self.assertEqual(
+                        state.current_status(report.run_id),
+                        RunStatus.SUCCEEDED,
+                    )
+                self.assertNotIn(
+                    "private commit diagnostic",
+                    "\n".join(event.payload_json for event in events),
+                )
+    def test_task_evidence_event_identifiers_are_independently_checked(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "binding",
+                "task_attempt_authorization_binding",
+                0,
+                "task_binding_event_identifier_mismatch",
+            ),
+            (
+                "admission_shadow",
+                "authorization_shadow_decision",
+                0,
+                "task_shadow_event_identifier_mismatch",
+            ),
+            (
+                "dispatch_shadow",
+                "authorization_shadow_decision",
+                1,
+                "task_shadow_event_identifier_mismatch",
+            ),
+            (
+                "billing",
+                "billing_assessment",
+                0,
+                "task_billing_event_identifier_mismatch",
+            ),
+            (
+                "accounting",
+                "execution_accounting",
+                0,
+                "task_execution_accounting_event_identifier_mismatch",
+            ),
+            (
+                "publication_shadow",
+                "authorization_shadow_decision",
+                2,
+                "task_shadow_event_identifier_mismatch",
+            ),
+            (
+                "pre_effect",
+                "task_attempt_candidate_artifact_intent",
+                0,
+                "task_publication_pre_effect_event_identifier_mismatch",
+            ),
+            (
+                "action",
+                "task_attempt_candidate_artifact_action_receipt",
+                0,
+                "task_publication_action_event_identifier_mismatch",
+            ),
+            (
+                "terminal",
+                "status",
+                2,
+                "task_terminal_event_identifier_mismatch",
+            ),
+        )
+        for label, event_type, offset, expected_issue in cases:
+            with (
+                self.subTest(label=label),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = self._project(temporary)
+                run_id = f"identifier-{label}"
+                asyncio.run(run_chief_of_staff(root, run_id=run_id))
+                database = root / ".ordomata" / "state.sqlite3"
+                baseline = inspect_authorization_shadows(
+                    database,
+                    run_id=run_id,
+                )
+                self.assertTrue(baseline.clean, baseline.to_mapping())
+
+                connection = sqlite3.connect(database)
+                try:
+                    connection.execute("DROP TRIGGER run_events_no_update")
+                    cursor = connection.execute(
+                        """
+                        UPDATE run_events
+                        SET event_id = ?
+                        WHERE sequence = (
+                            SELECT sequence
+                            FROM run_events
+                            WHERE run_id = ? AND event_type = ?
+                            ORDER BY sequence
+                            LIMIT 1 OFFSET ?
+                        )
+                        """,
+                        (
+                            canonical_digest(
+                                {
+                                    "label": label,
+                                    "tampered": True,
+                                }
+                            ),
+                            run_id,
+                            event_type,
+                            offset,
+                        ),
+                    )
+                    self.assertEqual(cursor.rowcount, 1)
+                    connection.execute(
+                        """
+                        CREATE TRIGGER run_events_no_update
+                        BEFORE UPDATE ON run_events BEGIN
+                            SELECT RAISE(ABORT, 'run events are append-only');
+                        END
+                        """
+                    )
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                inspection = inspect_authorization_shadows(
+                    database,
+                    run_id=run_id,
+                )
+                issues = set(inspection.runs[0].integrity_issues)
+                for event in inspection.runs[0].events:
+                    issues.update(event.integrity_issues)
+                self.assertFalse(inspection.clean)
+                self.assertIn(expected_issue, issues)
+
+    def test_task_execution_accounting_rejects_unsanitized_runner_fields(
+        self,
+    ) -> None:
+        cases = (
+            ("runner_version", "deterministic"),
+            ("runner_version", "/Users/operator/private/bin/runner"),
+            ("runner_version", ["sha256:" + ("a" * 64)]),
+            ("execution_mode", "fixture_first_party_cli"),
+            ("execution_mode", "/Users/operator/private/mode"),
+            ("execution_mode", ["in_memory_mock"]),
+        )
+        for field, tampered_value in cases:
+            with (
+                self.subTest(field=field, tampered_value=tampered_value),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = self._project(temporary)
+                run_id = f"unsafe-accounting-{field}-{len(tampered_value)}"
+                asyncio.run(run_chief_of_staff(root, run_id=run_id))
+                database = root / ".ordomata" / "state.sqlite3"
+                baseline = inspect_authorization_shadows(
+                    database,
+                    run_id=run_id,
+                )
+                self.assertTrue(baseline.clean, baseline.to_mapping())
+
+                connection = sqlite3.connect(database)
+                try:
+                    row = connection.execute(
+                        """
+                        SELECT payload_json
+                        FROM run_events
+                        WHERE run_id = ? AND event_type = 'execution_accounting'
+                        """,
+                        (run_id,),
+                    ).fetchone()
+                    self.assertIsNotNone(row)
+                    payload = json.loads(row[0])
+                    payload[field] = tampered_value
+                    event_id = canonical_digest(
+                        {
+                            "event_type": "execution_accounting",
+                            "payload": payload,
+                            "run_id": run_id,
+                        }
+                    )
+                    connection.execute("DROP TRIGGER run_events_no_update")
+                    cursor = connection.execute(
+                        """
+                        UPDATE run_events
+                        SET event_id = ?, payload_json = ?
+                        WHERE run_id = ?
+                          AND event_type = 'execution_accounting'
+                        """,
+                        (
+                            event_id,
+                            json.dumps(
+                                payload,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            run_id,
+                        ),
+                    )
+                    self.assertEqual(cursor.rowcount, 1)
+                    connection.execute(
+                        """
+                        CREATE TRIGGER run_events_no_update
+                        BEFORE UPDATE ON run_events BEGIN
+                            SELECT RAISE(ABORT, 'run events are append-only');
+                        END
+                        """
+                    )
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                inspection = inspect_authorization_shadows(
+                    database,
+                    run_id=run_id,
+                )
+                self.assertFalse(inspection.clean)
+                self.assertIn(
+                    "task_execution_accounting_invalid",
+                    inspection.runs[0].integrity_issues,
+                )
+
+    def test_task_receipt_permission_class_rejects_boolean(self) -> None:
+        cases = (
+            (
+                "task_attempt_candidate_artifact_intent",
+                "task_publication_pre_effect_receipt_invalid",
+            ),
+            (
+                "task_attempt_candidate_artifact_action_receipt",
+                "task_publication_action_receipt_invalid",
+            ),
+        )
+        for event_type, expected_issue in cases:
+            with (
+                self.subTest(event_type=event_type),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = self._project(temporary)
+                run_id = f"boolean-class-{event_type.rsplit('_', 1)[-1]}"
+                asyncio.run(run_chief_of_staff(root, run_id=run_id))
+                database = root / ".ordomata" / "state.sqlite3"
+                connection = sqlite3.connect(database)
+                try:
+                    trigger_sql = connection.execute(
+                        """
+                        SELECT sql FROM sqlite_master
+                        WHERE type = 'trigger'
+                          AND name = 'run_events_no_update'
+                        """
+                    ).fetchone()[0]
+                    payload_row = connection.execute(
+                        """
+                        SELECT sequence, payload_json FROM run_events
+                        WHERE run_id = ? AND event_type = ?
+                        """,
+                        (run_id, event_type),
+                    ).fetchone()
+                    self.assertIsNotNone(payload_row)
+                    payload = json.loads(payload_row[1])
+                    payload["requested_permission_class"] = True
+                    connection.execute("DROP TRIGGER run_events_no_update")
+                    connection.execute(
+                        "UPDATE run_events SET payload_json = ? WHERE sequence = ?",
+                        (
+                            json.dumps(
+                                payload,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            payload_row[0],
+                        ),
+                    )
+                    connection.execute(trigger_sql)
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                inspection = inspect_authorization_shadows(
+                    database,
+                    run_id=run_id,
+                )
+                self.assertFalse(inspection.clean)
+                self.assertIn(
+                    expected_issue,
+                    inspection.runs[0].integrity_issues,
+                )
+
+    def test_task_terminal_semantics_are_independently_checked(self) -> None:
+        for field, tampered_value in (
+            ("accepted", False),
+            ("artifact_recorded", False),
+            ("billing_quarantine_required", True),
+        ):
+            with (
+                self.subTest(field=field),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = self._project(temporary)
+                run_id = f"terminal-{field}"
+                asyncio.run(run_chief_of_staff(root, run_id=run_id))
+                database = root / ".ordomata" / "state.sqlite3"
+                connection = sqlite3.connect(database)
+                try:
+                    trigger_sql = connection.execute(
+                        """
+                        SELECT sql FROM sqlite_master
+                        WHERE type = 'trigger'
+                          AND name = 'run_events_no_update'
+                        """
+                    ).fetchone()[0]
+                    terminal_row = connection.execute(
+                        """
+                        SELECT sequence, payload_json FROM run_events
+                        WHERE run_id = ? AND status = 'succeeded'
+                        """,
+                        (run_id,),
+                    ).fetchone()
+                    self.assertIsNotNone(terminal_row)
+                    payload = json.loads(terminal_row[1])
+                    payload[field] = tampered_value
+                    event_id = canonical_digest(
+                        {
+                            "event_type": "status",
+                            "payload": payload,
+                            "run_id": run_id,
+                            "status": "succeeded",
+                        }
+                    )
+                    connection.execute("DROP TRIGGER run_events_no_update")
+                    connection.execute(
+                        """
+                        UPDATE run_events
+                        SET event_id = ?, payload_json = ?
+                        WHERE sequence = ?
+                        """,
+                        (
+                            event_id,
+                            json.dumps(
+                                payload,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            terminal_row[0],
+                        ),
+                    )
+                    connection.execute(trigger_sql)
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                inspection = inspect_authorization_shadows(
+                    database,
+                    run_id=run_id,
+                )
+                self.assertFalse(inspection.clean)
+                self.assertIn(
+                    "task_terminal_record_mismatch",
+                    inspection.runs[0].integrity_issues,
+                )
+
+    def test_task_artifact_metadata_boundary_and_time_are_checked(self) -> None:
+        cases = (
+            (
+                "created_at",
+                float("inf"),
+                "task_artifact_metadata_timestamp_invalid",
+            ),
+            (
+                "created_at",
+                0.0,
+                "task_artifact_metadata_timestamp_mismatch",
+            ),
+            (
+                "path",
+                "/tmp/ordomata-escaped-candidate.json",
+                "task_artifact_destination_invalid",
+            ),
+        )
+        for field, tampered_value, expected_issue in cases:
+            with (
+                self.subTest(field=field, tampered_value=tampered_value),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = self._project(temporary)
+                run_id = f"artifact-metadata-{len(expected_issue)}"
+                asyncio.run(run_chief_of_staff(root, run_id=run_id))
+                database = root / ".ordomata" / "state.sqlite3"
+                connection = sqlite3.connect(database)
+                try:
+                    trigger_sql = connection.execute(
+                        """
+                        SELECT sql FROM sqlite_master
+                        WHERE type = 'trigger'
+                          AND name = 'run_artifacts_no_update'
+                        """
+                    ).fetchone()[0]
+                    connection.execute("DROP TRIGGER run_artifacts_no_update")
+                    connection.execute(
+                        f"UPDATE run_artifacts SET {field} = ? WHERE run_id = ?",
+                        (tampered_value, run_id),
+                    )
+                    connection.execute(trigger_sql)
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                inspection = inspect_authorization_shadows(
+                    database,
+                    run_id=run_id,
+                )
+                self.assertFalse(inspection.clean)
+                self.assertIn(
+                    expected_issue,
+                    inspection.runs[0].integrity_issues,
+                )
+
+    def test_running_task_billing_policy_mismatch_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            run_id = "billing-policy-mismatch"
+            asyncio.run(run_chief_of_staff(root, run_id=run_id))
+            database = root / ".ordomata" / "state.sqlite3"
+            connection = sqlite3.connect(database)
+            try:
+                trigger_sql = connection.execute(
+                    """
+                    SELECT sql FROM sqlite_master
+                    WHERE type = 'trigger' AND name = 'run_events_no_update'
+                    """
+                ).fetchone()[0]
+                billing_row = connection.execute(
+                    """
+                    SELECT sequence, payload_json FROM run_events
+                    WHERE run_id = ? AND event_type = 'billing_assessment'
+                    """,
+                    (run_id,),
+                ).fetchone()
+                self.assertIsNotNone(billing_row)
+                payload = json.loads(billing_row[1])
+                payload["confidence"] = "low"
+                assessment = dict(payload)
+                del assessment["assessment_digest"]
+                payload["assessment_digest"] = canonical_digest(assessment)
+                connection.execute("DROP TRIGGER run_events_no_update")
+                connection.execute(
+                    "UPDATE run_events SET payload_json = ? WHERE sequence = ?",
+                    (
+                        json.dumps(
+                            payload,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        billing_row[0],
+                    ),
+                )
+                connection.execute(trigger_sql)
+                connection.commit()
+            finally:
+                connection.close()
+
+            inspection = inspect_authorization_shadows(
+                database,
+                run_id=run_id,
+            )
+            self.assertFalse(inspection.clean)
+            self.assertIn(
+                "task_billing_policy_mismatch",
+                inspection.runs[0].integrity_issues,
+            )
+
+    def test_unrelated_task_artifact_metadata_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            run_id = "unrelated-artifact-metadata"
+            asyncio.run(run_chief_of_staff(root, run_id=run_id))
+            database = root / ".ordomata" / "state.sqlite3"
+            baseline = inspect_authorization_shadows(database, run_id=run_id)
+            self.assertTrue(baseline.clean, baseline.to_mapping())
+
+            with SQLiteStateStore(database) as state:
+                state.append_artifact(
+                    ArtifactRecord(
+                        artifact_id="unrelated-artifact",
+                        run_id=run_id,
+                        kind="local_draft",
+                        path=str(root / "unrelated-candidate.json"),
+                        sha256="f" * 64,
+                        media_type="application/json",
+                        size_bytes=1,
+                        created_at=time.time(),
+                    )
+                )
+
+            inspection = inspect_authorization_shadows(
+                database,
+                run_id=run_id,
+            )
+            self.assertFalse(inspection.clean)
+            self.assertIn(
+                "task_action_receipt_artifact_mismatch",
+                inspection.runs[0].integrity_issues,
+            )
+
+    def test_shape_valid_task_accounting_semantic_tampering_is_detected(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "result_status",
+                "failed",
+                False,
+                "task_publication_execution_accounting_mismatch",
+            ),
+            (
+                "incremental_ai_charge",
+                "possible",
+                True,
+                "task_publication_execution_accounting_mismatch",
+            ),
+            (
+                "live_model_execution_occurred",
+                True,
+                False,
+                "task_publication_execution_accounting_mismatch",
+            ),
+            (
+                "runner_event_count",
+                1,
+                False,
+                "task_execution_accounting_record_mismatch",
+            ),
+        )
+        for field, tampered_value, refresh_billing_digest, expected_issue in cases:
+            with (
+                self.subTest(field=field),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = self._project(temporary)
+                run_id = f"accounting-{field}"
+                asyncio.run(run_chief_of_staff(root, run_id=run_id))
+                database = root / ".ordomata" / "state.sqlite3"
+                baseline = inspect_authorization_shadows(
+                    database,
+                    run_id=run_id,
+                )
+                self.assertTrue(baseline.clean, baseline.to_mapping())
+
+                connection = sqlite3.connect(database)
+                try:
+                    payload_row = connection.execute(
+                        """
+                        SELECT payload_json
+                        FROM run_events
+                        WHERE run_id = ? AND event_type = 'execution_accounting'
+                        """,
+                        (run_id,),
+                    ).fetchone()
+                    self.assertIsNotNone(payload_row)
+                    payload = json.loads(payload_row[0])
+                    original_keys = set(payload)
+                    payload[field] = tampered_value
+                    if refresh_billing_digest:
+                        payload["billing_disposition_digest"] = canonical_digest(
+                            {
+                                "identity_matches": (
+                                    payload["identity_matches"] is True
+                                ),
+                                "billing_matches": (
+                                    payload["billing_matches"] is True
+                                ),
+                                "capacity_state": payload["capacity_state"],
+                                "paid_capacity_consumed": payload[
+                                    "paid_capacity_consumed"
+                                ],
+                                "incremental_ai_charge": payload[
+                                    "incremental_ai_charge"
+                                ],
+                                "quarantine_required": payload[
+                                    "billing_quarantine_required"
+                                ],
+                                "circuit_breaker_required": payload[
+                                    "billing_circuit_breaker_required"
+                                ],
+                                "reason_codes": payload[
+                                    "billing_disposition_reason_codes"
+                                ],
+                            }
+                        )
+                    self.assertEqual(set(payload), original_keys)
+                    connection.execute("DROP TRIGGER run_events_no_update")
+                    cursor = connection.execute(
+                        """
+                        UPDATE run_events
+                        SET payload_json = ?
+                        WHERE run_id = ? AND event_type = 'execution_accounting'
+                        """,
+                        (
+                            json.dumps(
+                                payload,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            run_id,
+                        ),
+                    )
+                    self.assertEqual(cursor.rowcount, 1)
+                    connection.execute(
+                        """
+                        CREATE TRIGGER run_events_no_update
+                        BEFORE UPDATE ON run_events BEGIN
+                            SELECT RAISE(ABORT, 'run events are append-only');
+                        END
+                        """
+                    )
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                inspection = inspect_authorization_shadows(
+                    database,
+                    run_id=run_id,
+                )
+                self.assertFalse(inspection.clean)
+                self.assertNotIn(
+                    "task_execution_accounting_invalid",
+                    inspection.runs[0].integrity_issues,
+                )
+                self.assertIn(
+                    expected_issue,
+                    inspection.runs[0].integrity_issues,
+                )
+
+    def test_valid_events_appended_after_terminal_are_detected(self) -> None:
+        for event_type in ("billing_assessment", "runner_event_observed"):
+            with (
+                self.subTest(event_type=event_type),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = self._project(temporary)
+                run_id = f"post-terminal-{event_type}"
+                asyncio.run(run_chief_of_staff(root, run_id=run_id))
+                database = root / ".ordomata" / "state.sqlite3"
+                baseline = inspect_authorization_shadows(
+                    database,
+                    run_id=run_id,
+                )
+                self.assertTrue(baseline.clean, baseline.to_mapping())
+
+                with SQLiteStateStore(database) as state:
+                    terminal_sequence = max(
+                        event.sequence
+                        for event in state.list_events(run_id)
+                        if event.status is not None
+                        and event.status
+                        in {
+                            RunStatus.SUCCEEDED,
+                            RunStatus.FAILED,
+                            RunStatus.BLOCKED,
+                            RunStatus.QUARANTINED,
+                            RunStatus.CANCELLED,
+                        }
+                    )
+                    if event_type == "billing_assessment":
+                        payload = next(
+                            event.payload
+                            for event in state.list_events(run_id)
+                            if event.event_type == event_type
+                        )
+                    else:
+                        payload = {"ordinal": 1}
+                    appended = state.append_event(run_id, event_type, payload)
+                    self.assertGreater(appended.sequence, terminal_sequence)
+
+                inspection = inspect_authorization_shadows(
+                    database,
+                    run_id=run_id,
+                )
+                self.assertFalse(inspection.clean)
+                expected_issue = (
+                    "task_billing_duplicate"
+                    if event_type == "billing_assessment"
+                    else "runner_event_order_invalid"
+                )
+                self.assertIn(
+                    expected_issue,
+                    inspection.runs[0].integrity_issues,
+                )
 
 
 if __name__ == "__main__":

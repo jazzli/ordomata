@@ -74,6 +74,10 @@ records.
 - optional typed task-effect authorization intent, independent of the legacy
   numeric class, plus three non-enforcing Chief-of-Staff shadow decisions at
   admission, runner/model dispatch intent, and local-candidate publication;
+- digest-only ordinary task-attempt bindings that cover the typed authorization
+  intent, schema-v2 execution accounting, billing-bound dispatch, and schema-v2
+  pre-effect/action receipts around schema-v5 local-candidate publication, with
+  exact metadata, filesystem, and receipt reconciliation;
 - append-only schema-v2 Class 0 comparison-trial bindings, lifecycle/accounting
   evidence, schema-v3 admission/dispatch shadows, and a separate schema-v4
   non-enforcing Class 1 private review-artifact publication shadow with
@@ -82,10 +86,17 @@ records.
   run-history integrity plus the frozen migration ledger, then recomputes
   legacy and authority-ceiling parity from persisted run state and independently
   derived typed request attributes, canonical digests, evidence authenticity/
-  freshness, and boundary coverage/order;
+  freshness, boundary coverage/order, billing linkage, artifact metadata, and
+  ordinary/comparison receipt outcomes;
+- bound histories that reach billing or accounting without a controller-owned
+  terminal record are reported as incomplete, while pre-billing attempts may
+  remain in progress;
 - deterministic controlled comparisons with one immutable snapshot, randomized repetition blocks, fresh adapters/sessions/workspaces, and Class 0 permissions;
 - proposal-only self-improvement policy with held-out regression protection;
 - typed execution accounting that keeps subscription capacity, paid-capacity consumption, incremental AI charge, and the narrower API-charge field distinct;
+- privacy-bounded ordinary accounting that stores runner versions only as
+  content references and accepts execution-mode labels only from a fixed
+  controller vocabulary;
 - an operator CLI and a deterministic, live-model-free test suite.
 
 ## Quick start
@@ -102,6 +113,13 @@ PYTHONPATH=src python3 -m ordomata auth-inspect
 ```
 
 The demo does not invoke a model. It writes its accepted artifact and append-only state under `.ordomata/`, which is ignored by Git.
+
+For new demo attempts, the local candidate write is bracketed by a required
+digest-only intent and action-receipt chain. The controller retains verified
+parent-directory and inode descriptors through receipt reconciliation, checks
+that only the expected hard link exists, reconciles commit-then-raise metadata
+and receipt writes, and quarantines any unprovable final effect. These records
+audit the existing Class 0/1 decision; they do not authorize it.
 
 `auth-inspect` never initializes or changes the state database. With no state it
 returns a clean empty report without creating `.ordomata`; after a run it can
@@ -301,9 +319,10 @@ claims about commands available today.
 - no automatic outcome-to-router learning or retry/failover controller yet;
 - no enforcing general runtime ABAC or action receipts yet; non-authoritative
   Chief-of-Staff observations cover admission, dispatch intent, and local-
-  candidate publication, and separate supervisor shadows cover admission,
-  claim, control-transition, and cancellation bookkeeping, while current
-  Class 0/1 and deterministic eligibility gates remain authoritative;
+  candidate publication, with durable but non-authorizing candidate receipts,
+  and separate supervisor shadows cover admission, claim, control-transition,
+  and cancellation bookkeeping, while current Class 0/1 and deterministic
+  eligibility gates remain authoritative;
 - no standing-envelope evaluator, worker-cell shell/egress backend,
   consequential-action outbox/executor, trusted-memory promotion, or adaptive
   unattended scheduler yet;
