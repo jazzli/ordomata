@@ -146,11 +146,15 @@ boundaries:
 
 Controlled comparison trials use a distinct controller projection for the
 Class 0 effect of reading and evaluating one immutable comparison snapshot. A
-digest-only event binds each trial's plan, controls, profile configuration,
-runner settings, and billing assessment before schema-v3 admission and dispatch
-shadows are recorded. The owner-private review artifact is deliberately not
-folded into that Class 0 projection: it remains a separate Class 1 controller
-effect whose publication shadow and action receipt are deferred.
+schema-v2 digest-only event binds each trial's plan, controls, profile
+configuration, runner settings, and billing assessment before schema-v3
+admission and dispatch shadows are recorded. The owner-private review artifact
+is deliberately not folded into that Class 0 projection: it remains a separate
+Class 1 controller effect with a schema-v4 non-enforcing publication shadow and
+linked schema-v2 pre-effect/action-receipt evidence. Historical schema-v1
+comparison records retain their original partial-coverage meaning. The newer
+publication chain also binds its billing-disposition digest to independently
+recomputed, sanitized execution-accounting source facts.
 
 - `subject`: operator principal, controller instance, agent session, assigned
   role and role version, execution profile, runner, and authenticated
@@ -175,9 +179,10 @@ effective value from an authoritative source.
 ## Canonical decision and action receipt
 
 The canonical decision is immutable before enforcement and contains the fields
-below. Phase 1C implements the value type and three non-authoritative Chief-of-
-Staff shadow events; it does not yet issue an executable permit or durable
-enforcement receipt:
+below. Phase 1C implements the value type and non-authoritative Chief-of-Staff
+shadow events. Controlled comparisons also persist a non-enforcing pre-effect
+and observed-action receipt around the private artifact mutation. These records
+do not issue an executable permit or a durable enforcement receipt:
 
 - decision, request, and policy identifiers and digests;
 - an effect, fixed reason codes, and matched rule identifiers;
@@ -373,7 +378,7 @@ violation, not an instruction to follow.
 1. **Implemented — documentation and compatibility inventory.** Adopt this
    target model, record current Class 0/1 authority points, preserve all
    existing gates, and add no new runtime capability.
-2. **Chief-of-Staff slice implemented; broader parity planned — shadow model.**
+2. **Chief-of-Staff and comparison slices implemented; broader parity planned — shadow model.**
    Standard-library request/decision/receipt types, a versioned current-stage
    policy bundle, conservative class derivation, and adversarial fixtures now
    exist. The task contract independently declares its action, resource, and
@@ -386,8 +391,11 @@ violation, not an instruction to follow.
    persisted run, the class from validated typed request attributes,
    derived-class authority-ceiling parity, and expected boundary coverage and
    controller-event order. Class-ceiling mismatches are evidence, not
-   enforcement.
-   Comparison trials and all other current decision paths remain planned.
+   enforcement. Controlled comparison trials add a versioned Class 0 binding,
+   admission/dispatch shadows, and a separately bounded Class 1 private-
+   publication shadow with pre-effect/action-receipt evidence. Historical v1
+   trials remain valid partial evidence. Other current decision paths remain
+   planned.
 3. **Planned — initial enforcement.** Put one deterministic PDP behind the
    current approval gate and add PEPs at admission, dispatch, and local artifact
    publication. Persist append-only authorization decisions, approval receipts,
