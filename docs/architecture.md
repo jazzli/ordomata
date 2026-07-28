@@ -88,15 +88,25 @@ and appends a durable succeeded admission receipt. Class 0, unsafe/high-impact,
 non-permit, stale, or unprovable admission evidence stops before the admission
 shadow, billing preflight, dispatch, or `RUNNING`. The dispatch PEP constructs
 a separate exact `runner.execute` request, evaluates a fixed mock-only policy,
-persists the decision before `RUNNING`, rechecks its
-fresh Class 0/1 ceiling immediately before invocation, and appends a linked
-terminal action receipt. Only a validated identity-matched no-process mock
-result can produce a succeeded receipt. If that result is accepted and
-credential-clean, the controller constructs a second exact local-candidate
-CREATE request, persists its fixed-policy decision and enforcing pre-effect
-record, and rechecks the permit immediately before staging performs the first
-artifact-directory mutation. Its existing descriptor-anchored reconciliation
-chain carries the canonical enforcing action receipt. Existing
+and requires exact readback of the selection, task-attempt binding, mock
+billing assessment, and decision. Before
+`RUNNING`, it rebuilds from current authoritative inputs, independently
+constructs the canonical wrapper and compares it with the retained persisted
+payload, independently replays the fixed policy, checks finite freshness, and
+rechecks exact runner ownership, including the unchanged shipped class and
+instance boundary definitions. The exact `RUNNING` record must then read back
+before a second ownership, binding, policy, and freshness check immediately
+precedes invocation. A linked terminal action receipt must read back exactly
+before publication can proceed; if its persistence is unprovable after the
+runner effect, the attempt is quarantined. Only a validated identity-matched
+no-process mock result can produce a succeeded receipt. Its execution
+accounting must also read back exactly before publication. If that result is
+accepted and credential-clean, the controller constructs a second exact
+local-candidate CREATE request, persists its fixed-policy decision and
+enforcing pre-effect record, and rechecks the permit immediately before
+staging performs the first artifact-directory mutation. Its existing
+descriptor-anchored reconciliation chain carries the canonical enforcing
+action receipt. Existing
 `PermissionClass` and distributed deterministic eligibility gates remain
 independent prerequisites and defense in depth. Task contracts may declare a
 typed task-effect action, resource, and consequence vector independently of
@@ -116,6 +126,11 @@ enforcing decisions and action receipts are distinct from the shadows.
 Unprofiled schema-v1 bindings, live or historical schema-v2 bindings,
 historical schema-v3/v4 bindings, and every comparison path retain their prior
 meaning.
+This hardening uses the existing dispatch event schema and schema-v5 attempt
+binding; it adds no schema version or authority. The dispatch PEP remains
+limited to Class 0/1 requests for the exact profile-backed controller-owned
+`MockRunner`, while every new attempt that reaches it still requires the Class
+1 admission permit.
 There is still no
 general, live, comparison, or supervisor admission PEP, live/shared
 publication or promotion PEP, per-command/tool mediation,
@@ -169,14 +184,18 @@ trigger
      persist an admission decision, rebuild/replay it at the boundary, and
      require a durable succeeded admission receipt
   -> append the non-authoritative Phase 1C task-admission observation
-  -> inspect and persist billing preflight evidence
-  -> for that same narrow path, persist and enforce a fresh fixed-policy
+  -> inspect, persist, and exactly read back billing preflight evidence
+  -> for that same narrow path, persist and exactly read back a fixed-policy
      decision for the exact mock runner invocation
-  -> transition to RUNNING only after that narrow decision is eligible
+  -> rebuild from current inputs, construct and compare the canonical wrapper,
+     replay fixed policy, and check finite freshness and runner ownership
+  -> transition to RUNNING and exactly read back that record
   -> append the non-authoritative task-effect dispatch-intent observation
-  -> recheck the permit freshness immediately at the invocation boundary
+  -> recheck current binding, fixed policy, finite freshness, and exact runner
+     ownership immediately at the invocation boundary
   -> execute bounded harness or deterministic worker
-  -> append the enforced mock action receipt when that narrow PEP applied
+  -> append and exactly read back the enforced mock action receipt when that
+     narrow PEP applied; quarantine if post-effect persistence is unprovable
   -> normalize events and result
   -> perform post-run billing assessment
   -> record capacity/circuit outcome; quarantine on paid or unknown evidence
@@ -403,11 +422,21 @@ and a durable succeeded admission receipt. It inherits the full task
 consequence vector; Class 0, unsafe/high-impact, non-permit, stale, evaluation,
 or evidence failures stop before the admission shadow and billing preflight.
 The second is billing assessment, exact mock-dispatch request and fixed-policy
-decision, Class 0/1 eligibility enforcement
-before `RUNNING`, a final freshness check immediately before invocation, and a
-terminal action receipt linked to the decision and enforced action. A deny,
-defer, indeterminate result, stale permit, unsupported
-obligation, ceiling mismatch, or unproven decision append invokes no runner.
+decision, with exact readback for the selection, task-attempt binding, billing,
+decision, and `RUNNING` evidence. Before `RUNNING`, the controller rebuilds
+current authoritative
+inputs, independently constructs and compares the canonical wrapper,
+independently replays the fixed policy, checks finite freshness and the Class
+0/1 ceiling, and rechecks exact runner ownership. It repeats the binding,
+policy, freshness, and ownership check immediately before invocation. A
+terminal action receipt linked to the decision and enforced action, followed
+by execution accounting, must read back exactly before publication; an
+unprovable post-effect receipt quarantines the attempt. A deny, defer,
+indeterminate result, stale permit, unsupported
+obligation, ceiling mismatch, or unproven pre-effect evidence invokes no
+runner. Read-only inspection accepts a non-permit or pre-effect stop only with
+its exact terminal phase/status and no contradictory dispatch receipt or
+downstream effect evidence.
 The third binds that succeeded dispatch receipt, content-addressed accounting,
 billing disposition, exact artifact and destination, accepted evaluation, and
 credential scan into an independent Class 1 publication request. Its required
@@ -420,6 +449,10 @@ schema-v3/v4 histories remain valid with their previous semantics.
 None of the three chains authorizes shared, remote, active-policy, promotion, deployment,
 live-harness, supervisor-worker, or Class 2/3 effects. The existing Class 0/1
 gate remains an independent prerequisite and cannot be widened by any PEP.
+
+The next narrow authorization slice should make authoritative dispatch intent
+lineage self-contained for read-only replay without depending on
+non-authoritative shadow preimages, before any permission expansion.
 
 ## Controlled comparison
 

@@ -33,7 +33,9 @@ Earlier design discussion selected machine-verifiable repository maintenance as 
   The runtime still enforces that interim numeric representation. The three
   narrow profile-backed exact built-in-mock PEPs for Class 1 admission,
   dispatch, and local-candidate publication also derive and enforce the same
-  ceiling from exact ABAC requests; broader target coverage remains incomplete.
+  ceiling from exact ABAC requests; the dispatch policy itself remains limited
+  to Class 0/1, while every new attempt reaching it still requires Class 1
+  admission. Broader target coverage remains incomplete.
 - No production inbox, calendar, Drive, Slack, or similar connectors.
 - No n8n dependency.
 - No purchased-credit, subscription-overage, AI API SDK, cloud-model, or metered fallback.
@@ -100,12 +102,23 @@ checks freshness, and requires a durable succeeded receipt. Class 0,
 unsafe/high-impact, non-permit, stale, evaluation, or evidence failures stop
 before the admission shadow and billing. After admission and billing, the controller builds
 an exact mock-only execute request, evaluates a fixed versioned policy,
-persists and reconciles its decision before `RUNNING`, and checks permit
-freshness, supported obligations, the derived Class 0/1 ceiling, and the
-independent legacy gate immediately before invocation. A non-permit,
-evaluation failure, stale decision, unsupported obligation, or uncertain
-decision append invokes no runner. Once invocation starts, a linked terminal
-action receipt is required; only a validated identity-matched no-process mock
+exactly reads back the selection, task-attempt binding, mock billing assessment
+and decision, and then rebuilds
+from current authoritative inputs. Before `RUNNING`, it independently
+constructs the canonical wrapper and compares it with the retained persisted
+payload, independently replays the fixed policy, checks finite freshness,
+supported obligations, the derived Class 0/1 ceiling, the independent legacy
+gate, and unchanged shipped runner class and instance boundaries. It requires
+exact `RUNNING` readback and
+repeats the current binding, policy, freshness, and runner-ownership checks
+immediately before invocation. A non-permit, evaluation failure, stale
+decision, unsupported obligation, or uncertain pre-effect evidence invokes no
+runner. Once invocation starts, a linked terminal action receipt and execution
+accounting must read back exactly before publication; unprovable receipt
+persistence after the effect quarantines the attempt. Read-only inspection
+requires exact terminal linkage for non-permits and rejects any dispatch
+receipt that contradicts a claimed pre-effect stop. Only a validated
+identity-matched no-process mock
 result may receive a succeeded receipt. Accepted, credential-clean output then
 passes a second fixed Class 1 policy that binds the dispatch receipt,
 content-addressed accounting, billing disposition, and exact candidate. Its
@@ -116,9 +129,11 @@ historical/live schema-v2 selections, historical schema-v3/v4 admission,
 comparison trials, supervisor workers, general or live admission, shared
 publication, tools, commands, or external effects.
 
-The next narrow authorization slice is to harden the existing dispatch final
-PEP with current-input rebuilding, exact persisted-wrapper equality, and
-independent fixed-policy replay before broadening enforcement.
+This dispatch hardening uses the existing event schema and schema-v5 binding;
+it adds no schema version or authority. The next narrow authorization slice
+should make authoritative dispatch intent lineage self-contained for read-only
+replay without depending on non-authoritative shadow preimages, before any
+permission expansion.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and

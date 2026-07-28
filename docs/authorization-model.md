@@ -125,12 +125,21 @@ independently replays policy, checks freshness, and requires a durable
 succeeded receipt. Class 0, unsafe/high-impact, non-permit, stale, evaluation,
 or evidence failures stop before the admission shadow, billing, dispatch, or
 `RUNNING`. After admission and required billing evidence, the controller builds
-an exact mock-only execute request,
-evaluates a fixed versioned policy, persists and reconciles the decision, and
-requires a fresh `permit`, a derived class no greater than the persisted run
-class or Class 1, exact supported obligations, and the independent legacy gate
-before invoking the runner. The action start is checked immediately before the
-call; a linked terminal action receipt is required once invocation begins.
+an exact mock-only execute request, evaluates a fixed versioned policy, and
+requires exact readback of the selection, task-attempt binding, mock billing
+assessment, and decision. Before
+`RUNNING`, the PEP rebuilds the authorization from current controller inputs,
+independently constructs the canonical wrapper for exact comparison with the
+retained persisted payload, independently replays the fixed policy, requires
+finite current time, a derived class no greater than the persisted run class or
+Class 1, exact supported obligations, the independent legacy gate, and the
+unchanged shipped controller-owned runner class and instance boundaries. The
+`RUNNING` record must then read back
+exactly. The PEP repeats the binding, fixed-policy, finite-freshness, and
+runner-ownership checks immediately before the call. A linked terminal action
+receipt is required once invocation begins, and both it and execution
+accounting must read back exactly before publication can proceed; unprovable
+receipt persistence after the effect quarantines the attempt.
 After a succeeded, accepted, credential-clean mock result, a separate exact
 Class 1 CREATE request binds that receipt, accounting, billing disposition, and
 candidate metadata. Its decision and enforcing pre-effect record must be
@@ -140,6 +149,10 @@ uncertain decision persistence perform no governed action. Unprofiled
 schema-v1, live or historical schema-v2, and historical schema-v3/v4 histories
 remain valid under their frozen semantics, and live, comparison, supervisor,
 or general-admission paths do not inherit this authority.
+The hardening changes no event or attempt-binding schema and grants no new
+authority. The dispatch PEP remains limited to Class 0/1 requests for the exact
+profile-backed controller-owned `MockRunner`; new attempts still require the
+existing Class 1 admission permit before they can reach dispatch.
 
 The first task contract now distinguishes the owner-private local candidate
 action from future active/shared promotion. Independently, the publication
@@ -162,6 +175,10 @@ required.
 Policy activation, Git/remote publication, deployment, and other shared effects
 remain separate unimplemented typed actions whose exact resource version and
 digest must receive fresh authorization and any required approval.
+
+The next narrow authorization slice should make authoritative dispatch intent
+lineage self-contained for read-only replay without depending on
+non-authoritative shadow preimages, before any permission expansion.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
@@ -461,12 +478,21 @@ violation, not an instruction to follow.
    mock attempt, its dispatch, and the resulting owner-private candidate
    publication. Admission requires a persisted decision, exact current-input
    rebuild and persisted-wrapper equality, independent policy replay,
-   freshness, and a durable succeeded receipt before shadow or billing. Dispatch
-   persists a fixed-policy decision before `RUNNING`, rechecks
-   freshness and the Class 0/1 ceiling immediately before invocation, and
-   requires a linked action receipt after invocation starts. Publication uses
-   its own fixed Class 1 decision, pre-effect record, staging-bound freshness
-   check, and reconciled action receipt. General/live/comparison/supervisor
+   freshness, and a durable succeeded receipt before shadow or billing.
+   Dispatch exactly reads back selection, task-attempt binding, mock billing,
+   and decision evidence, rebuilds
+   current inputs, independently constructs and compares the canonical
+   persisted wrapper, independently replays fixed policy, and checks finite
+   freshness and unchanged shipped runner boundaries before `RUNNING`. It exactly reads
+   back `RUNNING`, repeats those current checks immediately before invocation,
+   and exactly reads back the linked action receipt and execution accounting
+   before publication;
+   unprovable post-effect receipt persistence quarantines the attempt.
+   Publication uses its own fixed Class 1 decision, pre-effect record,
+   staging-bound freshness check, and reconciled action receipt. These dispatch
+   changes require no schema bump and do not widen the exact profile-backed
+   `MockRunner` Class 0/1 boundary; new admission remains Class 1.
+   General/live/comparison/supervisor
    admission, shared publication or promotion, comparison execution,
    supervisor worker dispatch, live harness,
    approvals/resumption, and mediated commands/tools remain non-enforcing or

@@ -98,14 +98,22 @@ rebuilds current inputs, compares the exact persisted wrapper, independently
 replays policy, checks freshness, and requires a durable succeeded receipt
 before the admission shadow or billing. Class 0, unsafe/high-impact,
 non-permit, stale, evaluation, or evidence failures stop pre-billing. The
-controller then persists a fixed-policy dispatch
-decision before `RUNNING`, rechecks freshness, exact obligations, the derived
-Class 0/1 ceiling, and the independent legacy gate immediately before
-invocation, and requires a linked action receipt once invocation begins. An
-accepted, credential-clean result then receives a separate fixed-policy Class 1
-decision and enforcing pre-effect record before freshness is rechecked at the
-first staging mutation; its reconciled filesystem receipt is the canonical
-action receipt.
+selection and task-attempt binding require exact readback. The controller then
+persists a fixed-policy dispatch
+decision after exactly reading back the mock billing evidence, then exactly
+reads back the decision. Before `RUNNING`, it rebuilds current inputs,
+independently constructs and compares the canonical persisted wrapper,
+independently replays fixed policy, checks finite freshness, exact obligations,
+the derived Class 0/1 ceiling, the independent legacy gate, and the unchanged
+shipped runner class and instance boundaries. It exactly reads back `RUNNING`
+and repeats the current binding,
+policy, freshness, and ownership checks immediately before invocation. The
+linked action receipt and execution accounting must read back exactly before
+publication, and an unprovable post-effect receipt quarantines the attempt. An accepted,
+credential-clean result then receives a separate fixed-policy Class 1 decision
+and enforcing pre-effect record before freshness is rechecked at the first
+staging mutation; its reconciled filesystem receipt is the canonical action
+receipt.
 General runtime ABAC enforcement is still **planned**. `PermissionClass`
 remains authoritative across contracts, approval, routing, runner validation,
 persistence, evaluation, and comparison, alongside the distributed billing,
@@ -117,10 +125,13 @@ publication receipts and historical ordinary receipts are migration evidence
 only; schema-v4/v5 ordinary publication is the narrow
 authoritative exception and cannot grant any broader effect.
 
-The next narrow authorization slice should harden the existing dispatch final
-PEP with current-input rebuilding, exact persisted-wrapper equality, and
-independent fixed-policy replay before extending enforcement to broader
-boundaries.
+The dispatch hardening uses the existing event schema and schema-v5 attempt
+binding, so it adds no schema version or authority. Dispatch remains limited to
+Class 0/1 requests for the exact profile-backed controller-owned `MockRunner`,
+while new attempts still require Class 1 admission. The next narrow
+authorization slice should make authoritative dispatch intent lineage
+self-contained for read-only replay without depending on non-authoritative
+shadow preimages, before any permission expansion.
 
 The target semantics for Class 3 standing envelopes, irreversible actions,
 the non-delegable root-authority kernel, consequential outbox execution,

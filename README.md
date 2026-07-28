@@ -86,16 +86,25 @@ records.
   directories created earlier are inert controller scaffolding. The full task
   consequence vector is inherited, so Class 0, unsafe/high-impact, non-permit,
   stale, malformed, or unprovable admission evidence stops before billing. A
-  separate fixed-policy permit is then required for the exact mock `runner.execute`
-  action before `RUNNING`, with a freshness recheck immediately at invocation
-  and a content-addressed terminal action receipt; accepted,
-  credential-clean output then requires a separate fixed-policy Class 1 permit
-  immediately before the first local-candidate filesystem mutation and an
-  integrated reconciled action receipt; every non-permit,
-  stale permit, authority-ceiling mismatch, or uncertain decision write blocks
-  before its action, and only a validated identity-matched no-process result
-  can receive a succeeded dispatch receipt, while live, comparison, supervisor,
-  shared publication, and promotion paths remain non-enforcing or disabled;
+  separate fixed-policy permit is then required for the exact mock
+  `runner.execute` action. The immutable execution selection, task-attempt
+  binding, mock billing assessment, enforcing decision, and `RUNNING`
+  transition each require exact durable readback. Before `RUNNING`
+  and again immediately before invocation, the controller rebuilds the permit
+  from current authoritative inputs, independently constructs the canonical
+  wrapper for equality with the retained persisted payload, replays the fixed
+  policy, rejects non-finite or stale action times, and rechecks exact runner
+  ownership, including unchanged shipped class and instance boundaries. Its
+  content-addressed terminal action receipt and execution accounting also
+  require exact readback before publication may proceed; an unprovable receipt
+  after execution quarantines the attempt. Accepted, credential-clean output then
+  requires a separate fixed-policy Class 1 permit immediately before the first
+  local-candidate filesystem mutation and an integrated reconciled action
+  receipt. Every non-permit, stale permit, authority-ceiling mismatch, or
+  uncertain required write blocks before its governed action, and only a
+  validated identity-matched no-process result can receive a succeeded
+  dispatch receipt, while live, comparison, supervisor, shared publication,
+  and promotion paths remain non-enforcing or disabled;
 - digest-only ordinary task-attempt bindings that cover the typed authorization
   intent and, for profile-backed attempts, the immutable execution selection,
   profile version, and configuration; new enforced mock attempts use one
@@ -118,7 +127,9 @@ records.
   legacy and authority-ceiling parity from persisted run state and independently
   derived typed request attributes, canonical digests, evidence authenticity/
   freshness, boundary coverage/order, billing linkage, artifact metadata, and
-  ordinary/comparison receipt outcomes;
+  ordinary/comparison receipt outcomes; enforcing mock non-permits require
+  their exact controller terminal, and a claimed pre-effect stop cannot
+  coexist with a dispatch receipt;
 - bound histories that reach billing or accounting without a controller-owned
   terminal record are reported as incomplete, while pre-billing attempts may
   remain in progress;
@@ -129,6 +140,14 @@ records.
   content references and accepts execution-mode labels only from a fixed
   controller vocabulary;
 - an operator CLI and a deterministic, live-model-free test suite.
+
+The dispatch hardening changes no event or attempt-binding schema and grants no
+new authority. Dispatch remains limited to Class 0/1 requests for the exact
+profile-backed controller-owned `MockRunner`; new attempts that reach it still
+require the existing Class 1 admission permit. The next narrow authorization
+slice should make authoritative dispatch intent lineage self-contained for
+read-only replay without depending on non-authoritative shadow preimages,
+before any permission expansion.
 
 ## Quick start
 

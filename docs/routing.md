@@ -12,6 +12,9 @@ candidate publication. Admission inherits the full task consequence vector
 and precedes billing. All live, comparison, supervisor, general-admission, and
 other dispatch/effect boundaries remain non-enforcing or disabled. Existing
 Class 0/1 checks remain independent authoritative compatibility gates.
+The dispatch policy remains limited to Class 0/1 requests for the exact
+profile-backed controller-owned `MockRunner`; new attempts reaching it still
+require the Class 1 admission permit.
 
 ## Execution profile
 
@@ -72,8 +75,8 @@ task binding—schema v5 for new exact built-in-mock attempts, frozen schema v4
 for dispatch-plus-publication attempts, schema v3 for historical dispatch-only
 mock attempts, and schema v2 for live or historical selected attempts—and by
 admission/dispatch parameter
-digests. Its required
-append uses exact readback reconciliation: an unproven write blocks before the
+digests. The selection and task-attempt binding both use exact readback
+reconciliation: an unproven write blocks before the
 runner executes, while a commit-then-raise write may continue only after exact
 payload and event-ID readback.
 
@@ -90,13 +93,22 @@ independently replays policy, checks freshness, and appends a durable succeeded
 receipt before the admission shadow or billing. The run record and private
 directories that precede it are inert scaffolding. Class 0, unsafe/high-impact,
 non-permit, stale, evaluation, or evidence failures stop pre-billing. Routing
-evidence is then an input to a separate exact execute request. The controller must persist a fixed-policy
-decision before `RUNNING`, then recheck its freshness, exact obligations, and
-Class 0/1 ceiling immediately before invocation. A linked action receipt is
-required after invocation starts. If the result reaches candidate publication,
-the selection and succeeded dispatch receipt are inputs to a second exact
-Class 1 request checked immediately before staging. Selection grants neither
-permit.
+evidence is then an input to a separate exact execute request. The controller
+must persist a fixed-policy decision only after exact readback of the mock
+billing assessment, and the decision itself must read back exactly. Before
+`RUNNING`, the PEP rebuilds current authoritative inputs, independently
+constructs the canonical wrapper for comparison with the retained persisted
+payload, independently replays the fixed policy, checks finite freshness,
+exact obligations, the Class 0/1 ceiling, and the unchanged shipped runner
+class and instance boundaries. The
+`RUNNING` record must read back exactly before the PEP repeats current binding,
+fixed-policy, freshness, and runner-ownership checks immediately before
+invocation. A linked action receipt and execution accounting must read back
+exactly before candidate publication; unprovable post-effect receipt persistence quarantines the
+attempt. If the result reaches candidate publication, the selection and
+succeeded dispatch receipt are inputs to a second exact Class 1 request checked
+immediately before staging. Selection grants neither permit. This hardening
+changes no event or attempt-binding schema and widens no permission.
 
 The read-only authorization inspector validates one-and-only-one coverage for
 schema-v2/v3/v4/v5 attempts and independently recomputes the candidate-set and policy
@@ -107,10 +119,9 @@ evidence never grants authority and never makes stale or unsafe billing
 evidence eligible. The `route` command remains a read-only preview, and an
 explicit profile rejected before run creation intentionally leaves no event.
 
-The next narrow authorization change should harden the existing dispatch final
-PEP with current-input rebuild, exact persisted-wrapper equality, and
-independent fixed-policy replay before broader routing or execution boundaries
-gain enforcement.
+The next narrow authorization slice should make authoritative dispatch intent
+lineage self-contained for read-only replay without depending on
+non-authoritative shadow preimages, before any permission expansion.
 
 ## Adaptive promoted-profile routing (target)
 

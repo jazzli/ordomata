@@ -74,11 +74,11 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 
 @contextmanager
 def recording_mock_calls():
-    """Observe the exact built-in mock without substituting another runner."""
+    """Observe controller runner seams without mutating the runner class."""
 
     calls = {"inspect": 0, "execute": 0}
-    original_inspect = MockRunner.inspect_billing_route
-    original_execute = MockRunner.execute
+    original_inspect = orchestrator_module._inspect_runner_billing_route
+    original_execute = orchestrator_module._execute_runner
 
     async def recording_inspect(runner):
         calls["inspect"] += 1
@@ -90,11 +90,15 @@ def recording_mock_calls():
 
     with (
         patch.object(
-            MockRunner,
-            "inspect_billing_route",
+            orchestrator_module,
+            "_inspect_runner_billing_route",
             new=recording_inspect,
         ),
-        patch.object(MockRunner, "execute", new=recording_execute),
+        patch.object(
+            orchestrator_module,
+            "_execute_runner",
+            new=recording_execute,
+        ),
     ):
         yield calls
 
@@ -251,7 +255,7 @@ class AdmissionAuthorizationOrchestratorTests(unittest.TestCase):
                 )
 
             self.assertEqual(report.status, RunStatus.SUCCEEDED)
-            self.assertEqual(calls, {"inspect": 2, "execute": 1})
+            self.assertEqual(calls, {"inspect": 1, "execute": 1})
             events = self._events(root, run_id)
             selection = self._only(events, "task_execution_selection")
             binding = self._only(
@@ -565,7 +569,7 @@ class AdmissionAuthorizationOrchestratorTests(unittest.TestCase):
                         )
                 else:
                     self.assertEqual(len(decisions), 1)
-                    self.assertEqual(calls, {"inspect": 2, "execute": 1})
+                    self.assertEqual(calls, {"inspect": 1, "execute": 1})
 
     def test_receipt_persistence_precommit_fails_and_commit_reconciles(
         self,
@@ -649,7 +653,7 @@ class AdmissionAuthorizationOrchestratorTests(unittest.TestCase):
                         )
                 else:
                     self.assertEqual(len(receipts), 1)
-                    self.assertEqual(calls, {"inspect": 2, "execute": 1})
+                    self.assertEqual(calls, {"inspect": 1, "execute": 1})
 
     def test_unprovable_admission_readback_never_reaches_billing(self) -> None:
         original_readback = orchestrator_module._event_persistence_state

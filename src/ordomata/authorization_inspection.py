@@ -10,7 +10,7 @@ identifiers never leave this module.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import json
@@ -1365,6 +1365,8 @@ def inspect_authorization_shadows(
             task_admission_receipt,
             event_rows_for_run,
             mock_dispatch_decision_rows_by_run[fact.raw_run_id],
+            terminal_rows=terminal_event_rows_by_run[fact.raw_run_id],
+            receipt_rows=mock_dispatch_receipt_rows_by_run[fact.raw_run_id],
         )
         if valid_comparison_binding:
             comparison_billing = _inspect_comparison_billing(
@@ -5335,6 +5337,9 @@ def _inspect_mock_dispatch_decision(
     task_admission_receipt: _TaskAdmissionReceiptFacts,
     shadow_rows: list[sqlite3.Row],
     rows: list[sqlite3.Row],
+    *,
+    terminal_rows: list[sqlite3.Row],
+    receipt_rows: list[sqlite3.Row],
 ) -> _MockDispatchDecisionFacts:
     """Validate and independently re-evaluate the enforcing mock decision."""
 
@@ -5355,10 +5360,24 @@ def _inspect_mock_dispatch_decision(
             )
         return _empty_mock_dispatch_decision()
     if len(rows) != 1:
+        persistence_stop = bool(
+            not rows
+            and _is_mock_dispatch_decision_absence_stop(
+                fact,
+                task_binding,
+                task_execution_selection,
+                task_billing,
+                terminal_rows,
+                shadow_rows=shadow_rows,
+                receipt_rows=receipt_rows,
+            )
+        )
         return _empty_mock_dispatch_decision(
             observed=bool(rows),
             issue=(
-                "mock_dispatch_decision_missing"
+                None
+                if persistence_stop
+                else "mock_dispatch_decision_missing"
                 if not rows
                 else "mock_dispatch_decision_duplicate"
             ),
@@ -5686,6 +5705,99 @@ def _empty_mock_dispatch_decision(
         None,
         None,
         tuple(sorted(set(issues))),
+    )
+
+
+def _is_mock_dispatch_decision_absence_stop(
+    fact: _RunFacts,
+    task_binding: _TaskAttemptBindingFacts,
+    task_execution_selection: _TaskExecutionSelectionFacts,
+    task_billing: _TaskBillingFacts,
+    rows: list[sqlite3.Row],
+    *,
+    shadow_rows: list[sqlite3.Row],
+    receipt_rows: list[sqlite3.Row],
+) -> bool:
+    """Recognize an exact fail-closed stop before a dispatch decision."""
+
+    if len(rows) != 1 or receipt_rows:
+        return False
+    row = rows[0]
+    payload = _bounded_json_mapping(row["payload_json"])
+    sequence = _optional_sequence(row["sequence"])
+    phase = payload.get("phase") if isinstance(payload, Mapping) else None
+    billing_sequence = fact.billing_sequence
+    if (
+        row["event_type"] != "status"
+        or row["status"]
+        not in {RunStatus.FAILED.value, RunStatus.CANCELLED.value}
+        or fact.latest_status != row["status"]
+        or not isinstance(payload, Mapping)
+        or set(payload) != {"phase"}
+        or phase
+        not in {
+            "billing_assessment_persistence",
+            "mock_dispatch_authorization_persistence",
+        }
+        or sequence is None
+        or sequence != fact.terminal_sequence
+        or task_binding.sequence is None
+        or sequence <= task_binding.sequence
+        or task_binding.issues
+        or task_execution_selection.sequence is None
+        or sequence <= task_execution_selection.sequence
+        or task_execution_selection.issues
+        or _optional_timestamp(row["occurred_at"]) is None
+        or not _event_identifier_matches_status(row, payload, fact.raw_run_id)
+        or fact.running_observed
+        or fact.succeeded_observed
+        or fact.accounting_sequence is not None
+        or fact.runner_event_count != 0
+        or fact.artifact_observed
+        or fact.task_artifact_intent_event_count != 0
+        or fact.task_artifact_action_receipt_event_count != 0
+        or fact.task_artifact_metadata_count != 0
+        or fact.comparison_artifact_intent_event_count != 0
+        or fact.comparison_artifact_observed_event_count != 0
+        or fact.comparison_artifact_action_receipt_event_count != 0
+    ):
+        return False
+    if phase == "billing_assessment_persistence":
+        if (
+            billing_sequence is not None
+            or fact.comparison_billing_event_count != 0
+            or task_billing.payload is not None
+            or task_billing.assessment_digest is not None
+            or task_billing.issues
+        ):
+            return False
+        evidence_boundary = sequence
+    else:
+        if (
+            billing_sequence is None
+            or sequence <= billing_sequence
+            or fact.comparison_billing_event_count != 1
+            or not isinstance(task_billing.payload, Mapping)
+            or task_billing.assessment_digest is None
+            or task_billing.issues
+            or not _task_billing_policy_consistent(task_billing.payload)
+        ):
+            return False
+        evidence_boundary = billing_sequence
+    return all(
+        (
+            shadow_sequence := _optional_sequence(shadow_row["sequence"])
+        )
+        is not None
+        and shadow_sequence < evidence_boundary
+        and (
+            shadow_payload := _bounded_json_mapping(
+                shadow_row["payload_json"]
+            )
+        )
+        is not None
+        and shadow_payload.get("action_scope") == ADMISSION_SCOPE
+        for shadow_row in shadow_rows
     )
 
 
@@ -6280,17 +6392,51 @@ def _inspect_mock_dispatch_receipt(
             )
         return _empty_mock_dispatch_receipt()
 
-    freshness_stop = _is_mock_dispatch_freshness_stop(
+    terminal_claims_pre_effect_stop = _is_mock_dispatch_pre_effect_stop(
         fact,
         decision,
         terminal_rows,
+        receipt_rows=(),
+    )
+    pre_effect_stop = _is_mock_dispatch_pre_effect_stop(
+        fact,
+        decision,
+        terminal_rows,
+        receipt_rows=rows,
+    )
+    authorized_decision = bool(
+        decision.observed
+        and not decision.issues
+        and decision.effect == AuthorizationEffect.PERMIT.value
+        and decision.authorization_eligible is True
+    )
+    nonpermit_decision = bool(
+        decision.observed
+        and not decision.issues
+        and decision.authorization_eligible is False
+    )
+    nonpermit_stop = _is_mock_dispatch_nonpermit_stop(
+        fact,
+        decision,
+        terminal_rows,
+        receipt_rows=rows,
     )
     invocation_began = bool(
-        rows or (fact.running_observed and not freshness_stop)
+        rows
+        or (
+            not pre_effect_stop
+            and (fact.running_observed or authorized_decision)
+        )
     )
     if len(rows) != 1:
         if not rows and not invocation_began:
-            return _empty_mock_dispatch_receipt()
+            return _empty_mock_dispatch_receipt(
+                issue=(
+                    "mock_dispatch_nonpermit_terminal_invalid"
+                    if nonpermit_decision and not nonpermit_stop
+                    else None
+                )
+            )
         return _empty_mock_dispatch_receipt(
             observed=bool(rows),
             issue=(
@@ -6305,6 +6451,8 @@ def _inspect_mock_dispatch_receipt(
     occurred_at = _optional_timestamp(row["occurred_at"])
     payload = _bounded_json_mapping(row["payload_json"])
     issues: list[str] = []
+    if terminal_claims_pre_effect_stop:
+        issues.append("mock_dispatch_receipt_after_pre_effect_stop")
     if sequence is None:
         issues.append("mock_dispatch_receipt_sequence_invalid")
     if occurred_at is None:
@@ -6545,34 +6693,151 @@ def _empty_mock_dispatch_receipt(
     )
 
 
-def _is_mock_dispatch_freshness_stop(
+def _is_mock_dispatch_pre_effect_stop(
     fact: _RunFacts,
     decision: _MockDispatchDecisionFacts,
     rows: list[sqlite3.Row],
+    *,
+    receipt_rows: Sequence[sqlite3.Row],
 ) -> bool:
-    """Recognize only the controller's exact pre-invocation freshness stop."""
+    """Recognize exact controller stops after a permit but before invocation."""
 
-    if len(rows) != 1:
+    if len(rows) != 1 or receipt_rows:
         return False
     row = rows[0]
     payload = _bounded_json_mapping(row["payload_json"])
     terminal_sequence = _optional_sequence(row["sequence"])
-    return bool(
+    if not (
         row["event_type"] == "status"
-        and row["status"] == RunStatus.BLOCKED.value
-        and fact.latest_status == RunStatus.BLOCKED.value
+        and fact.latest_status == row["status"]
         and terminal_sequence == fact.terminal_sequence
         and terminal_sequence is not None
-        and fact.running_sequence is not None
-        and terminal_sequence > fact.running_sequence
         and decision.sequence is not None
         and terminal_sequence > decision.sequence
+        and fact.billing_sequence is not None
+        and decision.sequence > fact.billing_sequence
+        and not decision.issues
         and decision.effect == AuthorizationEffect.PERMIT.value
         and decision.authorization_eligible is True
         and _optional_timestamp(row["occurred_at"]) is not None
         and isinstance(payload, Mapping)
-        and payload == {"phase": "mock_dispatch_authorization_freshness"}
+        and set(payload) == {"phase"}
         and _event_identifier_matches_status(row, payload, fact.raw_run_id)
+        and not fact.succeeded_observed
+        and fact.accounting_sequence is None
+        and fact.runner_event_count == 0
+        and not fact.artifact_observed
+        and fact.task_artifact_intent_event_count == 0
+        and fact.task_artifact_action_receipt_event_count == 0
+        and fact.task_artifact_metadata_count == 0
+        and fact.comparison_artifact_intent_event_count == 0
+        and fact.comparison_artifact_observed_event_count == 0
+        and fact.comparison_artifact_action_receipt_event_count == 0
+    ):
+        return False
+    phase = payload.get("phase")
+    status = row["status"]
+    if phase == "mock_dispatch_authorization_freshness" and status in {
+        RunStatus.BLOCKED.value,
+        RunStatus.CANCELLED.value,
+        RunStatus.FAILED.value,
+    }:
+        return bool(
+            (
+                not fact.running_observed
+                and fact.running_sequence is None
+            )
+            or (
+                fact.running_observed
+                and fact.running_sequence is not None
+                and decision.sequence < fact.running_sequence
+                < terminal_sequence
+            )
+        )
+    return bool(
+        not fact.running_observed
+        and fact.running_sequence is None
+        and phase
+        in {
+            "mock_dispatch_authorization_persistence",
+            "runner_execution_transition",
+        }
+        and status
+        in {RunStatus.FAILED.value, RunStatus.CANCELLED.value}
+    )
+
+
+def _is_mock_dispatch_nonpermit_stop(
+    fact: _RunFacts,
+    decision: _MockDispatchDecisionFacts,
+    rows: list[sqlite3.Row],
+    *,
+    receipt_rows: Sequence[sqlite3.Row],
+) -> bool:
+    """Require the exact terminal produced by a persisted non-permit."""
+
+    if (
+        len(rows) != 1
+        or receipt_rows
+        or not decision.observed
+        or decision.issues
+        or decision.authorization_eligible is not False
+        or decision.sequence is None
+    ):
+        return False
+    row = rows[0]
+    payload = _bounded_json_mapping(row["payload_json"])
+    terminal_sequence = _optional_sequence(row["sequence"])
+    if (
+        row["event_type"] != "status"
+        or fact.latest_status != row["status"]
+        or terminal_sequence is None
+        or terminal_sequence != fact.terminal_sequence
+        or terminal_sequence <= decision.sequence
+        or fact.billing_sequence is None
+        or decision.sequence <= fact.billing_sequence
+        or _optional_timestamp(row["occurred_at"]) is None
+        or not isinstance(payload, Mapping)
+        or set(payload) != {"phase"}
+        or not _event_identifier_matches_status(
+            row,
+            payload,
+            fact.raw_run_id,
+        )
+        or fact.running_observed
+        or fact.succeeded_observed
+        or fact.accounting_sequence is not None
+        or fact.runner_event_count != 0
+        or fact.artifact_observed
+        or fact.task_artifact_intent_event_count != 0
+        or fact.task_artifact_action_receipt_event_count != 0
+        or fact.task_artifact_metadata_count != 0
+        or fact.comparison_artifact_intent_event_count != 0
+        or fact.comparison_artifact_observed_event_count != 0
+        or fact.comparison_artifact_action_receipt_event_count != 0
+    ):
+        return False
+    phase = payload.get("phase")
+    status = row["status"]
+    if (
+        phase == "mock_dispatch_authorization_persistence"
+        and status
+        in {RunStatus.FAILED.value, RunStatus.CANCELLED.value}
+    ):
+        return True
+    if (
+        phase == "mock_dispatch_authorization"
+        and status == RunStatus.BLOCKED.value
+    ):
+        return True
+    decision_payload = decision.payload
+    return bool(
+        isinstance(decision_payload, Mapping)
+        and decision_payload.get("failure_stage")
+        == "request_or_evaluation"
+        and decision.effect == AuthorizationEffect.INDETERMINATE.value
+        and phase == "mock_dispatch_authorization_evaluation"
+        and status == RunStatus.CANCELLED.value
     )
 
 
