@@ -31,7 +31,7 @@ from .artifact_filesystem import (
     remove_owned_published_artifact,
     stage_artifact,
 )
-from .authorization import canonical_digest
+from .authorization import ReceiptOutcome, canonical_digest
 from .billing import (
     BillingPolicy,
     BillingPostRunDisposition,
@@ -45,7 +45,17 @@ from .context import (
     render_synthesis_prompt,
 )
 from .contracts import TaskContract, load_task_contract
+from .dispatch_authorization import (
+    MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE,
+    MOCK_DISPATCH_DECISION_EVENT_TYPE,
+    MockDispatchAuthorization,
+    assert_mock_dispatch_authorized,
+    build_mock_dispatch_action_receipt,
+    build_mock_dispatch_failure_payload,
+    evaluate_mock_dispatch_authorization,
+)
 from .errors import (
+    AuthorizationBlocked,
     OrdomataError,
     BillingRouteBlocked,
     ConfigurationError,
@@ -571,6 +581,17 @@ async def run_chief_of_staff(
         selected_source_billing_assessment = (
             rebuilt_execution.selected_source_billing_assessment
         )
+    if (
+        active_runner.runner_id == "mock"
+        and selected_execution is not None
+        and type(active_runner) is not MockRunner
+    ):
+        raise ValidationError(
+            "selected mock execution requires the controller-owned mock runner"
+        )
+    enforce_mock_dispatch = (
+        type(active_runner) is MockRunner and selected_execution is not None
+    )
     ordomata_root = _contained_path(root, resolve_state_root(root))
     selected_run_root = _contained_path(
         root, Path(run_root).resolve() if run_root is not None else ordomata_root / "runs"
@@ -603,6 +624,9 @@ async def run_chief_of_staff(
     )
     prompt_digest = (
         "sha256:" + hashlib.sha256(prepared.prompt.encode("utf-8")).hexdigest()
+    )
+    resolved_task_authorization_intent_digest = (
+        task_authorization_intent_digest(prepared.contract)
     )
 
     with SQLiteStateStore(selected_state_path) as state:
@@ -644,7 +668,7 @@ async def run_chief_of_staff(
             project_root=str(root),
             profile_id=selected_profile_id,
             authorization_intent_digest=(
-                task_authorization_intent_digest(prepared.contract)
+                resolved_task_authorization_intent_digest
             ),
             execution_selection_digest=execution_selection_digest,
             profile_version_ref=(
@@ -657,6 +681,7 @@ async def run_chief_of_staff(
                 if selected_execution is None
                 else selected_execution.selected_profile_configuration_digest
             ),
+            enforce_mock_dispatch=enforce_mock_dispatch,
         )
         task_binding_digest = task_binding["binding_digest"]
         assert isinstance(task_binding_digest, str)
@@ -770,6 +795,121 @@ async def run_chief_of_staff(
                 phase="billing_assessment_persistence",
             )
             raise
+        mock_dispatch_authorization: MockDispatchAuthorization | None = None
+        mock_dispatch_action_started_at: float | None = None
+        if enforce_mock_dispatch:
+            assert execution_selection_digest is not None
+            assert selected_profile_id is not None
+            authorization_evaluated_at = time.time()
+            authorization_evaluation_error: BaseException | None = None
+            try:
+                mock_dispatch_authorization = (
+                    evaluate_mock_dispatch_authorization(
+                        contract=prepared.contract,
+                        request=request,
+                        runner_id=active_runner.runner_id,
+                        profile_id=selected_profile_id,
+                        project_root=root,
+                        task_attempt_binding_digest=task_binding_digest,
+                        execution_selection_digest=(
+                            execution_selection_digest
+                        ),
+                        context_digest=prepared.context_pack.snapshot_hash,
+                        prompt_digest=prompt_digest,
+                        billing_assessment=preflight_assessment,
+                        billing_assessment_digest=billing_metadata[
+                            "assessment_digest"
+                        ],
+                        evaluated_at=authorization_evaluated_at,
+                        legacy_executable=legacy_executable,
+                    )
+                )
+                authorization_payload = (
+                    mock_dispatch_authorization.to_event_payload()
+                )
+            except Exception:
+                mock_dispatch_authorization = None
+                authorization_payload = build_mock_dispatch_failure_payload(
+                    task_attempt_binding_digest=task_binding_digest,
+                    execution_selection_digest=execution_selection_digest,
+                    billing_assessment_digest=billing_metadata[
+                        "assessment_digest"
+                    ],
+                    task_authorization_intent_digest=(
+                        resolved_task_authorization_intent_digest
+                    ),
+                    requested_permission_class=request.permission_class,
+                    legacy_executable=legacy_executable,
+                    evaluated_at=authorization_evaluated_at,
+                )
+            except BaseException as cancellation_error:
+                authorization_evaluation_error = cancellation_error
+                authorization_payload = build_mock_dispatch_failure_payload(
+                    task_attempt_binding_digest=task_binding_digest,
+                    execution_selection_digest=execution_selection_digest,
+                    billing_assessment_digest=billing_metadata[
+                        "assessment_digest"
+                    ],
+                    task_authorization_intent_digest=(
+                        resolved_task_authorization_intent_digest
+                    ),
+                    requested_permission_class=request.permission_class,
+                    legacy_executable=legacy_executable,
+                    evaluated_at=authorization_evaluated_at,
+                )
+            try:
+                _append_required_event(
+                    state,
+                    selected_run_id,
+                    MOCK_DISPATCH_DECISION_EVENT_TYPE,
+                    authorization_payload,
+                    event_id=_controller_event_id(
+                        selected_run_id,
+                        MOCK_DISPATCH_DECISION_EVENT_TYPE,
+                        authorization_payload,
+                    ),
+                )
+            except BaseException as authorization_evidence_error:
+                _best_effort_terminal_status(
+                    state,
+                    selected_run_id,
+                    status=(
+                        RunStatus.CANCELLED
+                        if authorization_evaluation_error is not None
+                        or not isinstance(
+                            authorization_evidence_error,
+                            Exception,
+                        )
+                        else RunStatus.FAILED
+                    ),
+                    phase="mock_dispatch_authorization_persistence",
+                )
+                if authorization_evaluation_error is not None:
+                    raise authorization_evaluation_error from (
+                        authorization_evidence_error
+                    )
+                raise
+            if authorization_evaluation_error is not None:
+                _best_effort_terminal_status(
+                    state,
+                    selected_run_id,
+                    status=RunStatus.CANCELLED,
+                    phase="mock_dispatch_authorization_evaluation",
+                )
+                raise authorization_evaluation_error
+            if (
+                mock_dispatch_authorization is None
+                or not mock_dispatch_authorization.authorized_at_evaluation
+            ):
+                _append_terminal_event(
+                    state,
+                    selected_run_id,
+                    {"phase": "mock_dispatch_authorization"},
+                    status=RunStatus.BLOCKED,
+                )
+                raise AuthorizationBlocked(
+                    "mock dispatch requires a fresh exact Class 0/1 authorization permit"
+                )
         running_payload = {"phase": "runner_execution"}
         try:
             _append_required_event(
@@ -833,17 +973,62 @@ async def run_chief_of_staff(
                 {"ordinal": event_count},
             )
 
+        if mock_dispatch_authorization is not None:
+            mock_dispatch_action_started_at = time.time()
+            try:
+                assert_mock_dispatch_authorized(
+                    mock_dispatch_authorization,
+                    action_started_at=mock_dispatch_action_started_at,
+                )
+            except AuthorizationBlocked:
+                _append_terminal_event(
+                    state,
+                    selected_run_id,
+                    {"phase": "mock_dispatch_authorization_freshness"},
+                    status=RunStatus.BLOCKED,
+                )
+                raise
+
         try:
             result = await active_runner.execute(request, event_sink)
-        except OrdomataError:
-            state.append_event(
-                selected_run_id,
-                "status",
-                {"phase": "preflight_or_execution"},
-                status=RunStatus.BLOCKED,
-            )
-            raise
-        except BaseException:
+        except BaseException as execution_error:
+            if (
+                mock_dispatch_authorization is not None
+                and mock_dispatch_action_started_at is not None
+            ):
+                try:
+                    _append_mock_dispatch_action_receipt(
+                        state,
+                        run_id=selected_run_id,
+                        authorization=mock_dispatch_authorization,
+                        action_started_at=mock_dispatch_action_started_at,
+                        outcome=(
+                            ReceiptOutcome.FAILED
+                            if isinstance(execution_error, Exception)
+                            else ReceiptOutcome.CANCELLED
+                        ),
+                        result_digest=None,
+                    )
+                except BaseException as receipt_error:
+                    _best_effort_terminal_status(
+                        state,
+                        selected_run_id,
+                        status=(
+                            RunStatus.CANCELLED
+                            if not isinstance(receipt_error, Exception)
+                            else RunStatus.FAILED
+                        ),
+                        phase="mock_dispatch_action_receipt",
+                    )
+                    raise receipt_error from execution_error
+            if isinstance(execution_error, OrdomataError):
+                _append_terminal_event(
+                    state,
+                    selected_run_id,
+                    {"phase": "preflight_or_execution"},
+                    status=RunStatus.BLOCKED,
+                )
+                raise
             billing_failure = (
                 preflight_assessment.route is BillingRoute.SUBSCRIPTION_INCLUDED
             )
@@ -866,10 +1051,54 @@ async def run_chief_of_staff(
                 status=(
                     RunStatus.QUARANTINED
                     if billing_failure
+                    else RunStatus.CANCELLED
+                    if not isinstance(execution_error, Exception)
                     else RunStatus.FAILED
                 ),
             )
             raise
+
+        if (
+            mock_dispatch_authorization is not None
+            and mock_dispatch_action_started_at is not None
+        ):
+            mock_dispatch_result_valid = _mock_dispatch_result_is_valid(
+                result,
+                request=request,
+                preflight_assessment=preflight_assessment,
+                runner_event_count=event_count,
+            )
+            try:
+                _append_mock_dispatch_action_receipt(
+                    state,
+                    run_id=selected_run_id,
+                    authorization=mock_dispatch_authorization,
+                    action_started_at=mock_dispatch_action_started_at,
+                    outcome=_mock_dispatch_receipt_outcome(
+                        result,
+                        result_valid=mock_dispatch_result_valid,
+                    ),
+                    result_digest=(
+                        _mock_dispatch_result_digest(
+                            result,
+                            runner_event_count=event_count,
+                        )
+                        if mock_dispatch_result_valid
+                        else None
+                    ),
+                )
+            except BaseException as receipt_error:
+                _best_effort_terminal_status(
+                    state,
+                    selected_run_id,
+                    status=(
+                        RunStatus.CANCELLED
+                        if not isinstance(receipt_error, Exception)
+                        else RunStatus.FAILED
+                    ),
+                    phase="mock_dispatch_action_receipt",
+                )
+                raise
 
         if not isinstance(result, RunnerExecutionResult):
             if preflight_assessment.route is BillingRoute.SUBSCRIPTION_INCLUDED:
@@ -2293,6 +2522,123 @@ def _append_required_event(
                 "required controller evidence persistence is uncertain"
             ) from append_error
         raise
+
+
+def _mock_dispatch_result_is_valid(
+    result: Any,
+    *,
+    request: RunRequest,
+    preflight_assessment: BillingRouteAssessment,
+    runner_event_count: int,
+) -> bool:
+    """Validate the exact no-process mock result before claiming success."""
+
+    if (
+        not isinstance(result, RunnerExecutionResult)
+        or result.run_id != request.run_id
+        or result.runner_id != "mock"
+        or result.status
+        not in {
+            RunStatus.SUCCEEDED,
+            RunStatus.FAILED,
+            RunStatus.BLOCKED,
+            RunStatus.QUARANTINED,
+            RunStatus.CANCELLED,
+        }
+        or not isinstance(result.billing_assessment, BillingRouteAssessment)
+        or not isinstance(result.events, tuple)
+        or any(not isinstance(event, AgentEvent) for event in result.events)
+        or len(result.events) != runner_event_count
+        or task_execution_mode(result) != "in_memory_mock"
+        or not _non_ai_result_is_consistent(
+            result,
+            preflight_assessment=preflight_assessment,
+        )
+    ):
+        return False
+    try:
+        return _billing_assessments_match(
+            result.billing_assessment,
+            preflight_assessment,
+        )
+    except Exception:
+        return False
+
+
+def _mock_dispatch_receipt_outcome(
+    result: Any,
+    *,
+    result_valid: bool,
+) -> ReceiptOutcome:
+    """Classify only the bounded invocation outcome, not artifact acceptance."""
+
+    if not result_valid or not isinstance(result, RunnerExecutionResult):
+        return ReceiptOutcome.UNKNOWN
+    if result.status is RunStatus.SUCCEEDED:
+        return ReceiptOutcome.SUCCEEDED
+    if result.status is RunStatus.CANCELLED:
+        return ReceiptOutcome.CANCELLED
+    if result.status in {
+        RunStatus.FAILED,
+        RunStatus.BLOCKED,
+        RunStatus.QUARANTINED,
+    }:
+        return ReceiptOutcome.FAILED
+    return ReceiptOutcome.UNKNOWN
+
+
+def _mock_dispatch_result_digest(
+    result: Any,
+    *,
+    runner_event_count: int,
+) -> str | None:
+    """Bind a privacy-safe result projection without retaining runner output."""
+
+    if not isinstance(result, RunnerExecutionResult):
+        return None
+    return canonical_digest(
+        {
+            "harness_process_started": result.harness_process_started,
+            "live_model_execution_occurred": (
+                result.live_model_execution_occurred
+            ),
+            "run_ref": canonical_digest({"run_id": result.run_id}),
+            "runner_event_count": runner_event_count,
+            "runner_id": result.runner_id,
+            "status": result.status.value,
+        }
+    )
+
+
+def _append_mock_dispatch_action_receipt(
+    state: SQLiteStateStore,
+    *,
+    run_id: str,
+    authorization: MockDispatchAuthorization,
+    action_started_at: float,
+    outcome: ReceiptOutcome,
+    result_digest: str | None,
+) -> None:
+    payload = build_mock_dispatch_action_receipt(
+        authorization=authorization,
+        action_started_at=action_started_at,
+        completed_at=time.time(),
+        outcome=outcome,
+        result_digest=result_digest,
+    )
+    receipt = payload.get("receipt")
+    receipt_id = (
+        receipt.get("receipt_id") if isinstance(receipt, Mapping) else None
+    )
+    if not isinstance(receipt_id, str):
+        raise ValidationError("mock dispatch action receipt identifier is missing")
+    _append_required_event(
+        state,
+        run_id,
+        MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE,
+        payload,
+        event_id=receipt_id,
+    )
 
 
 def _append_terminal_event(

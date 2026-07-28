@@ -1,8 +1,9 @@
-"""Digest-only controller evidence for ordinary task-attempt publication.
+"""Digest-only controller evidence for ordinary task attempts.
 
-The records in this module are audit evidence, not authorization grants.  The
-legacy Class 0/1 gate remains authoritative while Phase 1C shadows the richer
-ABAC contract and makes local candidate publication crash-reconcilable.
+Bindings and publication receipts are evidence, never authorization grants.
+Schema-v3 bindings additionally declare that a separate mock-dispatch decision
+and action receipt are required; authority still comes from the typed runtime
+decision plus the independent legacy Class 0/1 gate.
 """
 
 from __future__ import annotations
@@ -39,6 +40,9 @@ TASK_ATTEMPT_AUTHORIZATION_SHADOW_COVERAGE = (
 TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE = (
     "task_attempt_candidate_artifact_pre_effect_action_receipt"
 )
+TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE = (
+    "task_attempt_mock_dispatch_decision_action_receipt"
+)
 
 _TASK_EXECUTION_MODES = {
     "mock": "in_memory_mock",
@@ -60,6 +64,7 @@ def build_task_attempt_binding_event(
     execution_selection_digest: str | None = None,
     profile_version_ref: str | None = None,
     profile_configuration_digest: str | None = None,
+    enforce_mock_dispatch: bool = False,
 ) -> dict[str, Any]:
     """Bind later evidence to immutable, controller-authored attempt inputs."""
 
@@ -75,6 +80,12 @@ def build_task_attempt_binding_event(
         )
     if selection_bound and profile_id is None:
         raise ValidationError("execution selection requires a named profile")
+    if not isinstance(enforce_mock_dispatch, bool):
+        raise ValidationError("mock dispatch enforcement flag must be a boolean")
+    if enforce_mock_dispatch and (not selection_bound or runner_id != "mock"):
+        raise ValidationError(
+            "mock dispatch enforcement requires a selected mock profile"
+        )
 
     binding: dict[str, Any] = {
         "kind": "task_attempt",
@@ -127,8 +138,26 @@ def build_task_attempt_binding_event(
                 ),
             }
         )
-    return {
-        "schema_version": 2 if selection_bound else 1,
+    if enforce_mock_dispatch:
+        binding.update(
+            {
+                "workspace_ref": canonical_digest(
+                    {"workspace": str(request.workspace)}
+                ),
+                "pre_run_approval_requirements_digest": canonical_digest(
+                    {
+                        "approver": contract.approval_requirements.approver,
+                        "required_before_run": (
+                            contract.approval_requirements.required_before_run
+                        ),
+                    }
+                ),
+            }
+        )
+    payload = {
+        "schema_version": (
+            3 if enforce_mock_dispatch else 2 if selection_bound else 1
+        ),
         "authorization_shadow_coverage": (
             TASK_ATTEMPT_AUTHORIZATION_SHADOW_COVERAGE
         ),
@@ -138,6 +167,11 @@ def build_task_attempt_binding_event(
         "binding": binding,
         "binding_digest": canonical_digest(binding),
     }
+    if enforce_mock_dispatch:
+        payload["authorization_enforcement_coverage"] = (
+            TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE
+        )
+    return payload
 
 
 def task_publication_billing_projection(
@@ -479,6 +513,7 @@ __all__ = [
     "TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE",
     "TASK_ATTEMPT_AUTHORIZATION_BINDING_EVENT_TYPE",
     "TASK_ATTEMPT_AUTHORIZATION_SHADOW_COVERAGE",
+    "TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE",
     "TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE",
     "TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE",
     "artifact_record_digest",

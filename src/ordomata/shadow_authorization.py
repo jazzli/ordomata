@@ -559,6 +559,19 @@ def task_authorization_intent_digest(contract: TaskContract) -> str:
     return intent.digest
 
 
+def resolve_task_authorization_intent(
+    contract: TaskContract,
+) -> tuple[TaskAuthorizationIntent, str]:
+    """Return the typed task intent and its controller-owned source label.
+
+    This shared projection does not evaluate policy or grant authority.  It is
+    exposed so an enforcement point can bind its own exact action to the same
+    immutable task intent without treating a shadow decision as a permit.
+    """
+
+    return _resolve_intent(contract)
+
+
 def _low_consequence_intent() -> TaskConsequenceIntent:
     return TaskConsequenceIntent(
         confidentiality=ImpactLevel.LOW,
@@ -1006,5 +1019,6 @@ __all__ = [
     "build_local_candidate_publication_shadow_event",
     "build_runner_model_dispatch_shadow_event",
     "build_task_admission_shadow_event",
+    "resolve_task_authorization_intent",
     "task_authorization_intent_digest",
 ]

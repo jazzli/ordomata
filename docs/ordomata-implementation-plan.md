@@ -1,8 +1,8 @@
 # Ordomata Implementation Plan
 
-Status: proposed expansion; baseline and Billing Hard-Stop v2 implemented; Chief-of-Staff three-boundary authorization shadow and local-candidate receipt slice implemented; Phase 2 durable supervisor control-plane tracer partially implemented with dispatch disabled; enforcement planned
+Status: proposed expansion; baseline and Billing Hard-Stop v2 implemented; first profile-backed built-in-mock dispatch PEP implemented; Phase 2 durable supervisor control-plane tracer partially implemented with dispatch disabled; broader enforcement planned
 
-Date: 2026-07-26
+Date: 2026-07-28
 
 Scope: local, single-operator orchestration of subscription-backed coding harnesses
 
@@ -83,16 +83,20 @@ comparisons add a schema-v2 trial binding, schema-v3
 Class 0 admission/dispatch shadows, and a separate schema-v4 non-enforcing
 Class 1 private-publication shadow with schema-v2 pre-effect/action receipts.
 
-Runtime ABAC enforcement is **planned**, not implemented. Current code still makes
-`PermissionClass` authoritative across contracts, approval, routing, runner
-validation, persistence, evaluation, and comparison. It also has strong but
-distributed billing, identity, environment, profile, isolation, capacity, and
-circuit gates. Those controls remain active while the initial canonical shadow
-coverage is expanded beyond the Chief-of-Staff path, parity is proven across
-every decision path, the existing shadow boundaries become enforcement points,
-and approval/action receipts become operational. The ordinary candidate and
-comparison receipts are migration evidence only; neither is an executable
-authorization permit.
+The first runtime ABAC enforcement point now gates only profile-backed ordinary
+attempts through the exact controller-owned in-memory mock implementation. A
+schema-v3 binding declares the coverage; the controller persists a fixed-policy
+decision before `RUNNING`, rechecks freshness, exact obligations, the derived
+Class 0/1 ceiling, and the independent legacy gate immediately before
+invocation, and requires a linked action receipt once invocation begins.
+General runtime ABAC enforcement is still **planned**. `PermissionClass`
+remains authoritative across contracts, approval, routing, runner validation,
+persistence, evaluation, and comparison, alongside the distributed billing,
+identity, environment, profile, isolation, capacity, and circuit gates.
+Admission, publication, comparison, supervisor workers, live harnesses,
+approval resumption, and mediated commands/tools remain non-enforcing or
+disabled. The ordinary candidate and comparison publication receipts are
+migration evidence only; neither is an executable authorization permit.
 
 The target semantics for Class 3 standing envelopes, irreversible actions,
 the non-delegable root-authority kernel, consequential outbox execution,
@@ -111,7 +115,7 @@ This remains the proposed long-form expansion of [the current roadmap](roadmap.m
 | Phase 0 - foundation implemented | Baseline entering expanded Phase 0 |
 | Phase 1A - Billing Hard-Stop v2 implemented | Expanded Phase 1 core billing controls |
 | Phase 1B - controlled subscription comparison next | Operator-gated experiment after current Billing Hard-Stop v2 evidence; its evidence informs routing without auto-promotion |
-| Phase 1C - runtime authorization rebaseline partially implemented | Typed Chief-of-Staff task intent, three-boundary shadow parity/inspection, followed by broader path coverage and enforcement prerequisites in Phases 2-3 |
+| Phase 1C - runtime authorization rebaseline partially implemented | Typed Chief-of-Staff task intent, three-boundary shadow parity/inspection, first exact built-in-mock dispatch PEP, then broader path coverage and enforcement prerequisites in Phases 2-3 |
 | Phase 2 - repository-maintenance tracer bullets, control-plane prerequisite partially implemented | Expanded Phase 2 dispatch-disabled tracer plus Phases 3-4 repository work |
 | Phase 3 - bounded local loop | Remaining expanded Phase 2 worker loop and Phase 7 |
 | Phase 4 - evidence-driven adaptation | Expanded Phases 5-7 |
@@ -325,7 +329,9 @@ evidence payloads remain separate operational state.
 
 ### Acceptance criteria
 
-- Existing mock workflow and all current tests remain unchanged in behavior.
+- Existing unprofiled/historical mock behavior remains compatible; the covered
+  profile-backed built-in-mock boundary invokes the runner only from a fresh
+  exact permit and otherwise fails closed.
 - Every new feature has an explicit disabled default.
 - Threat cases map to a deterministic prevention, detection, or fail-closed response.
 - The implemented shadow evaluator has focused parity and adversarial cases for
@@ -420,16 +426,19 @@ uses the shared verified migration ledger; missing v2-v4 schema statements and
 their immutable ledger rows commit atomically or roll back together. It
 deliberately
 does not call the claim API or any
-runner. Runtime ABAC enforcement remains a prerequisite for dispatch. No live
+runner. Authoritative coverage at the exact worker dispatch/tool boundaries
+and verified repository containment remain prerequisites for dispatch; the
+narrow ordinary mock PEP supplies neither. No live
 model, worker subprocess, network action, repository worker, Class 2/3 effect,
 or OS schedule is enabled, and the Phase 2 acceptance criteria are not yet
 satisfied.
 
 ### Deliverables
 
-- Add the initial enforcing PDP only after shadow-mode parity. Keep the legacy
-  Class 0/1 gate as defense in depth, and persist the exact request, decision,
-  obligations, policy/evidence digests, and enforcement outcome append-only.
+- Extend the initial enforcing PDP beyond the profile-backed built-in-mock PEP
+  only after boundary-specific shadow parity. Keep the legacy Class 0/1 gate as
+  defense in depth, and persist each exact request, decision, obligations,
+  policy/evidence digests, and enforcement outcome append-only.
 - Make queue admission, claim, dispatch, resume/reconcile, cancellation,
   and artifact publication explicit enforcement points.
   Re-evaluate after any relevant identity, resource version, approval,
@@ -441,7 +450,8 @@ satisfied.
   authority. Active-policy changes remain explicit operator-only actions and
   are not enabled by the supervisor phase.
 - Preserve the implemented foreground `ordomata supervise` process; connect it
-  to claiming and execution only after runtime ABAC enforcement.
+  to claiming and execution only after the exact claim, dispatch, and mediated
+  worker boundaries have authoritative ABAC enforcement.
 - Preserve the implemented operator commands for `start`, `pause`, `resume`,
   `drain`, `stop`, `status`, `audit`, and `reconcile`; control commands never
   install or launch an OS service.

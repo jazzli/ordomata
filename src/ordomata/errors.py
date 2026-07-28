@@ -13,6 +13,10 @@ class BillingRouteBlocked(OrdomataError):
     """Execution was blocked because billing was not subscription-safe."""
 
 
+class AuthorizationBlocked(OrdomataError):
+    """Execution was blocked by a controller-owned authorization gate."""
+
+
 class LiveRunDisabled(OrdomataError):
     """A live harness run was attempted without the explicit live gate."""
 

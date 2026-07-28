@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import closing
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 import tempfile
 import unittest
@@ -19,14 +21,22 @@ from ordomata.authorization_inspection import (
     _task_billing_policy_consistent,
     inspect_authorization_shadows,
 )
-from ordomata.errors import ConfigurationError
+from ordomata.dispatch_authorization import (
+    MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE,
+    MOCK_DISPATCH_DECISION_EVENT_TYPE,
+)
+from ordomata.errors import AuthorizationBlocked, ConfigurationError
 from ordomata.models import PermissionClass, RunStatus
+from ordomata.orchestrator import run_chief_of_staff
 from ordomata.state import (
     ArtifactRecord,
     RecordNotFoundError,
     RunRecord,
     SQLiteStateStore,
 )
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 
 
 _PRIVATE_MARKERS = (
@@ -43,6 +53,24 @@ _PRIVATE_MARKERS = (
 
 
 class AuthorizationInspectionTests(unittest.TestCase):
+    @staticmethod
+    def _profile_backed_mock_project(temporary: str) -> Path:
+        root = Path(temporary)
+        for name in ("tasks", "schemas", "fixtures", "profiles"):
+            shutil.copytree(REPOSITORY_ROOT / name, root / name)
+        return root
+
+    @classmethod
+    def _run_profile_backed_mock(
+        cls,
+        temporary: str,
+        *,
+        run_id: str,
+    ) -> tuple[Path, Path]:
+        root = cls._profile_backed_mock_project(temporary)
+        asyncio.run(run_chief_of_staff(root, run_id=run_id))
+        return root, root / ".ordomata" / "state.sqlite3"
+
     @staticmethod
     def _comparison_billing_payload() -> dict[str, object]:
         payload: dict[str, object] = {
@@ -3749,6 +3777,202 @@ class AuthorizationInspectionTests(unittest.TestCase):
                 "task_artifact_metadata_unlinked",
                 report.runs[0].integrity_issues,
             )
+
+    def test_profile_backed_mock_enforcement_history_is_clean_and_redacted(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, database = self._run_profile_backed_mock(
+                temporary,
+                run_id="inspect-mock-dispatch",
+            )
+
+            report = inspect_authorization_shadows(database)
+            self.assertTrue(report.clean, report.to_mapping())
+            self.assertEqual(len(report.runs), 1)
+            self.assertEqual(report.inspected_event_count, 5)
+            run = report.runs[0]
+            self.assertEqual(
+                run.authorization_enforcement_coverage,
+                "task_attempt_mock_dispatch_decision_action_receipt",
+            )
+            enforcement = run.mock_dispatch_enforcement
+            self.assertTrue(enforcement.required)
+            self.assertTrue(enforcement.decision_observed)
+            self.assertEqual(enforcement.effect, "permit")
+            self.assertTrue(enforcement.authorization_eligible)
+            self.assertTrue(enforcement.decision_current_at_evaluation)
+            self.assertTrue(enforcement.action_receipt_observed)
+            self.assertEqual(enforcement.action_receipt_outcome, "succeeded")
+            self.assertTrue(enforcement.permit_current_at_action_start)
+            self.assertEqual(enforcement.integrity_issues, ())
+            self.assertNotIn(
+                str(root),
+                json.dumps(report.to_mapping(), sort_keys=True),
+            )
+
+    def test_mock_dispatch_semantic_tampering_is_fixed_and_redacted(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            _, database = self._run_profile_backed_mock(
+                temporary,
+                run_id="inspect-mock-dispatch-tamper",
+            )
+            private_marker = "private-mock-dispatch-reason-marker"
+            connection = sqlite3.connect(database)
+            try:
+                connection.execute("DROP TRIGGER run_events_no_update")
+                row = connection.execute(
+                    """
+                    SELECT payload_json
+                    FROM run_events
+                    WHERE event_type = ?
+                    """,
+                    (MOCK_DISPATCH_DECISION_EVENT_TYPE,),
+                ).fetchone()
+                self.assertIsNotNone(row)
+                payload = json.loads(row[0])
+                payload["decision"]["obligations"] = [
+                    {"kind": {private_marker: True}, "value": []}
+                ]
+                payload["request"]["resource"]["sensitivity"] = "moderate"
+                payload["request"]["consequences"]["sensitivity"] = (
+                    "moderate"
+                )
+                connection.execute(
+                    """
+                    UPDATE run_events
+                    SET payload_json = ?
+                    WHERE event_type = ?
+                    """,
+                    (
+                        json.dumps(payload, sort_keys=True),
+                        MOCK_DISPATCH_DECISION_EVENT_TYPE,
+                    ),
+                )
+                connection.execute(
+                    """
+                    CREATE TRIGGER run_events_no_update
+                    BEFORE UPDATE ON run_events BEGIN
+                        SELECT RAISE(ABORT, 'run events are append-only');
+                    END
+                    """
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            report = inspect_authorization_shadows(database)
+            projection = json.dumps(report.to_mapping(), sort_keys=True)
+            self.assertFalse(report.clean)
+            self.assertIn(
+                "mock_dispatch_authorization_reevaluation_mismatch",
+                report.runs[0].integrity_issues,
+            )
+            self.assertIn(
+                "mock_dispatch_request_intent_mismatch",
+                report.runs[0].integrity_issues,
+            )
+            self.assertNotIn(private_marker, projection)
+
+    def test_mock_dispatch_decision_and_receipt_cardinality_is_enforced(
+        self,
+    ) -> None:
+        for case, expected_issue in (
+            ("missing_receipt", "mock_dispatch_receipt_missing"),
+            ("duplicate_decision", "mock_dispatch_decision_duplicate"),
+        ):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                _, database = self._run_profile_backed_mock(
+                    temporary,
+                    run_id=f"inspect-mock-dispatch-{case}",
+                )
+                connection = sqlite3.connect(database)
+                try:
+                    if case == "missing_receipt":
+                        connection.execute(
+                            "DROP TRIGGER run_events_no_delete"
+                        )
+                        connection.execute(
+                            "DELETE FROM run_events WHERE event_type = ?",
+                            (MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE,),
+                        )
+                        connection.execute(
+                            """
+                            CREATE TRIGGER run_events_no_delete
+                            BEFORE DELETE ON run_events BEGIN
+                                SELECT RAISE(ABORT, 'run events are append-only');
+                            END
+                            """
+                        )
+                    else:
+                        row = connection.execute(
+                            """
+                            SELECT run_id, payload_json, occurred_at
+                            FROM run_events
+                            WHERE event_type = ?
+                            """,
+                            (MOCK_DISPATCH_DECISION_EVENT_TYPE,),
+                        ).fetchone()
+                        self.assertIsNotNone(row)
+                        connection.execute(
+                            """
+                            INSERT INTO run_events (
+                                event_id,
+                                run_id,
+                                event_type,
+                                status,
+                                payload_json,
+                                occurred_at
+                            ) VALUES (?, ?, ?, NULL, ?, ?)
+                            """,
+                            (
+                                canonical_digest({"duplicate": case}),
+                                row[0],
+                                MOCK_DISPATCH_DECISION_EVENT_TYPE,
+                                row[1],
+                                row[2],
+                            ),
+                        )
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                report = inspect_authorization_shadows(database)
+                self.assertFalse(report.clean)
+                self.assertIn(
+                    expected_issue,
+                    report.runs[0].integrity_issues,
+                )
+
+    def test_mock_dispatch_freshness_stop_does_not_require_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._profile_backed_mock_project(temporary)
+            database = root / ".ordomata" / "state.sqlite3"
+            with (
+                patch(
+                    "ordomata.orchestrator.assert_mock_dispatch_authorized",
+                    side_effect=AuthorizationBlocked(
+                        "fixed freshness rejection"
+                    ),
+                ),
+                self.assertRaises(AuthorizationBlocked),
+            ):
+                asyncio.run(
+                    run_chief_of_staff(
+                        root,
+                        run_id="inspect-mock-dispatch-freshness",
+                    )
+                )
+
+            report = inspect_authorization_shadows(database)
+            self.assertTrue(report.clean, report.to_mapping())
+            enforcement = report.runs[0].mock_dispatch_enforcement
+            self.assertTrue(enforcement.required)
+            self.assertTrue(enforcement.decision_observed)
+            self.assertFalse(enforcement.action_receipt_observed)
+            self.assertEqual(enforcement.integrity_issues, ())
 
     def test_malformed_event_and_database_return_only_fixed_failures(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

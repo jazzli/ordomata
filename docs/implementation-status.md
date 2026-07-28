@@ -30,8 +30,10 @@ Earlier design discussion selected machine-verifiable repository maintenance as 
 ## Current-stage boundaries
 
 - Only work represented by the current Permission Classes 0 and 1 is eligible.
-  The runtime still enforces that interim numeric representation; the adopted
-  target will derive the same summaries from an authoritative ABAC decision.
+  The runtime still enforces that interim numeric representation. The first
+  narrow profile-backed built-in-mock dispatch PEP also derives and enforces
+  the same ceiling from an exact ABAC request; broader target coverage remains
+  incomplete.
 - No production inbox, calendar, Drive, Slack, or similar connectors.
 - No n8n dependency.
 - No purchased-credit, subscription-overage, AI API SDK, cloud-model, or metered fallback.
@@ -45,13 +47,13 @@ Detailed component and verification status is updated in the session completion 
 
 ## Authorization status
 
-**Implemented foundations and a non-enforcing shadow slice:** deterministic controller-owned
+**Implemented foundations, shadow coverage, and the first narrow PEP:** deterministic controller-owned
 fail-closed gates; the current Class 0/1 approval ceiling; role, task,
 capability, route, billing, identity, capacity, environment, isolation, and
 circuit checks; narrow harness configurations; and append-only run evidence.
 These checks are distributed, and the current `ApprovalPolicy` decides from
 `PermissionClass`. Standard-library ABAC request/decision/action-receipt value
-types, a deny-by-default current-stage shadow evaluator, conservative class
+types, a deny-by-default current-stage evaluator, conservative class
 derivation, and focused adversarial tests now exist. The task schema and Chief
 of Staff contract now carry optional typed action/resource/consequence intent;
 absence remains explicit and the bridge records a legacy-class fallback.
@@ -81,9 +83,25 @@ remain readable as legacy shadow-only evidence and are not reinterpreted as
 receipt-complete. The controlled comparison path has its own separately bounded
 pre-effect and post-effect receipt pair.
 
+For a new profile-backed ordinary attempt using the exact controller-owned
+`MockRunner` implementation, a schema-v3 binding declares separate enforcing
+coverage. After required selection and billing records, the controller builds
+an exact mock-only execute request, evaluates a fixed versioned policy,
+persists and reconciles its decision before `RUNNING`, and checks permit
+freshness, supported obligations, the derived Class 0/1 ceiling, and the
+independent legacy gate immediately before invocation. A non-permit,
+evaluation failure, stale decision, unsupported obligation, or uncertain
+decision append invokes no runner. Once invocation starts, a linked terminal
+action receipt is required; only a validated identity-matched no-process mock
+result may receive a succeeded receipt. This PEP does not cover unprofiled
+schema-v1 history, historical/live schema-v2 selections, comparison trials,
+supervisor workers, publication, tools, commands, or external effects.
+
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and
-their schema-v2 task binding. The privacy-safe record binds a captured routing
+their task binding. New built-in-mock attempts use schema v3; live and
+historical selected attempts use schema v2. The privacy-safe record binds a
+captured routing
 policy clock, exact task/context/authorization refs, canonical candidates,
 fixed rejection codes, raw score tiers and evidence-source markers, safe
 billing projections, and selected profile version/configuration/overrides
@@ -96,10 +114,11 @@ required append that cannot be proven exact blocks before execution; one that
 commits then raises is accepted only after exact readback. The read-only
 inspector independently checks policy/candidate digests, filters, scores,
 ranking, selected linkage, cardinality, and ordering while projecting no raw
-candidate data. This is non-enforcing evidence: the deterministic permission,
-billing, environment, isolation, circuit, and live-run gates remain separate
-and authoritative. Rejected pre-run selections and `route` previews do not
-create run evidence.
+candidate data. Selection is evidence, not authority; on the narrow built-in-
+mock path it is one required input to the separate enforcing decision. The
+deterministic permission, billing, environment, isolation, circuit, and live-
+run gates remain separate and authoritative. Rejected pre-run selections and
+`route` previews do not create run evidence.
 
 Ordinary accounting persists only a digest reference for runner version text
 and a fixed controller-known execution-mode label. Its billing and accounting
@@ -117,9 +136,11 @@ decisions with distinct `permit`, `defer`, `deny`, and `indeterminate`
 effects, policy and evidence digests, obligations, continuous enforcement,
 RBAC role constraints, adapted confidentiality/integrity/availability impact
 labels, untrusted MCP claim handling, and conservatively derived Class 0-3
-summaries. There is still no enforcing central PDP, RBAC separation-of-duty
-enforcement, approval resumption, mediated command/tool coverage, or persisted
-enforcing runtime action receipt. The controlled comparison path now records a
+summaries. There is still no general admission/publication PDP, RBAC
+separation-of-duty enforcement, approval resumption, mediated command/tool
+coverage, supervisor worker permit, or live-harness ABAC enforcement. The one
+persisted enforcing decision/action-receipt chain is limited to profile-backed
+built-in-mock dispatch. The controlled comparison path now records a
 durable Class 0 run/event stream for every started trial, including a schema-v2
 digest-only binding, bounded billing/accounting facts, runner-event ordinals,
 and schema-v3 non-enforcing admission and immediate pre-dispatch shadows. Its
@@ -143,8 +164,9 @@ Controller-derived post-run billing disposition governs quarantine, circuit
 scope, output withholding, and terminal reporting; adapter flags cannot make
 unknown or changed evidence succeed. Historical schema-v1 comparison evidence
 remains backward-compatible partial coverage with an explicit publication gap.
-None of these observations or receipts is an executable permit; enforcement
-follows only after broader parity evidence.
+None of those comparison or publication observations and receipts is an
+executable permit; their enforcement follows only after broader parity
+evidence.
 
 **Adopted target design, not implemented:** revocable standing authorization
 envelopes and fresh per-action permits; permissive but exactly bounded Class 3
@@ -204,10 +226,12 @@ cancellation, inspection, recovery, and local completion-receipt operations;
 `ordomata supervise` runs the fenced loop only in the foreground.
 
 This is not a completed supervisor. The foreground loop deliberately never
-calls the claim library or a runner because enforcing runtime ABAC remains a
-prerequisite. It starts no live model, worker subprocess, network action,
-repository worker, Class 2/3 action, or OS schedule. Queue execution, worker
-cells, runtime authorization enforcement, and soak evidence remain planned.
+calls the claim library or a runner because its exact claim, worker-dispatch,
+and mediated-tool boundaries lack authoritative ABAC coverage and verified
+repository containment. The narrow ordinary mock PEP supplies neither. It
+starts no live model, worker subprocess, network action, repository worker,
+Class 2/3 action, or OS schedule. Queue execution, worker cells, boundary-
+specific authorization enforcement, and soak evidence remain planned.
 
 ## Implemented vertical slice
 

@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import contextmanager
 from dataclasses import replace
 import json
 from pathlib import Path
@@ -50,27 +51,41 @@ from ordomata.routing import (
 from ordomata.runners.mock import MockRunner
 from ordomata.shadow_authorization import task_authorization_intent_digest
 from ordomata.state import SQLiteStateStore
-from ordomata.task_evidence import TASK_EXECUTION_SELECTION_EVENT_TYPE
+from ordomata.task_evidence import (
+    TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
+    TASK_EXECUTION_SELECTION_EVENT_TYPE,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 
 
-class RecordingMockRunner(MockRunner):
-    def __init__(self, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.inspect_count = 0
-        self.execute_count = 0
-        self.requests = []
+@contextmanager
+def recording_mock_calls():
+    """Instrument the exact controller-owned MockRunner class."""
 
-    async def inspect_billing_route(self):
-        self.inspect_count += 1
-        return await super().inspect_billing_route()
+    calls = {"inspect": 0, "execute": 0, "requests": []}
+    original_inspect = MockRunner.inspect_billing_route
+    original_execute = MockRunner.execute
 
-    async def execute(self, request, event_sink):
-        self.execute_count += 1
-        self.requests.append(request)
-        return await super().execute(request, event_sink)
+    async def recording_inspect(runner):
+        calls["inspect"] += 1
+        return await original_inspect(runner)
+
+    async def recording_execute(runner, request, event_sink):
+        calls["execute"] += 1
+        calls["requests"].append(request)
+        return await original_execute(runner, request, event_sink)
+
+    with (
+        patch.object(
+            MockRunner,
+            "inspect_billing_route",
+            new=recording_inspect,
+        ),
+        patch.object(MockRunner, "execute", new=recording_execute),
+    ):
+        yield calls
 
 
 class RecordingSubscriptionFixtureRunner:
@@ -358,7 +373,11 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
             self.assertLess(selection_event.sequence, binding.sequence)
             self.assertLess(selection_event.sequence, billing.sequence)
             self.assertLess(selection_event.sequence, running.sequence)
-            self.assertEqual(binding.payload["schema_version"], 2)
+            self.assertEqual(binding.payload["schema_version"], 3)
+            self.assertEqual(
+                binding.payload["authorization_enforcement_coverage"],
+                TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
+            )
             self.assertEqual(
                 binding.payload["binding"]["execution_selection_digest"],
                 payload["selection_digest"],
@@ -391,15 +410,18 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
                 selection.selection_digest,
                 changed_configuration_selection.selection_digest,
             )
-            runner = RecordingMockRunner(
+            runner = MockRunner(
                 output=load_mock_chief_of_staff_output(root, prepared)
             )
             overrides = runner_overrides_for_profile(profile)
 
-            with patch(
-                "ordomata.orchestrator.prepare_chief_of_staff",
-                side_effect=AssertionError(
-                    "a supplied prepared snapshot must not be rebuilt"
+            with (
+                recording_mock_calls() as calls,
+                patch(
+                    "ordomata.orchestrator.prepare_chief_of_staff",
+                    side_effect=AssertionError(
+                        "a supplied prepared snapshot must not be rebuilt"
+                    ),
                 ),
             ):
                 report = asyncio.run(
@@ -414,10 +436,12 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
                     )
                 )
 
-            self.assertEqual(runner.execute_count, 1)
-            self.assertEqual(len(runner.requests), 1)
-            self.assertEqual(runner.requests[0].prompt, prepared.prompt)
-            self.assertEqual(dict(runner.requests[0].runner_overrides), overrides)
+            self.assertEqual(calls["execute"], 1)
+            self.assertEqual(len(calls["requests"]), 1)
+            self.assertEqual(calls["requests"][0].prompt, prepared.prompt)
+            self.assertEqual(
+                dict(calls["requests"][0].runner_overrides), overrides
+            )
             self.assertEqual(
                 report.context_snapshot, prepared.context_pack.snapshot_hash
             )
@@ -490,7 +514,11 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
                 for event in events
                 if event.event_type == "task_attempt_authorization_binding"
             )
-            self.assertEqual(binding.payload["schema_version"], 2)
+            self.assertEqual(binding.payload["schema_version"], 3)
+            self.assertEqual(
+                binding.payload["authorization_enforcement_coverage"],
+                TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
+            )
             self.assertEqual(
                 binding.payload["binding"]["execution_selection_digest"],
                 selection_event.payload["selection_digest"],
@@ -600,7 +628,7 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
             prepared = prepare_chief_of_staff(root)
             profile = self._mock_profile(root)
             selection = self._selection(root, prepared, run_id=run_id)
-            runner = RecordingMockRunner(
+            runner = MockRunner(
                 output=load_mock_chief_of_staff_output(root, prepared)
             )
             profile_path = root / "profiles" / "default.json"
@@ -616,9 +644,12 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with self.assertRaisesRegex(
-                ValidationError,
-                "configured profile",
+            with (
+                recording_mock_calls() as calls,
+                self.assertRaisesRegex(
+                    ValidationError,
+                    "configured profile",
+                ),
             ):
                 asyncio.run(
                     run_chief_of_staff(
@@ -632,8 +663,8 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
                     )
                 )
 
-            self.assertEqual(runner.inspect_count, 0)
-            self.assertEqual(runner.execute_count, 0)
+            self.assertEqual(calls["inspect"], 0)
+            self.assertEqual(calls["execute"], 0)
             self.assertFalse((root / ".ordomata").exists())
 
     def test_catalog_profile_cannot_execute_without_selection_evidence(self) -> None:
@@ -647,13 +678,16 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
                 run_id = f"selection-catalog-omitted-{case}"
                 prepared = prepare_chief_of_staff(root)
                 profile = self._mock_profile(root)
-                runner = RecordingMockRunner(
+                runner = MockRunner(
                     output=load_mock_chief_of_staff_output(root, prepared)
                 )
 
-                with self.assertRaisesRegex(
-                    ValidationError,
-                    "requires selection evidence",
+                with (
+                    recording_mock_calls() as calls,
+                    self.assertRaisesRegex(
+                        ValidationError,
+                        "requires selection evidence",
+                    ),
                 ):
                     asyncio.run(
                         run_chief_of_staff(
@@ -670,8 +704,8 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
                         )
                     )
 
-                self.assertEqual(runner.inspect_count, 0)
-                self.assertEqual(runner.execute_count, 0)
+                self.assertEqual(calls["inspect"], 0)
+                self.assertEqual(calls["execute"], 0)
                 self.assertFalse((root / ".ordomata").exists())
 
     def test_subscription_selection_requires_full_timeout_billing_horizon(
@@ -867,7 +901,7 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
                         "selection_digest",
                         "sha256:" + "f" * 64,
                     )
-                runner = RecordingMockRunner(
+                runner = MockRunner(
                     output=load_mock_chief_of_staff_output(root, prepared)
                 )
                 overrides = (
@@ -881,7 +915,10 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
                     else profile.profile_id
                 )
 
-                with self.assertRaises((ConfigurationError, ValidationError)):
+                with (
+                    recording_mock_calls() as calls,
+                    self.assertRaises((ConfigurationError, ValidationError)),
+                ):
                     asyncio.run(
                         run_chief_of_staff(
                             root,
@@ -894,7 +931,7 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
                         )
                     )
 
-                self.assertEqual(runner.execute_count, 0)
+                self.assertEqual(calls["execute"], 0)
 
     def test_selection_builder_cannot_exceed_profile_class_ceiling(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -947,7 +984,7 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
             prepared = prepare_chief_of_staff(root)
             profile = self._mock_profile(root)
             selection = self._selection(root, prepared, run_id=run_id)
-            runner = RecordingMockRunner(
+            runner = MockRunner(
                 output=load_mock_chief_of_staff_output(root, prepared)
             )
             original_append_event = SQLiteStateStore.append_event
@@ -963,7 +1000,7 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
                 SQLiteStateStore,
                 "append_event",
                 new=reject_selection,
-            ):
+            ), recording_mock_calls() as calls:
                 with self.assertRaises(OSError):
                     asyncio.run(
                         run_chief_of_staff(
@@ -977,7 +1014,7 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
                         )
                     )
 
-            self.assertEqual(runner.execute_count, 0)
+            self.assertEqual(calls["execute"], 0)
             with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
                 self.assertEqual(state.current_status(run_id), RunStatus.FAILED)
                 persisted_json = "\n".join(
@@ -992,7 +1029,7 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
             prepared = prepare_chief_of_staff(root)
             profile = self._mock_profile(root)
             selection = self._selection(root, prepared, run_id=run_id)
-            runner = RecordingMockRunner(
+            runner = MockRunner(
                 output=load_mock_chief_of_staff_output(root, prepared)
             )
             original_append_event = SQLiteStateStore.append_event
@@ -1021,7 +1058,7 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
                 SQLiteStateStore,
                 "append_event",
                 new=commit_then_raise,
-            ):
+            ), recording_mock_calls() as calls:
                 report = asyncio.run(
                     run_chief_of_staff(
                         root,
@@ -1036,7 +1073,7 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
 
             self.assertTrue(injected)
             self.assertEqual(report.status, RunStatus.SUCCEEDED)
-            self.assertEqual(runner.execute_count, 1)
+            self.assertEqual(calls["execute"], 1)
             selection_event, events = self._selection_event(root, run_id)
             self.assertEqual(selection_event.event_id, selection.selection_digest)
             self.assertEqual(

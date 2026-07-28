@@ -74,9 +74,17 @@ sensitivity, and blast radius. Roles such as controller, planner, implementer,
 verifier, reviewer, and recovery are versioned RBAC subject attributes with
 separation-of-duty constraints; a role never grants authority by itself.
 
-This is principally a target architecture, not a claim that ABAC now enforces
-runtime authority. The implemented code still uses `PermissionClass` and
-distributed deterministic eligibility gates. Task contracts may now declare a
+This remains principally a target architecture, not a claim of general ABAC
+coverage. The first narrow authoritative PEP now applies only to new
+profile-backed ordinary attempts using the controller-owned in-memory mock
+runner implementation. Subclasses cannot receive that permit. It constructs a
+separate exact `runner.execute` request, evaluates a fixed mock-only policy,
+persists the decision before `RUNNING`, rechecks its
+fresh Class 0/1 ceiling immediately before invocation, and appends a linked
+terminal action receipt. Only a validated identity-matched no-process mock
+result can produce a succeeded receipt. Existing
+`PermissionClass` and distributed deterministic eligibility gates remain
+independent prerequisites and defense in depth. Task contracts may declare a
 typed task-effect action, resource, and consequence vector independently of
 that class. The Chief of Staff path evaluates task intent non-authoritatively
 at admission and runner/model dispatch. At local-candidate publication it uses
@@ -85,14 +93,16 @@ is read-only, while conservatively inheriting task protection, sensitivity,
 and confidentiality/integrity/availability impact, then appends canonical
 policy/evidence digests, legacy-result parity, and
 independent authority-ceiling parity. These observations
-are not permits or enforcement receipts and cannot affect execution or
-publication; shadow-decision persistence remains best-effort. New task attempts
-add a required digest-only controller binding and non-enforcing publication
-receipts, but those records only prove what the existing Class 0/1 gate did.
-There is still no central enforcing policy-decision point, per-command/tool
-mediation, approval-resumption path, or enforcing runtime action receipt.
-Existing gates remain in force, and migration must not widen the Class 0/1
-ceiling.
+remain non-permits and cannot authorize execution or publication;
+shadow-decision persistence remains best-effort. Schema-v3 mock attempt
+bindings, enforcing dispatch decisions, and action receipts are distinct from
+those shadows. Unprofiled schema-v1 bindings, live or historical schema-v2
+bindings, and every comparison path retain their non-enforcing interpretation.
+There is still no
+general admission/publication PEP, per-command/tool mediation,
+approval-resumption path, supervisor worker permit, or live-harness ABAC
+enforcement. Existing gates remain in force, and the migration cannot widen
+the Class 0/1 ceiling.
 
 The target separates operator-controlled policy administration, authoritative
 attribute collection, pure policy evaluation, and controller-owned enforcement
@@ -136,9 +146,13 @@ trigger
   -> choose an eligible execution profile
   -> create append-only run record
   -> append the non-authoritative Phase 1C task-admission observation
-  -> append a fresh shadow dispatch-intent observation immediately before the
-     controller calls the runner
+  -> for a new profile-backed controller mock attempt only, persist and enforce
+     a fresh fixed-policy decision for the exact mock runner invocation
+  -> transition to RUNNING only after that narrow decision is eligible
+  -> append the non-authoritative task-effect dispatch-intent observation
+  -> recheck the permit freshness immediately at the invocation boundary
   -> execute bounded harness or deterministic worker
+  -> append the enforced mock action receipt when that narrow PEP applied
   -> normalize events and result
   -> perform post-run billing assessment
   -> record capacity/circuit outcome; quarantine on paid or unknown evidence
@@ -198,8 +212,10 @@ settings, account/subscription values, diagnostics, prompts, paths, and
 environment values are represented only by digests or omitted. Every source
 candidate must still match the controller-loaded catalog, and the selected
 source assessment must match fresh horizon-valid runner preflight evidence. A
-schema-v2 task binding and both admission/dispatch observations link the selection
-digest. Exact persistence is required before execution; the read-only
+schema-v3 binding links new exact built-in-mock enforcement; schema-v2 remains
+for live and historical selected attempts. Both admission/dispatch observations
+link the selection digest. Exact persistence is required before execution; the
+read-only
 inspector independently recomputes shape, digests, filters, scores, rank,
 cardinality, cross-links, and order. This record is descriptive evidence, not
 an authorization decision, and cannot replace fresh billing, environment,
@@ -313,8 +329,8 @@ authoritative acceptance checks.
 
 ## Ordinary local-candidate publication
 
-Every new Chief-of-Staff attempt records a schema-v1 digest-only binding before
-its admission shadow. The binding covers the controller-resolved typed
+Every new Chief-of-Staff attempt records a digest-only binding before its
+admission shadow. The binding covers the controller-resolved typed
 authorization intent as well as immutable run inputs, and dispatch binds the
 persisted preflight billing assessment. After runner execution, schema-v2
 accounting projects the identity and billing disposition fields needed to
@@ -342,9 +358,21 @@ controller-owned terminal record is an attention-required incomplete history;
 a bound attempt that has not reached billing may still be legitimately in
 progress.
 
-This chain does not authorize the write. The existing Class 0/1 gate remains
-authoritative, the shadow can still expose an authority-ceiling mismatch, and
-no shared, remote, promotion, deployment, or Class 2/3 effect is enabled.
+For a selected controller-owned mock profile, the binding is schema v3 and
+declares one additional, separate chain: billing assessment, exact mock-
+dispatch request and fixed-policy decision, Class 0/1 eligibility enforcement
+before `RUNNING`, a final freshness check immediately before invocation, and a
+terminal action receipt linked to the decision and enforced action. A deny,
+defer, indeterminate result, stale permit, unsupported
+obligation, ceiling mismatch, or unproven decision append invokes no runner.
+Schema-v1 unprofiled and schema-v2 selected histories remain valid
+shadow-only evidence; live runners continue to use schema v2.
+
+Neither the mock-dispatch chain nor the publication receipt authorizes the
+candidate write. Publication still relies on the existing Class 0/1 gate, its
+shadow can expose an authority-ceiling mismatch, and no shared, remote,
+promotion, deployment, live-harness, supervisor-worker, or Class 2/3 effect is
+enabled.
 
 ## Controlled comparison
 
@@ -443,7 +471,9 @@ commands. `ordomata supervise` holds a fenced foreground lease and processes
 control intent, including drain/stop completion, without installing a service.
 This is deliberately a control-plane tracer, not a completed supervisor:
 claim APIs are not connected to the CLI loop, and worker/runner dispatch stays
-hard-disabled until runtime ABAC enforcement exists. The loop starts no model,
+hard-disabled until its exact claim/dispatch/tool boundaries have authoritative
+ABAC coverage and verified repository containment. The narrow ordinary mock
+PEP supplies neither. The loop starts no model,
 worker subprocess, network action, repository-maintenance cell, Class 2/3
 effect, or OS schedule.
 
