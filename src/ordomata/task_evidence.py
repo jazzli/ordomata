@@ -14,6 +14,7 @@ from .authorization import canonical_digest
 from .billing import BillingPostRunDisposition
 from .contracts import TaskContract
 from .errors import ValidationError
+from .execution_selection import TASK_EXECUTION_SELECTION_EVENT_TYPE
 from .models import (
     BillingRoute,
     PermissionClass,
@@ -56,8 +57,24 @@ def build_task_attempt_binding_event(
     project_root: str,
     profile_id: str | None,
     authorization_intent_digest: str,
+    execution_selection_digest: str | None = None,
+    profile_version_ref: str | None = None,
+    profile_configuration_digest: str | None = None,
 ) -> dict[str, Any]:
     """Bind later evidence to immutable, controller-authored attempt inputs."""
+
+    selection_values = (
+        execution_selection_digest,
+        profile_version_ref,
+        profile_configuration_digest,
+    )
+    selection_bound = all(value is not None for value in selection_values)
+    if any(value is not None for value in selection_values) and not selection_bound:
+        raise ValidationError(
+            "execution selection binding fields must be provided together"
+        )
+    if selection_bound and profile_id is None:
+        raise ValidationError("execution selection requires a named profile")
 
     binding: dict[str, Any] = {
         "kind": "task_attempt",
@@ -90,8 +107,28 @@ def build_task_attempt_binding_event(
         "attempt": request.attempt,
         "permission_class": int(request.permission_class),
     }
+    if selection_bound:
+        assert execution_selection_digest is not None
+        assert profile_version_ref is not None
+        assert profile_configuration_digest is not None
+        binding.update(
+            {
+                "execution_selection_digest": _normalized_digest(
+                    execution_selection_digest,
+                    "execution selection digest",
+                ),
+                "profile_version_ref": _normalized_digest(
+                    profile_version_ref,
+                    "profile version reference",
+                ),
+                "profile_configuration_digest": _normalized_digest(
+                    profile_configuration_digest,
+                    "profile configuration digest",
+                ),
+            }
+        )
     return {
-        "schema_version": 1,
+        "schema_version": 2 if selection_bound else 1,
         "authorization_shadow_coverage": (
             TASK_ATTEMPT_AUTHORIZATION_SHADOW_COVERAGE
         ),

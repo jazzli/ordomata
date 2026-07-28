@@ -54,6 +54,7 @@ from .models import (
     RunStatus,
     UsageObservation,
 )
+from .execution_selection import execution_profile_configuration_digest
 from .orchestrator import (
     PreparedTask,
     _billing_assessments_match,
@@ -639,25 +640,7 @@ class ComparisonProfile:
     ) -> ComparisonProfile:
         if not isinstance(profile, ExecutionProfile):
             raise ValidationError("profile must be an ExecutionProfile")
-        digest = _canonical_digest(
-            {
-                "model_id": profile.model_id,
-                "profile_id": profile.profile_id,
-                "profile_version": profile.version,
-                "runner_id": profile.runner_id,
-                "settings": dict(profile.settings),
-                "role": profile.role,
-                "capabilities": sorted(profile.capabilities),
-                "task_kinds": sorted(profile.task_kinds),
-                "allowed_billing_routes": sorted(
-                    route.value for route in profile.allowed_billing_routes
-                ),
-                "max_permission_class": int(profile.max_permission_class),
-                "max_context_bytes": profile.max_context_bytes,
-                "quality_prior": profile.quality_prior,
-                "latency_prior_seconds": profile.latency_prior_seconds,
-            }
-        )
+        digest = execution_profile_configuration_digest(profile)
         return cls(
             profile_id=profile.profile_id,
             profile_version=profile.version,

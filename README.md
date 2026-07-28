@@ -57,6 +57,10 @@ records.
 - an interactive `billing-attest` workflow that independently probes the selected harness, requires an exact operator statement, and atomically stores only private semantic evidence;
 - an exact live-run gate that is necessary but cannot override billing, evidence, environment, profile, isolation, or circuit failures;
 - versioned harness/model/role/settings profiles and billing-lane-aware routing;
+- immutable, privacy-safe execution-selection evidence for profile-backed
+  Chief-of-Staff attempts, including canonical candidates, fixed rejection
+  codes, raw metric tiers, policy/profile/configuration refs, and the selected
+  overrides digest;
 - isolated per-run workspaces, wall timeouts, terminal-event checks, and output validation;
 - append-only SQLite runs, events, artifacts, capacity observations, billing circuits, scheduler claims, and expiring leases, with capacity checked inside the atomic dispatch reservation; baseline creation and exact legacy adoption are transactional, and every ordinary open verifies the frozen, contiguous v1-v4 migration prefix before use;
 - a versioned additive SQLite migration for a durable supervisor control-plane
@@ -75,9 +79,11 @@ records.
   numeric class, plus three non-enforcing Chief-of-Staff shadow decisions at
   admission, runner/model dispatch intent, and local-candidate publication;
 - digest-only ordinary task-attempt bindings that cover the typed authorization
-  intent, schema-v2 execution accounting, billing-bound dispatch, and schema-v2
-  pre-effect/action receipts around schema-v5 local-candidate publication, with
-  exact metadata, filesystem, and receipt reconciliation;
+  intent and, for profile-backed attempts, the immutable execution selection,
+  profile version, and configuration; schema-v2 execution accounting,
+  billing-bound dispatch, and schema-v2 pre-effect/action receipts around
+  schema-v5 local-candidate publication, with exact metadata, filesystem, and
+  receipt reconciliation;
 - append-only schema-v2 Class 0 comparison-trial bindings, lifecycle/accounting
   evidence, schema-v3 admission/dispatch shadows, and a separate schema-v4
   non-enforcing Class 1 private review-artifact publication shadow with

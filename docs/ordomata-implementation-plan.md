@@ -352,7 +352,7 @@ evidence payloads remain separate operational state.
 
 Subscription authentication alone no longer proves zero incremental cost. Codex can consume purchased ChatGPT credits after included limits, and Claude usage credits can continue at separately billed rates if enabled.
 
-**Implementation checkpoint:** the billing axes and prohibited routes, strict file-attestation loader, TTY-only operator attestation lifecycle, current-evidence checks, post-run disposition, append-only capacity/circuit records, sanitized `doctor` fields, and controlled `compare-run` path are implemented with deterministic tests. No live comparison has run. Broader worker-profile schema, persisted full routing-decision records, and outcome learning remain work unless separately shown as complete.
+**Implementation checkpoint:** the billing axes and prohibited routes, strict file-attestation loader, TTY-only operator attestation lifecycle, current-evidence checks, post-run disposition, append-only capacity/circuit records, sanitized `doctor` fields, controlled `compare-run` path, and immutable privacy-safe routing-decision evidence for started profile-backed Chief-of-Staff attempts are implemented with deterministic tests. No live comparison has run. A broader cross-workflow routing ledger, blocked pre-run decision history, richer worker-profile schema, and outcome learning remain work unless separately shown as complete.
 
 ### Deliverables
 
@@ -374,7 +374,10 @@ Subscription authentication alone no longer proves zero incremental cost. Codex 
 - Add `doctor` output for names-only attestation status, expiry, route, capacity state, and paid-continuation protection.
 - Preserve account and credential values outside SQLite, logs, prompts, commands, and artifacts.
 - Extend versioned execution profiles with the worker-profile fields above and validate every model/setting against observed adapter capabilities.
-- Add an immutable routing-decision record with every candidate, rejection reason, metric tier, evidence-confidence marker, selected settings, and policy version.
+- Extend the implemented immutable profile-backed Chief-of-Staff routing record
+  (every canonical candidate, fixed rejection code, metric/source tier,
+  selected profile/configuration/overrides refs, and policy version) to later
+  workflow families, retries, and failovers without rewriting prior attempts.
 - Implement tier-by-tier comparison without a cross-tier aggregate score: correctness/risk first, included-subscription efficiency second, latency third.
 - Keep deliberate profile exploration inside explicit controlled comparisons; unattended runs use only promoted policy and profiles.
 - Keep `subscription-only-policy.md`, `routing.md`, `roadmap.md`, `architecture.md`, `implementation-status.md`, and the README aligned with the new billing categories and per-attempt live eligibility rule.

@@ -81,6 +81,26 @@ remain readable as legacy shadow-only evidence and are not reinterpreted as
 receipt-complete. The controlled comparison path has its own separately bounded
 pre-effect and post-effect receipt pair.
 
+Started profile-backed Chief-of-Staff attempts additionally persist exactly
+one content-addressed `task_execution_selection` event between `created` and
+their schema-v2 task binding. The privacy-safe record binds a captured routing
+policy clock, exact task/context/authorization refs, canonical candidates,
+fixed rejection codes, raw score tiers and evidence-source markers, safe
+billing projections, and selected profile version/configuration/overrides
+digests. Bounded profile IDs remain visible solely to replay the governed
+lexical tie-break. Every source candidate is rebound to the controller-loaded
+catalog, and selected billing security semantics must match a fresh runner
+preflight that remains valid through the recorded attempt horizon. The binding
+and admission/dispatch parameter digests link the selection. A
+required append that cannot be proven exact blocks before execution; one that
+commits then raises is accepted only after exact readback. The read-only
+inspector independently checks policy/candidate digests, filters, scores,
+ranking, selected linkage, cardinality, and ordering while projecting no raw
+candidate data. This is non-enforcing evidence: the deterministic permission,
+billing, environment, isolation, circuit, and live-run gates remain separate
+and authoritative. Rejected pre-run selections and `route` previews do not
+create run evidence.
+
 Ordinary accounting persists only a digest reference for runner version text
 and a fixed controller-known execution-mode label. Its billing and accounting
 events use deterministic identifiers with exact commit readback, so an

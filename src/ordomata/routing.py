@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 import json
 import math
 from pathlib import Path
+import time
+from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
 from .errors import ConfigurationError, ValidationError
@@ -25,6 +27,25 @@ ALLOWED_ROUTES = frozenset(
         BillingRoute.LOCAL_NON_AI,
         BillingRoute.MOCK,
     }
+)
+
+ROUTING_POLICY_ID = "profile-router"
+ROUTING_POLICY_VERSION = "1"
+ROUTING_REJECTION_CODES = (
+    "billing_runner_identity_mismatch",
+    "billing_confidence_not_high",
+    "billing_route_prohibited",
+    "profile_billing_route_allowlist_missing",
+    "profile_billing_route_not_allowed",
+    "profile_unavailable",
+    "profile_cooldown_active",
+    "subscription_capacity_unavailable",
+    "permission_class_exceeds_profile_limit",
+    "task_kind_unsupported",
+    "profile_role_not_enabled",
+    "lane_billing_route_not_enabled",
+    "required_capability_missing",
+    "context_exceeds_profile_limit",
 )
 
 
@@ -116,6 +137,23 @@ class ExecutionProfile:
         _validate_finite_number(
             self.latency_prior_seconds, "latency_prior_seconds", minimum=0.0
         )
+        if not isinstance(self.settings, Mapping):
+            raise ValidationError("settings must be a mapping")
+        try:
+            settings = json.loads(
+                json.dumps(
+                    dict(self.settings),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("settings must be canonical JSON") from exc
+        if not isinstance(settings, dict):
+            raise ValidationError("settings must be a JSON object")
+        object.__setattr__(self, "settings", MappingProxyType(settings))
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +255,7 @@ class RuntimeProfileState:
 class RoutingRejection:
     profile_id: str
     reasons: tuple[str, ...]
+    reason_codes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +269,7 @@ class RoutingDecision:
     selected: RuntimeProfileState | None
     ranked: tuple[RankedProfile, ...]
     rejected: tuple[RoutingRejection, ...]
+    evaluated_at: float | None = None
 
     @property
     def blocked(self) -> bool:
@@ -250,15 +290,51 @@ class ProfileRouter:
         self,
         task: TaskRoutingFeatures,
         candidates: Iterable[RuntimeProfileState],
+        *,
+        evaluated_at: float | None = None,
+        required_valid_until: float | None = None,
     ) -> RoutingDecision:
+        if not isinstance(task, TaskRoutingFeatures):
+            raise ValidationError("task must be TaskRoutingFeatures")
+        policy_time = time.time() if evaluated_at is None else evaluated_at
+        _validate_finite_number(policy_time, "evaluated_at", minimum=0.0)
+        validity_horizon = (
+            policy_time
+            if required_valid_until is None
+            else required_valid_until
+        )
+        _validate_finite_number(
+            validity_horizon,
+            "required_valid_until",
+            minimum=float(policy_time),
+        )
+        materialized = tuple(candidates)
+        if any(not isinstance(state, RuntimeProfileState) for state in materialized):
+            raise ValidationError("candidates must contain RuntimeProfileState values")
+        profile_ids = tuple(state.profile.profile_id for state in materialized)
+        if len(set(profile_ids)) != len(profile_ids):
+            raise ValidationError("routing candidates contain duplicate profile IDs")
+
         eligible: list[RankedProfile] = []
         rejected: list[RoutingRejection] = []
 
-        for state in candidates:
-            reasons = self._ineligible_reasons(task, state)
-            if reasons:
+        for state in sorted(
+            materialized,
+            key=lambda item: item.profile.profile_id,
+        ):
+            reason_pairs = self._ineligible_reason_pairs(
+                task,
+                state,
+                evaluated_at=float(policy_time),
+                required_valid_until=float(validity_horizon),
+            )
+            if reason_pairs:
                 rejected.append(
-                    RoutingRejection(state.profile.profile_id, tuple(reasons))
+                    RoutingRejection(
+                        state.profile.profile_id,
+                        tuple(message for _, message in reason_pairs),
+                        tuple(code for code, _ in reason_pairs),
+                    )
                 )
                 continue
             eligible.append(RankedProfile(state, self._score(task, state)))
@@ -268,6 +344,7 @@ class ProfileRouter:
             selected=eligible[0].state if eligible else None,
             ranked=tuple(eligible),
             rejected=tuple(rejected),
+            evaluated_at=float(policy_time),
         )
 
     @staticmethod
@@ -280,6 +357,10 @@ class ProfileRouter:
             "accepted_results_per_included_capacity_unit_when_comparable",
             "negative_latency_seconds",
         )
+
+    @staticmethod
+    def rejection_codes() -> tuple[str, ...]:
+        return ROUTING_REJECTION_CODES
 
     @classmethod
     def _rank_eligible(
@@ -310,7 +391,8 @@ class ProfileRouter:
 
         buckets: dict[tuple[str, ...], list[RankedProfile]] = {}
         for item in sorted(
-            candidates, key=lambda candidate: candidate.state.profile.profile_id
+            candidates,
+            key=lambda candidate: candidate.state.profile.profile_id,
         ):
             observation = item.state.subscription_efficiency
             if observation is None:
@@ -348,48 +430,136 @@ class ProfileRouter:
                 del buckets[selected_key]
         return ranked
 
-    @staticmethod
+    @classmethod
     def _ineligible_reasons(
-        task: TaskRoutingFeatures, state: RuntimeProfileState
+        cls,
+        task: TaskRoutingFeatures,
+        state: RuntimeProfileState,
+        *,
+        evaluated_at: float | None = None,
+        required_valid_until: float | None = None,
     ) -> list[str]:
+        policy_time = time.time() if evaluated_at is None else evaluated_at
+        validity_horizon = (
+            policy_time
+            if required_valid_until is None
+            else required_valid_until
+        )
+        return [
+            message
+            for _, message in cls._ineligible_reason_pairs(
+                task,
+                state,
+                evaluated_at=policy_time,
+                required_valid_until=validity_horizon,
+            )
+        ]
+
+    @staticmethod
+    def _ineligible_reason_pairs(
+        task: TaskRoutingFeatures,
+        state: RuntimeProfileState,
+        *,
+        evaluated_at: float,
+        required_valid_until: float,
+    ) -> list[tuple[str, str]]:
         profile = state.profile
-        reasons: list[str] = []
+        reasons: list[tuple[str, str]] = []
         assessment = state.billing_assessment
         if assessment.runner_id != profile.runner_id:
-            reasons.append("billing assessment runner identity does not match profile")
+            reasons.append(
+                (
+                    "billing_runner_identity_mismatch",
+                    "billing assessment runner identity does not match profile",
+                )
+            )
         if assessment.confidence is not AssessmentConfidence.HIGH:
-            reasons.append("billing assessment confidence is not high")
-        if not BillingPolicy.route_is_allowed(assessment):
-            reasons.append(f"billing route {assessment.route.value} is prohibited")
+            reasons.append(
+                (
+                    "billing_confidence_not_high",
+                    "billing assessment confidence is not high",
+                )
+            )
+        if not BillingPolicy.route_is_allowed(
+            assessment,
+            now=evaluated_at,
+            required_valid_until=required_valid_until,
+        ):
+            reasons.append(
+                (
+                    "billing_route_prohibited",
+                    f"billing route {assessment.route.value} is prohibited",
+                )
+            )
         if not profile.allowed_billing_routes:
-            reasons.append("profile has no explicit billing-route allowlist")
+            reasons.append(
+                (
+                    "profile_billing_route_allowlist_missing",
+                    "profile has no explicit billing-route allowlist",
+                )
+            )
         elif assessment.route not in profile.allowed_billing_routes:
-            reasons.append("billing route is not allowed by the profile")
+            reasons.append(
+                (
+                    "profile_billing_route_not_allowed",
+                    "billing route is not allowed by the profile",
+                )
+            )
         if not state.available:
-            reasons.append("profile is unavailable")
+            reasons.append(("profile_unavailable", "profile is unavailable"))
         if state.cooldown_active:
-            reasons.append("profile is cooling down")
+            reasons.append(("profile_cooldown_active", "profile is cooling down"))
         if not state.subscription_capacity_available:
-            reasons.append("subscription capacity is unavailable")
+            reasons.append(
+                (
+                    "subscription_capacity_unavailable",
+                    "subscription capacity is unavailable",
+                )
+            )
         if task.permission_class > profile.max_permission_class:
-            reasons.append("permission class exceeds profile limit")
+            reasons.append(
+                (
+                    "permission_class_exceeds_profile_limit",
+                    "permission class exceeds profile limit",
+                )
+            )
         if profile.task_kinds and task.task_kind not in profile.task_kinds:
-            reasons.append("task kind is unsupported")
+            reasons.append(("task_kind_unsupported", "task kind is unsupported"))
         if task.allowed_roles and profile.role not in task.allowed_roles:
-            reasons.append("profile role is not enabled for this routing lane")
+            reasons.append(
+                (
+                    "profile_role_not_enabled",
+                    "profile role is not enabled for this routing lane",
+                )
+            )
         if (
             task.allowed_billing_routes
             and assessment.route not in task.allowed_billing_routes
         ):
-            reasons.append("billing route is not enabled for this routing lane")
+            reasons.append(
+                (
+                    "lane_billing_route_not_enabled",
+                    "billing route is not enabled for this routing lane",
+                )
+            )
         missing = task.required_capabilities - profile.capabilities
         if missing:
-            reasons.append(f"missing capabilities: {', '.join(sorted(missing))}")
+            reasons.append(
+                (
+                    "required_capability_missing",
+                    f"missing capabilities: {', '.join(sorted(missing))}",
+                )
+            )
         if (
             profile.max_context_bytes is not None
             and task.context_bytes > profile.max_context_bytes
         ):
-            reasons.append("context exceeds profile limit")
+            reasons.append(
+                (
+                    "context_exceeds_profile_limit",
+                    "context exceeds profile limit",
+                )
+            )
         return reasons
 
     @staticmethod
@@ -637,9 +807,47 @@ def runner_overrides_for_profile(profile: ExecutionProfile) -> dict[str, Any]:
             f"profile {profile.profile_id} has unsupported settings: "
             + ", ".join(unknown)
         )
+    settings = dict(profile.settings)
+    if profile.runner_id == "codex":
+        effort = settings.get("reasoning_effort")
+        if effort is not None and effort not in {
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+        }:
+            raise ConfigurationError(
+                f"profile {profile.profile_id} has invalid reasoning_effort"
+            )
+    elif profile.runner_id == "claude":
+        effort = settings.get("effort")
+        if effort is not None and effort not in {"low", "medium", "high"}:
+            raise ConfigurationError(
+                f"profile {profile.profile_id} has invalid effort"
+            )
+        max_turns = settings.get("max_turns")
+        if max_turns is not None and (
+            isinstance(max_turns, bool)
+            or not isinstance(max_turns, int)
+            or not 1 <= max_turns <= 100
+        ):
+            raise ConfigurationError(
+                f"profile {profile.profile_id} has invalid max_turns"
+            )
+    elif profile.runner_id == "mock":
+        if profile.model_id is not None:
+            raise ConfigurationError(
+                f"profile {profile.profile_id} cannot select a model"
+            )
+        fixture = settings.get("fixture")
+        if fixture is not None and fixture != "chief_of_staff.valid":
+            raise ConfigurationError(
+                f"profile {profile.profile_id} has unsupported fixture"
+            )
     overrides = {
         key: value
-        for key, value in profile.settings.items()
+        for key, value in settings.items()
         if key != "fixture"
     }
     if profile.model_id is not None:
