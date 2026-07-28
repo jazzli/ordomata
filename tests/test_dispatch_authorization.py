@@ -9,6 +9,8 @@ import time
 import unittest
 from unittest.mock import patch
 
+import ordomata.dispatch_authorization as dispatch_authorization_module
+import ordomata.orchestrator as orchestrator_module
 from ordomata.admission_authorization import (
     TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE,
     TASK_ADMISSION_ACTION_SCOPE,
@@ -30,7 +32,11 @@ from ordomata.dispatch_authorization import (
     assert_mock_dispatch_authorized,
     evaluate_mock_dispatch_authorization,
 )
-from ordomata.errors import AuthorizationBlocked, ValidationError
+from ordomata.errors import (
+    AuthorizationBlocked,
+    ConfigurationError,
+    ValidationError,
+)
 from ordomata.execution_selection import (
     build_execution_selection,
     execution_profile_configuration_digest,
@@ -46,6 +52,9 @@ from ordomata.orchestrator import (
     load_mock_chief_of_staff_output,
     prepare_chief_of_staff,
     run_chief_of_staff,
+)
+from ordomata.publication_authorization import (
+    LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
 )
 from ordomata.routing import (
     RuntimeProfileState,
@@ -64,6 +73,8 @@ from ordomata.task_evidence import (
     TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE,
     TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
     TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
+    TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
+    TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
     build_task_attempt_binding_event,
 )
 
@@ -73,11 +84,11 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 
 @contextmanager
 def recording_mock_calls():
-    """Instrument the exact MockRunner class without accepting a substitute."""
+    """Observe controller runner seams without mutating the runner class."""
 
     calls = {"inspect": 0, "execute": 0, "requests": []}
-    original_inspect = MockRunner.inspect_billing_route
-    original_execute = MockRunner.execute
+    original_inspect = orchestrator_module._inspect_runner_billing_route
+    original_execute = orchestrator_module._execute_runner
 
     async def recording_inspect(runner):
         calls["inspect"] += 1
@@ -90,11 +101,15 @@ def recording_mock_calls():
 
     with (
         patch.object(
-            MockRunner,
-            "inspect_billing_route",
+            orchestrator_module,
+            "_inspect_runner_billing_route",
             new=recording_inspect,
         ),
-        patch.object(MockRunner, "execute", new=recording_execute),
+        patch.object(
+            orchestrator_module,
+            "_execute_runner",
+            new=recording_execute,
+        ),
     ):
         yield calls
 
@@ -404,8 +419,10 @@ class DispatchAuthorizationTests(unittest.TestCase):
             run_id = "default-mock-dispatch-permit"
             private_instruction = "private-dispatch-instruction-7f3c"
             counts = {"inspect": 0, "execute": 0}
-            original_inspect = MockRunner.inspect_billing_route
-            original_execute = MockRunner.execute
+            original_inspect = (
+                orchestrator_module._inspect_runner_billing_route
+            )
+            original_execute = orchestrator_module._execute_runner
 
             async def recording_inspect(runner):
                 counts["inspect"] += 1
@@ -417,11 +434,15 @@ class DispatchAuthorizationTests(unittest.TestCase):
 
             with (
                 patch.object(
-                    MockRunner,
-                    "inspect_billing_route",
+                    orchestrator_module,
+                    "_inspect_runner_billing_route",
                     new=recording_inspect,
                 ),
-                patch.object(MockRunner, "execute", new=recording_execute),
+                patch.object(
+                    orchestrator_module,
+                    "_execute_runner",
+                    new=recording_execute,
+                ),
             ):
                 report = asyncio.run(
                     run_chief_of_staff(
@@ -432,7 +453,7 @@ class DispatchAuthorizationTests(unittest.TestCase):
                 )
 
             self.assertEqual(report.status, RunStatus.SUCCEEDED)
-            self.assertEqual(counts, {"inspect": 2, "execute": 1})
+            self.assertEqual(counts, {"inspect": 1, "execute": 1})
             self._assert_success_evidence(
                 root,
                 run_id,
@@ -452,7 +473,7 @@ class DispatchAuthorizationTests(unittest.TestCase):
             report, calls = self._run_explicit(root, run_id)
 
             self.assertEqual(report.status, RunStatus.SUCCEEDED)
-            self.assertEqual(calls["inspect"], 2)
+            self.assertEqual(calls["inspect"], 1)
             self.assertEqual(calls["execute"], 1)
             self._assert_success_evidence(root, run_id, private_values=(str(root),))
 
@@ -646,7 +667,7 @@ class DispatchAuthorizationTests(unittest.TestCase):
             ) as state:
                 self.assertEqual(state.current_status(run_id), RunStatus.BLOCKED)
 
-    def test_expired_decision_after_running_blocks_at_execute_boundary(
+    def test_expired_decision_blocks_before_running_and_execute(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -661,6 +682,7 @@ class DispatchAuthorizationTests(unittest.TestCase):
                 authorization,
                 *,
                 action_started_at,
+                **current_inputs,
             ):
                 nonlocal freshness_checks
                 freshness_checks += 1
@@ -671,6 +693,7 @@ class DispatchAuthorizationTests(unittest.TestCase):
                 return assert_mock_dispatch_authorized(
                     authorization,
                     action_started_at=authorization.decision.expires_at,
+                    **current_inputs,
                 )
 
             with (
@@ -698,18 +721,6 @@ class DispatchAuthorizationTests(unittest.TestCase):
             self.assertEqual(calls["execute"], 0)
             events = self._events(root, run_id)
             decision = self._only(events, MOCK_DISPATCH_DECISION_EVENT_TYPE)
-            running = next(
-                event
-                for event in events
-                if event.status is RunStatus.RUNNING
-                and event.payload.get("phase") == "runner_execution"
-            )
-            dispatch_shadow = next(
-                event
-                for event in events
-                if event.event_type == "authorization_shadow_decision"
-                and event.payload.get("action_scope") == DISPATCH_ACTION_SCOPE
-            )
             terminal = next(
                 event
                 for event in events
@@ -717,9 +728,22 @@ class DispatchAuthorizationTests(unittest.TestCase):
                 and event.payload.get("phase")
                 == "mock_dispatch_authorization_freshness"
             )
-            self.assertLess(decision.sequence, running.sequence)
-            self.assertLess(running.sequence, dispatch_shadow.sequence)
-            self.assertLess(dispatch_shadow.sequence, terminal.sequence)
+            self.assertLess(decision.sequence, terminal.sequence)
+            self.assertFalse(
+                any(
+                    event.status is RunStatus.RUNNING
+                    and event.payload.get("phase") == "runner_execution"
+                    for event in events
+                )
+            )
+            self.assertFalse(
+                any(
+                    event.event_type == "authorization_shadow_decision"
+                    and event.payload.get("action_scope")
+                    == DISPATCH_ACTION_SCOPE
+                    for event in events
+                )
+            )
             self.assertFalse(
                 any(
                     event.event_type == MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE
@@ -806,7 +830,7 @@ class DispatchAuthorizationTests(unittest.TestCase):
             prepared, profile, selection, runner = self._explicit_inputs(
                 root, run_id
             )
-            original_execute = MockRunner.execute
+            original_execute = orchestrator_module._execute_runner
             execute_count = 0
 
             async def return_mismatched_result(
@@ -825,8 +849,8 @@ class DispatchAuthorizationTests(unittest.TestCase):
 
             with (
                 patch.object(
-                    MockRunner,
-                    "execute",
+                    orchestrator_module,
+                    "_execute_runner",
                     new=return_mismatched_result,
                 ),
                 self.assertRaises(ValidationError),
@@ -887,8 +911,8 @@ class DispatchAuthorizationTests(unittest.TestCase):
 
             with (
                 patch.object(
-                    MockRunner,
-                    "execute",
+                    orchestrator_module,
+                    "_execute_runner",
                     new=cancel_execution,
                 ),
                 self.assertRaises(ExecutionCancelled),
@@ -1088,7 +1112,7 @@ class DispatchAuthorizationTests(unittest.TestCase):
 
             self.assertTrue(injected)
             self.assertEqual(report.status, RunStatus.SUCCEEDED)
-            self.assertEqual(calls["inspect"], 2)
+            self.assertEqual(calls["inspect"], 1)
             self.assertEqual(calls["execute"], 1)
             events = self._events(root, run_id)
             self.assertEqual(
@@ -1103,6 +1127,918 @@ class DispatchAuthorizationTests(unittest.TestCase):
                 "\n".join(event.payload_json for event in events),
             )
             self._assert_success_evidence(root, run_id)
+
+    def test_silent_pre_effect_evidence_drop_never_executes(self) -> None:
+        for target in ("billing", "decision", "running"):
+            with (
+                self.subTest(target=target),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = self._project(temporary)
+                run_id = f"mock-dispatch-silent-{target}-drop"
+                prepared, profile, selection, runner = self._explicit_inputs(
+                    root,
+                    run_id,
+                )
+                original_append = SQLiteStateStore.append_event
+                dropped = False
+
+                def drop_target(
+                    store,
+                    observed_run_id,
+                    event_type,
+                    payload=None,
+                    **kwargs,
+                ):
+                    nonlocal dropped
+                    is_target = (
+                        target == "billing"
+                        and event_type == "billing_assessment"
+                    ) or (
+                        target == "decision"
+                        and event_type == MOCK_DISPATCH_DECISION_EVENT_TYPE
+                    ) or (
+                        target == "running"
+                        and event_type == "status"
+                        and payload == {"phase": "runner_execution"}
+                        and kwargs.get("status") is RunStatus.RUNNING
+                    )
+                    if is_target and not dropped:
+                        dropped = True
+                        return None
+                    return original_append(
+                        store,
+                        observed_run_id,
+                        event_type,
+                        payload,
+                        **kwargs,
+                    )
+
+                with (
+                    patch.object(
+                        SQLiteStateStore,
+                        "append_event",
+                        new=drop_target,
+                    ),
+                    recording_mock_calls() as calls,
+                    self.assertRaises(ConfigurationError),
+                ):
+                    asyncio.run(
+                        run_chief_of_staff(
+                            root,
+                            runner=runner,
+                            runner_overrides=runner_overrides_for_profile(
+                                profile
+                            ),
+                            run_id=run_id,
+                            profile_id=profile.profile_id,
+                            prepared_task=prepared,
+                            execution_selection=selection,
+                        )
+                    )
+
+                self.assertTrue(dropped)
+                self.assertEqual(calls["inspect"], 1)
+                self.assertEqual(calls["execute"], 0)
+                events = self._events(root, run_id)
+                self.assertFalse(
+                    any(event.status is RunStatus.RUNNING for event in events)
+                )
+                self.assertFalse(
+                    any(
+                        event.event_type
+                        == MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE
+                        for event in events
+                    )
+                )
+                self.assertFalse(
+                    any(
+                        event.event_type == "execution_accounting"
+                        for event in events
+                    )
+                )
+                with SQLiteStateStore(
+                    root / ".ordomata" / "state.sqlite3"
+                ) as state:
+                    self.assertEqual(
+                        state.current_status(run_id),
+                        RunStatus.FAILED,
+                    )
+                    self.assertEqual(state.list_artifacts(run_id), ())
+
+    def test_final_rebuild_base_exception_cancels_before_execute(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            run_id = "mock-dispatch-final-rebuild-cancelled"
+            prepared, profile, selection, runner = self._explicit_inputs(
+                root,
+                run_id,
+            )
+            original_rebuild = (
+                dispatch_authorization_module.
+                _evaluate_mock_dispatch_authorization
+            )
+            rebuild_calls = 0
+            private_error = "private-final-rebuild-cancellation-89d2"
+
+            def interrupt_final_rebuild(**kwargs):
+                nonlocal rebuild_calls
+                rebuild_calls += 1
+                if rebuild_calls > 1:
+                    raise KeyboardInterrupt(private_error)
+                return original_rebuild(**kwargs)
+
+            with (
+                patch(
+                    "ordomata.dispatch_authorization."
+                    "_evaluate_mock_dispatch_authorization",
+                    new=interrupt_final_rebuild,
+                ),
+                recording_mock_calls() as calls,
+                self.assertRaises(KeyboardInterrupt),
+            ):
+                asyncio.run(
+                    run_chief_of_staff(
+                        root,
+                        runner=runner,
+                        runner_overrides=runner_overrides_for_profile(profile),
+                        run_id=run_id,
+                        profile_id=profile.profile_id,
+                        prepared_task=prepared,
+                        execution_selection=selection,
+                    )
+                )
+
+            self.assertEqual(rebuild_calls, 2)
+            self.assertEqual(calls["execute"], 0)
+            events = self._events(root, run_id)
+            self._only(events, MOCK_DISPATCH_DECISION_EVENT_TYPE)
+            self.assertFalse(
+                any(event.status is RunStatus.RUNNING for event in events)
+            )
+            terminal = next(
+                event
+                for event in events
+                if event.status is RunStatus.CANCELLED
+                and event.payload.get("phase")
+                == "mock_dispatch_authorization_freshness"
+            )
+            self.assertIsNotNone(terminal)
+            self.assertNotIn(
+                private_error,
+                "\n".join(event.payload_json for event in events),
+            )
+            self.assertFalse(
+                any(
+                    event.event_type == MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE
+                    for event in events
+                )
+            )
+            with SQLiteStateStore(
+                root / ".ordomata" / "state.sqlite3"
+            ) as state:
+                self.assertEqual(
+                    state.current_status(run_id),
+                    RunStatus.CANCELLED,
+                )
+                self.assertEqual(state.list_artifacts(run_id), ())
+
+    def test_post_replay_expiry_blocks_and_receipt_uses_boundary_time(
+        self,
+    ) -> None:
+        for expires_before_effect in (True, False):
+            with (
+                self.subTest(expires_before_effect=expires_before_effect),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = self._project(temporary)
+                run_id = (
+                    "mock-dispatch-post-replay-expired"
+                    if expires_before_effect
+                    else "mock-dispatch-post-replay-current"
+                )
+                prepared, profile, selection, runner = self._explicit_inputs(
+                    root,
+                    run_id,
+                )
+                original_assert = (
+                    orchestrator_module.assert_mock_dispatch_authorized
+                )
+                clock = {"now": 100.0}
+                assertion_count = 0
+                expected_boundary = 101.0
+
+                def fake_time() -> float:
+                    return clock["now"]
+
+                def advance_after_replay(authorization, **kwargs):
+                    nonlocal assertion_count
+                    original_assert(authorization, **kwargs)
+                    assertion_count += 1
+                    if assertion_count == 2:
+                        clock["now"] = (
+                            authorization.decision.expires_at + 1.0
+                            if expires_before_effect
+                            else expected_boundary
+                        )
+
+                with (
+                    patch.object(
+                        orchestrator_module.time,
+                        "time",
+                        new=fake_time,
+                    ),
+                    patch.object(
+                        orchestrator_module,
+                        "assert_mock_dispatch_authorized",
+                        new=advance_after_replay,
+                    ),
+                    recording_mock_calls() as calls,
+                ):
+                    if expires_before_effect:
+                        with self.assertRaises(AuthorizationBlocked):
+                            asyncio.run(
+                                run_chief_of_staff(
+                                    root,
+                                    runner=runner,
+                                    runner_overrides=(
+                                        runner_overrides_for_profile(profile)
+                                    ),
+                                    run_id=run_id,
+                                    profile_id=profile.profile_id,
+                                    prepared_task=prepared,
+                                    execution_selection=selection,
+                                )
+                            )
+                    else:
+                        report = asyncio.run(
+                            run_chief_of_staff(
+                                root,
+                                runner=runner,
+                                runner_overrides=runner_overrides_for_profile(
+                                    profile
+                                ),
+                                run_id=run_id,
+                                profile_id=profile.profile_id,
+                                prepared_task=prepared,
+                                execution_selection=selection,
+                            )
+                        )
+                        self.assertEqual(report.status, RunStatus.SUCCEEDED)
+
+                self.assertEqual(assertion_count, 2)
+                events = self._events(root, run_id)
+                if expires_before_effect:
+                    self.assertEqual(calls["execute"], 0)
+                    self.assertFalse(
+                        any(
+                            event.event_type
+                            == MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE
+                            for event in events
+                        )
+                    )
+                    with SQLiteStateStore(
+                        root / ".ordomata" / "state.sqlite3"
+                    ) as state:
+                        self.assertEqual(
+                            state.current_status(run_id),
+                            RunStatus.BLOCKED,
+                        )
+                else:
+                    self.assertEqual(calls["execute"], 1)
+                    receipt = self._only(
+                        events,
+                        MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE,
+                    )
+                    self.assertEqual(
+                        receipt.payload["receipt"]["started_at"],
+                        expected_boundary,
+                    )
+
+    def test_silent_selection_or_binding_drop_blocks_before_admission(
+        self,
+    ) -> None:
+        for target_event_type in (
+            "task_execution_selection",
+            "task_attempt_authorization_binding",
+        ):
+            with (
+                self.subTest(target_event_type=target_event_type),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = self._project(temporary)
+                run_id = f"mock-dispatch-silent-{target_event_type}-drop"
+                prepared, profile, selection, runner = self._explicit_inputs(
+                    root,
+                    run_id,
+                )
+                original_append = SQLiteStateStore.append_event
+                dropped = False
+
+                def drop_required_lineage(
+                    store,
+                    observed_run_id,
+                    event_type,
+                    payload=None,
+                    **kwargs,
+                ):
+                    nonlocal dropped
+                    if not dropped and event_type == target_event_type:
+                        dropped = True
+                        return None
+                    return original_append(
+                        store,
+                        observed_run_id,
+                        event_type,
+                        payload,
+                        **kwargs,
+                    )
+
+                with (
+                    patch.object(
+                        SQLiteStateStore,
+                        "append_event",
+                        new=drop_required_lineage,
+                    ),
+                    self.assertRaises(ConfigurationError),
+                ):
+                    asyncio.run(
+                        run_chief_of_staff(
+                            root,
+                            runner=runner,
+                            runner_overrides=runner_overrides_for_profile(
+                                profile
+                            ),
+                            run_id=run_id,
+                            profile_id=profile.profile_id,
+                            prepared_task=prepared,
+                            execution_selection=selection,
+                        )
+                    )
+
+                self.assertTrue(dropped)
+                events = self._events(root, run_id)
+                self.assertFalse(
+                    any(event.status is RunStatus.RUNNING for event in events)
+                )
+                self.assertFalse(
+                    any(
+                        event.event_type == MOCK_DISPATCH_DECISION_EVENT_TYPE
+                        for event in events
+                    )
+                )
+                with SQLiteStateStore(
+                    root / ".ordomata" / "state.sqlite3"
+                ) as state:
+                    self.assertEqual(
+                        state.current_status(run_id),
+                        RunStatus.FAILED,
+                    )
+                    self.assertEqual(state.list_artifacts(run_id), ())
+
+    def test_silent_execution_accounting_drop_prevents_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            run_id = "mock-dispatch-silent-accounting-drop"
+            prepared, profile, selection, runner = self._explicit_inputs(
+                root,
+                run_id,
+            )
+            original_append = SQLiteStateStore.append_event
+            dropped = False
+
+            def drop_accounting(
+                store,
+                observed_run_id,
+                event_type,
+                payload=None,
+                **kwargs,
+            ):
+                nonlocal dropped
+                if not dropped and event_type == "execution_accounting":
+                    dropped = True
+                    return None
+                return original_append(
+                    store,
+                    observed_run_id,
+                    event_type,
+                    payload,
+                    **kwargs,
+                )
+
+            with (
+                patch.object(
+                    SQLiteStateStore,
+                    "append_event",
+                    new=drop_accounting,
+                ),
+                self.assertRaises(ConfigurationError),
+            ):
+                asyncio.run(
+                    run_chief_of_staff(
+                        root,
+                        runner=runner,
+                        runner_overrides=runner_overrides_for_profile(profile),
+                        run_id=run_id,
+                        profile_id=profile.profile_id,
+                        prepared_task=prepared,
+                        execution_selection=selection,
+                    )
+                )
+
+            self.assertTrue(dropped)
+            events = self._events(root, run_id)
+            self._only(events, MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE)
+            self.assertFalse(
+                any(event.event_type == "execution_accounting" for event in events)
+            )
+            self.assertFalse(
+                any(
+                    event.event_type
+                    in {
+                        LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+                        TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
+                        TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
+                    }
+                    for event in events
+                )
+            )
+            with SQLiteStateStore(
+                root / ".ordomata" / "state.sqlite3"
+            ) as state:
+                self.assertIn(
+                    state.current_status(run_id),
+                    {RunStatus.FAILED, RunStatus.QUARANTINED},
+                )
+                self.assertEqual(state.list_artifacts(run_id), ())
+            self.assertFalse(
+                (root / "artifacts" / "chief-of-staff-lite.json").exists()
+            )
+
+    def test_effect_time_decision_readback_drop_never_executes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            run_id = "mock-dispatch-effect-time-decision-drop"
+            prepared, profile, selection, runner = self._explicit_inputs(
+                root,
+                run_id,
+            )
+            original_list_events = SQLiteStateStore.list_events
+            hidden = False
+
+            def hide_decision_after_running(store, observed_run_id):
+                nonlocal hidden
+                events = original_list_events(store, observed_run_id)
+                if any(event.status is RunStatus.RUNNING for event in events):
+                    hidden = True
+                    return tuple(
+                        event
+                        for event in events
+                        if event.event_type
+                        != MOCK_DISPATCH_DECISION_EVENT_TYPE
+                    )
+                return events
+
+            with (
+                patch.object(
+                    SQLiteStateStore,
+                    "list_events",
+                    new=hide_decision_after_running,
+                ),
+                recording_mock_calls() as calls,
+                self.assertRaises(ConfigurationError),
+            ):
+                asyncio.run(
+                    run_chief_of_staff(
+                        root,
+                        runner=runner,
+                        runner_overrides=runner_overrides_for_profile(profile),
+                        run_id=run_id,
+                        profile_id=profile.profile_id,
+                        prepared_task=prepared,
+                        execution_selection=selection,
+                    )
+                )
+
+            self.assertTrue(hidden)
+            self.assertEqual(calls["execute"], 0)
+            events = self._events(root, run_id)
+            self.assertFalse(
+                any(
+                    event.event_type == MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE
+                    for event in events
+                )
+            )
+            with SQLiteStateStore(
+                root / ".ordomata" / "state.sqlite3"
+            ) as state:
+                self.assertEqual(state.current_status(run_id), RunStatus.FAILED)
+                self.assertEqual(state.list_artifacts(run_id), ())
+
+    def test_retained_decision_payload_mutation_is_caught_at_final_pep(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            run_id = "mock-dispatch-retained-payload-mutation"
+            prepared, profile, selection, runner = self._explicit_inputs(
+                root,
+                run_id,
+            )
+            original_append = SQLiteStateStore.append_event
+            retained_payload = None
+            mutated = False
+
+            def mutate_after_precheck(
+                store,
+                observed_run_id,
+                event_type,
+                payload=None,
+                **kwargs,
+            ):
+                nonlocal retained_payload, mutated
+                result = original_append(
+                    store,
+                    observed_run_id,
+                    event_type,
+                    payload,
+                    **kwargs,
+                )
+                if event_type == MOCK_DISPATCH_DECISION_EVENT_TYPE:
+                    retained_payload = payload
+                elif (
+                    not mutated
+                    and event_type == "status"
+                    and payload == {"phase": "runner_execution"}
+                    and kwargs.get("status") is RunStatus.RUNNING
+                ):
+                    assert retained_payload is not None
+                    retained_payload["execution_selection_digest"] = (
+                        canonical_digest({"fixture": "late-mutation"})
+                    )
+                    mutated = True
+                return result
+
+            with (
+                patch.object(
+                    SQLiteStateStore,
+                    "append_event",
+                    new=mutate_after_precheck,
+                ),
+                recording_mock_calls() as calls,
+                self.assertRaises(ConfigurationError),
+            ):
+                asyncio.run(
+                    run_chief_of_staff(
+                        root,
+                        runner=runner,
+                        runner_overrides=runner_overrides_for_profile(profile),
+                        run_id=run_id,
+                        profile_id=profile.profile_id,
+                        prepared_task=prepared,
+                        execution_selection=selection,
+                    )
+                )
+
+            self.assertTrue(mutated)
+            self.assertEqual(calls["execute"], 0)
+            events = self._events(root, run_id)
+            self._only(events, MOCK_DISPATCH_DECISION_EVENT_TYPE)
+            self.assertFalse(
+                any(
+                    event.event_type == MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE
+                    for event in events
+                )
+            )
+            with SQLiteStateStore(
+                root / ".ordomata" / "state.sqlite3"
+            ) as state:
+                self.assertEqual(state.current_status(run_id), RunStatus.FAILED)
+                self.assertEqual(state.list_artifacts(run_id), ())
+
+    def test_late_runner_boundary_rebound_never_executes(self) -> None:
+        for boundary_name in ("execute", "inspect_billing_route"):
+            with (
+                self.subTest(boundary_name=boundary_name),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = self._project(temporary)
+                run_id = f"mock-dispatch-late-rebound-{boundary_name}"
+                prepared, profile, selection, runner = self._explicit_inputs(
+                    root,
+                    run_id,
+                )
+                original_append = SQLiteStateStore.append_event
+                rebound = False
+
+                async def forbidden_boundary(*args, **kwargs):
+                    del args, kwargs
+                    raise AssertionError("a rebound runner boundary executed")
+
+                def rebound_after_precheck(
+                    store,
+                    observed_run_id,
+                    event_type,
+                    payload=None,
+                    **kwargs,
+                ):
+                    nonlocal rebound
+                    result = original_append(
+                        store,
+                        observed_run_id,
+                        event_type,
+                        payload,
+                        **kwargs,
+                    )
+                    if (
+                        not rebound
+                        and event_type == "status"
+                        and payload == {"phase": "runner_execution"}
+                        and kwargs.get("status") is RunStatus.RUNNING
+                    ):
+                        setattr(runner, boundary_name, forbidden_boundary)
+                        rebound = True
+                    return result
+
+                with (
+                    patch.object(
+                        SQLiteStateStore,
+                        "append_event",
+                        new=rebound_after_precheck,
+                    ),
+                    recording_mock_calls() as calls,
+                    self.assertRaises(AuthorizationBlocked),
+                ):
+                    asyncio.run(
+                        run_chief_of_staff(
+                            root,
+                            runner=runner,
+                            runner_overrides=runner_overrides_for_profile(
+                                profile
+                            ),
+                            run_id=run_id,
+                            profile_id=profile.profile_id,
+                            prepared_task=prepared,
+                            execution_selection=selection,
+                        )
+                    )
+
+                self.assertTrue(rebound)
+                self.assertEqual(calls["execute"], 0)
+                events = self._events(root, run_id)
+                self.assertFalse(
+                    any(
+                        event.event_type
+                        == MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE
+                        for event in events
+                    )
+                )
+                self.assertFalse(
+                    any(
+                        event.event_type == "execution_accounting"
+                        for event in events
+                    )
+                )
+                with SQLiteStateStore(
+                    root / ".ordomata" / "state.sqlite3"
+                ) as state:
+                    self.assertEqual(
+                        state.current_status(run_id),
+                        RunStatus.BLOCKED,
+                    )
+                    self.assertEqual(state.list_artifacts(run_id), ())
+
+    def test_late_mock_runner_class_rebound_never_executes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            run_id = "mock-dispatch-late-class-rebound"
+            prepared, profile, selection, runner = self._explicit_inputs(
+                root,
+                run_id,
+            )
+            original_append = SQLiteStateStore.append_event
+            class_patch = None
+            rebound = False
+            execute_attempted = False
+
+            async def forbidden_execute(*args, **kwargs):
+                nonlocal execute_attempted
+                del args, kwargs
+                execute_attempted = True
+                raise AssertionError("a rebound MockRunner class executed")
+
+            def rebound_class_after_precheck(
+                store,
+                observed_run_id,
+                event_type,
+                payload=None,
+                **kwargs,
+            ):
+                nonlocal class_patch, rebound
+                result = original_append(
+                    store,
+                    observed_run_id,
+                    event_type,
+                    payload,
+                    **kwargs,
+                )
+                if (
+                    not rebound
+                    and event_type == "status"
+                    and payload == {"phase": "runner_execution"}
+                    and kwargs.get("status") is RunStatus.RUNNING
+                ):
+                    class_patch = patch.object(
+                        MockRunner,
+                        "execute",
+                        new=forbidden_execute,
+                    )
+                    class_patch.start()
+                    rebound = True
+                return result
+
+            try:
+                with (
+                    patch.object(
+                        SQLiteStateStore,
+                        "append_event",
+                        new=rebound_class_after_precheck,
+                    ),
+                    self.assertRaises(AuthorizationBlocked),
+                ):
+                    asyncio.run(
+                        run_chief_of_staff(
+                            root,
+                            runner=runner,
+                            runner_overrides=runner_overrides_for_profile(
+                                profile
+                            ),
+                            run_id=run_id,
+                            profile_id=profile.profile_id,
+                            prepared_task=prepared,
+                            execution_selection=selection,
+                        )
+                    )
+            finally:
+                if class_patch is not None:
+                    class_patch.stop()
+
+            self.assertTrue(rebound)
+            self.assertFalse(execute_attempted)
+            events = self._events(root, run_id)
+            self.assertFalse(
+                any(
+                    event.event_type == MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE
+                    for event in events
+                )
+            )
+            self.assertFalse(
+                any(
+                    event.event_type == "execution_accounting"
+                    for event in events
+                )
+            )
+            with SQLiteStateStore(
+                root / ".ordomata" / "state.sqlite3"
+            ) as state:
+                self.assertEqual(
+                    state.current_status(run_id),
+                    RunStatus.BLOCKED,
+                )
+                self.assertEqual(state.list_artifacts(run_id), ())
+
+    def test_silent_dispatch_receipt_drop_quarantines_before_publication(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            run_id = "mock-dispatch-silent-receipt-drop"
+            prepared, profile, selection, runner = self._explicit_inputs(
+                root,
+                run_id,
+            )
+            original_append = SQLiteStateStore.append_event
+            dropped = False
+
+            def drop_receipt(
+                store,
+                observed_run_id,
+                event_type,
+                payload=None,
+                **kwargs,
+            ):
+                nonlocal dropped
+                if (
+                    not dropped
+                    and event_type == MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE
+                ):
+                    dropped = True
+                    return None
+                return original_append(
+                    store,
+                    observed_run_id,
+                    event_type,
+                    payload,
+                    **kwargs,
+                )
+
+            with (
+                patch.object(
+                    SQLiteStateStore,
+                    "append_event",
+                    new=drop_receipt,
+                ),
+                recording_mock_calls() as calls,
+                self.assertRaises(ConfigurationError),
+            ):
+                asyncio.run(
+                    run_chief_of_staff(
+                        root,
+                        runner=runner,
+                        runner_overrides=runner_overrides_for_profile(profile),
+                        run_id=run_id,
+                        profile_id=profile.profile_id,
+                        prepared_task=prepared,
+                        execution_selection=selection,
+                    )
+                )
+
+            self.assertTrue(dropped)
+            self.assertEqual(calls["execute"], 1)
+            events = self._events(root, run_id)
+            prohibited_types = {
+                MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE,
+                "execution_accounting",
+                LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+                TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
+                TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
+            }
+            self.assertFalse(
+                any(event.event_type in prohibited_types for event in events)
+            )
+            with SQLiteStateStore(
+                root / ".ordomata" / "state.sqlite3"
+            ) as state:
+                self.assertEqual(
+                    state.current_status(run_id),
+                    RunStatus.QUARANTINED,
+                )
+                self.assertEqual(state.list_artifacts(run_id), ())
+            self.assertFalse(
+                (root / "artifacts" / "chief-of-staff-lite.json").exists()
+            )
+
+    def test_malformed_returned_receipt_context_is_quarantined(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            run_id = "mock-dispatch-malformed-returned-receipt"
+            prepared, profile, selection, runner = self._explicit_inputs(
+                root,
+                run_id,
+            )
+            original_append_receipt = (
+                orchestrator_module._append_mock_dispatch_action_receipt
+            )
+
+            def return_malformed_context(*args, **kwargs):
+                payload = original_append_receipt(*args, **kwargs)
+                return {**payload, "receipt": None}
+
+            with (
+                patch.object(
+                    orchestrator_module,
+                    "_append_mock_dispatch_action_receipt",
+                    new=return_malformed_context,
+                ),
+                recording_mock_calls() as calls,
+                self.assertRaises(ValidationError),
+            ):
+                asyncio.run(
+                    run_chief_of_staff(
+                        root,
+                        runner=runner,
+                        runner_overrides=runner_overrides_for_profile(profile),
+                        run_id=run_id,
+                        profile_id=profile.profile_id,
+                        prepared_task=prepared,
+                        execution_selection=selection,
+                    )
+                )
+
+            self.assertEqual(calls["execute"], 1)
+            events = self._events(root, run_id)
+            self._only(events, MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE)
+            self.assertFalse(
+                any(event.event_type == "execution_accounting" for event in events)
+            )
+            with SQLiteStateStore(
+                root / ".ordomata" / "state.sqlite3"
+            ) as state:
+                self.assertEqual(
+                    state.current_status(run_id),
+                    RunStatus.QUARANTINED,
+                )
+                self.assertEqual(state.list_artifacts(run_id), ())
 
     def test_overriding_mock_subclass_is_rejected_before_preflight(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

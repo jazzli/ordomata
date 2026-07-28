@@ -72,13 +72,24 @@ an admission decision and durable succeeded receipt before the admission
 shadow, billing, dispatch, or `RUNNING`; the preceding run record and private
 directories are inert controller scaffolding. Admission inherits the full task
 consequence vector, and Class 0, unsafe/high-impact, non-permit, stale,
-evaluation, or evidence failures stop before billing. The dispatch PEP persists
-a fixed-policy decision before `RUNNING`, rechecks freshness, exact
-obligations, and the independent Class 0/1 ceiling immediately before
-invocation, and requires a linked action receipt once invocation begins. The
+evaluation, or evidence failures stop before billing. The selection and
+task-attempt binding require exact readback. The dispatch PEP persists a
+fixed-policy decision only after exact mock billing evidence is durable, then
+requires exact decision readback. Before `RUNNING`, it rebuilds current
+controller inputs, independently constructs and compares the canonical
+wrapper, independently replays the fixed policy, checks finite freshness and
+the independent Class 0/1 ceiling, and rechecks the unchanged shipped runner
+class and instance boundaries. It
+requires exact `RUNNING` readback and repeats those current checks immediately
+before invocation. The linked action receipt and execution accounting must
+read back exactly before publication; unprovable post-effect receipt persistence quarantines the
+attempt. The
 publication PEP independently binds the succeeded dispatch and accounting,
 persists its own decision and pre-effect record, rechecks at the first staging
 mutation, and uses the reconciled filesystem receipt as its action receipt.
+This uses the existing event and schema-v5 binding formats: dispatch remains
+limited to Class 0/1 requests for the exact profile-backed controller-owned
+`MockRunner`, and new attempts still require Class 1 admission.
 General runtime ABAC enforcement is not implemented. This phase remains a
 prerequisite for adding a worker-dispatch path or repository worker with new
 mediated capabilities. A
@@ -89,10 +100,9 @@ parallel because it cannot exercise worker authority.
   resources, mediated commands/tools, and controller bookkeeping actions.
 - Extend the implemented deterministic shadow evaluator from its focused Class
   0/1/adversarial fixtures to parity with every current allow and deny path.
-- Harden the existing mock-dispatch final PEP to rebuild from current
-  controller inputs, require exact equality with the persisted decision
-  wrapper, and independently replay the fixed policy before its freshness
-  check. Admission and publication already use that stronger pattern.
+- Make authoritative dispatch intent lineage self-contained for read-only
+  replay without depending on non-authoritative shadow preimages, before any
+  permission expansion.
 - Extend the three durable enforcing decision/action-receipt chains beyond the
   narrow profile-backed built-in-mock admission, dispatch, and publication
   boundaries only after semantics and parity stabilize.

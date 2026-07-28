@@ -9,6 +9,7 @@ import time
 import unittest
 from unittest.mock import patch
 
+import ordomata.orchestrator as orchestrator_module
 from ordomata.admission_authorization import (
     TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE,
     TASK_ADMISSION_DECISION_EVENT_TYPE,
@@ -71,11 +72,11 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 
 @contextmanager
 def recording_mock_calls():
-    """Instrument the exact controller-owned MockRunner class."""
+    """Observe controller runner seams without mutating the runner class."""
 
     calls = {"inspect": 0, "execute": 0, "requests": []}
-    original_inspect = MockRunner.inspect_billing_route
-    original_execute = MockRunner.execute
+    original_inspect = orchestrator_module._inspect_runner_billing_route
+    original_execute = orchestrator_module._execute_runner
 
     async def recording_inspect(runner):
         calls["inspect"] += 1
@@ -88,11 +89,15 @@ def recording_mock_calls():
 
     with (
         patch.object(
-            MockRunner,
-            "inspect_billing_route",
+            orchestrator_module,
+            "_inspect_runner_billing_route",
             new=recording_inspect,
         ),
-        patch.object(MockRunner, "execute", new=recording_execute),
+        patch.object(
+            orchestrator_module,
+            "_execute_runner",
+            new=recording_execute,
+        ),
     ):
         yield calls
 

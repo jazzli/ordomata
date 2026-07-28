@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import ordomata.orchestrator as orchestrator_module
 from ordomata.admission_authorization import (
     TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE,
     TASK_ADMISSION_DECISION_EVENT_TYPE,
@@ -80,6 +81,64 @@ class AuthorizationInspectionTests(unittest.TestCase):
         root = cls._profile_backed_mock_project(temporary)
         asyncio.run(run_chief_of_staff(root, run_id=run_id))
         return root, root / ".ordomata" / "state.sqlite3"
+
+    def _run_mock_pre_effect_persistence_stop(
+        self,
+        temporary: str,
+        *,
+        run_id: str,
+        event_type: str,
+        error: BaseException,
+        status: RunStatus | None = None,
+    ) -> tuple[Path, Path]:
+        root = self._profile_backed_mock_project(temporary)
+        target_status = status
+        original_append = SQLiteStateStore.append_event
+
+        def reject_append(
+            store: SQLiteStateStore,
+            observed_run_id: str,
+            observed_event_type: str,
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            if (
+                observed_event_type == event_type
+                and kwargs.get("status") == target_status
+            ):
+                raise error
+            return original_append(
+                store,
+                observed_run_id,
+                observed_event_type,
+                *args,
+                **kwargs,
+            )
+
+        with (
+            patch.object(
+                SQLiteStateStore,
+                "append_event",
+                new=reject_append,
+            ),
+            self.assertRaises(type(error)),
+        ):
+            asyncio.run(run_chief_of_staff(root, run_id=run_id))
+        return root, root / ".ordomata" / "state.sqlite3"
+
+    def _run_mock_dispatch_decision_persistence_stop(
+        self,
+        temporary: str,
+        *,
+        run_id: str,
+        error: BaseException,
+    ) -> tuple[Path, Path]:
+        return self._run_mock_pre_effect_persistence_stop(
+            temporary,
+            run_id=run_id,
+            event_type=MOCK_DISPATCH_DECISION_EVENT_TYPE,
+            error=error,
+        )
 
     @staticmethod
     def _comparison_billing_payload() -> dict[str, object]:
@@ -4306,10 +4365,32 @@ class AuthorizationInspectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = self._profile_backed_mock_project(temporary)
             database = root / ".ordomata" / "state.sqlite3"
+            original_readback = (
+                orchestrator_module._require_exact_event_readback
+            )
+
+            def fail_admission_readback(
+                state,
+                run_id,
+                event_type,
+                payload,
+                **kwargs,
+            ):
+                if event_type == TASK_ADMISSION_DECISION_EVENT_TYPE:
+                    raise RuntimeError("fixed readback failure")
+                return original_readback(
+                    state,
+                    run_id,
+                    event_type,
+                    payload,
+                    **kwargs,
+                )
+
             with (
-                patch(
-                    "ordomata.orchestrator._require_exact_event_readback",
-                    side_effect=RuntimeError("fixed readback failure"),
+                patch.object(
+                    orchestrator_module,
+                    "_require_exact_event_readback",
+                    new=fail_admission_readback,
                 ),
                 self.assertRaises(RuntimeError),
             ):
@@ -4906,6 +4987,397 @@ class AuthorizationInspectionTests(unittest.TestCase):
             )
             self.assertNotIn(private_marker, projection)
 
+    def test_mock_dispatch_decision_persistence_stop_is_clean(self) -> None:
+        class DispatchPersistenceCancelled(BaseException):
+            pass
+
+        for case, error, expected_status in (
+            (
+                "failed",
+                OSError("fixed dispatch decision persistence failure"),
+                RunStatus.FAILED,
+            ),
+            (
+                "cancelled",
+                DispatchPersistenceCancelled(
+                    "fixed dispatch decision persistence cancellation"
+                ),
+                RunStatus.CANCELLED,
+            ),
+        ):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                _, database = (
+                    self._run_mock_dispatch_decision_persistence_stop(
+                        temporary,
+                        run_id=f"inspect-mock-dispatch-persistence-{case}",
+                        error=error,
+                    )
+                )
+
+                report = inspect_authorization_shadows(database)
+
+                self.assertTrue(report.clean, report.to_mapping())
+                run = report.runs[0]
+                self.assertEqual(run.latest_status, expected_status.value)
+                enforcement = run.mock_dispatch_enforcement
+                self.assertTrue(enforcement.required)
+                self.assertFalse(enforcement.decision_observed)
+                self.assertFalse(enforcement.action_receipt_observed)
+                self.assertEqual(enforcement.integrity_issues, ())
+
+    def test_mock_dispatch_decision_persistence_stop_must_be_exact(
+        self,
+    ) -> None:
+        cases = (
+            "wrong_phase",
+            "wrong_status",
+            "running",
+            "receipt",
+            "runner_event",
+            "accounting",
+            "artifact",
+        )
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                _, database = (
+                    self._run_mock_dispatch_decision_persistence_stop(
+                        temporary,
+                        run_id=f"inspect-mock-dispatch-nonexact-{case}",
+                        error=OSError(
+                            "fixed dispatch decision persistence failure"
+                        ),
+                    )
+                )
+                connection = sqlite3.connect(database)
+                try:
+                    if case in {"wrong_phase", "wrong_status"}:
+                        self._drop_run_event_mutation_triggers(connection)
+                        row = connection.execute(
+                            """
+                            SELECT run_id, status, payload_json
+                            FROM run_events
+                            WHERE event_type = 'status'
+                              AND status IN ('failed', 'cancelled')
+                            """
+                        ).fetchone()
+                        self.assertIsNotNone(row)
+                        payload = json.loads(row[2])
+                        status = row[1]
+                        if case == "wrong_phase":
+                            payload["phase"] = (
+                                "mock_dispatch_authorization_evaluation"
+                            )
+                        else:
+                            status = RunStatus.BLOCKED.value
+                        event_id = canonical_digest(
+                            {
+                                "event_type": "status",
+                                "payload": payload,
+                                "run_id": row[0],
+                                "status": status,
+                            }
+                        )
+                        connection.execute(
+                            """
+                            UPDATE run_events
+                            SET event_id = ?, status = ?, payload_json = ?
+                            WHERE event_type = 'status'
+                              AND status IN ('failed', 'cancelled')
+                            """,
+                            (
+                                event_id,
+                                status,
+                                json.dumps(payload, sort_keys=True),
+                            ),
+                        )
+                        self._restore_run_event_mutation_triggers(connection)
+                    else:
+                        event_type = {
+                            "running": "status",
+                            "receipt": (
+                                MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE
+                            ),
+                            "runner_event": "runner_event_observed",
+                            "accounting": "execution_accounting",
+                            "artifact": (
+                                TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE
+                            ),
+                        }[case]
+                        payload = (
+                            {"phase": "runner_execution"}
+                            if case == "running"
+                            else {"ordinal": 1}
+                            if case == "runner_event"
+                            else {}
+                        )
+                        status = (
+                            RunStatus.RUNNING.value
+                            if case == "running"
+                            else None
+                        )
+                        material: dict[str, object] = {
+                            "event_type": event_type,
+                            "payload": payload,
+                            "run_id": (
+                                f"inspect-mock-dispatch-nonexact-{case}"
+                            ),
+                        }
+                        if status is not None:
+                            material["status"] = status
+                        connection.execute(
+                            """
+                            INSERT INTO run_events (
+                                event_id,
+                                run_id,
+                                event_type,
+                                status,
+                                payload_json,
+                                occurred_at
+                            ) VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                canonical_digest(material),
+                                material["run_id"],
+                                event_type,
+                                status,
+                                json.dumps(payload, sort_keys=True),
+                                10_000.0,
+                            ),
+                        )
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                report = inspect_authorization_shadows(database)
+                self.assertFalse(report.clean)
+                self.assertIn(
+                    "mock_dispatch_decision_missing",
+                    report.runs[0].integrity_issues,
+                )
+
+    def test_mock_billing_and_running_persistence_stops_are_clean(
+        self,
+    ) -> None:
+        class PersistenceCancelled(BaseException):
+            pass
+
+        stops = (
+            (
+                "billing",
+                "billing_assessment",
+                None,
+                False,
+            ),
+            (
+                "running",
+                "status",
+                RunStatus.RUNNING,
+                True,
+            ),
+        )
+        outcomes = (
+            ("failed", OSError("fixed persistence failure"), RunStatus.FAILED),
+            (
+                "cancelled",
+                PersistenceCancelled("fixed persistence cancellation"),
+                RunStatus.CANCELLED,
+            ),
+        )
+        for stop, event_type, status, decision_expected in stops:
+            for outcome, error, expected_status in outcomes:
+                with (
+                    self.subTest(stop=stop, outcome=outcome),
+                    tempfile.TemporaryDirectory() as temporary,
+                ):
+                    _, database = self._run_mock_pre_effect_persistence_stop(
+                        temporary,
+                        run_id=f"inspect-{stop}-persistence-{outcome}",
+                        event_type=event_type,
+                        status=status,
+                        error=error,
+                    )
+
+                    report = inspect_authorization_shadows(database)
+
+                    self.assertTrue(report.clean, report.to_mapping())
+                    run = report.runs[0]
+                    self.assertEqual(run.latest_status, expected_status.value)
+                    enforcement = run.mock_dispatch_enforcement
+                    self.assertEqual(
+                        enforcement.decision_observed,
+                        decision_expected,
+                    )
+                    self.assertFalse(enforcement.action_receipt_observed)
+                    self.assertEqual(enforcement.integrity_issues, ())
+                    connection = sqlite3.connect(database)
+                    try:
+                        running_count, billing_count = connection.execute(
+                            """
+                            SELECT
+                                SUM(status = 'running'),
+                                SUM(event_type = 'billing_assessment')
+                            FROM run_events
+                            """
+                        ).fetchone()
+                    finally:
+                        connection.close()
+                    self.assertEqual(running_count, 0)
+                    self.assertEqual(
+                        billing_count,
+                        0 if stop == "billing" else 1,
+                    )
+
+    def test_mock_billing_and_running_stops_require_exact_terminals(
+        self,
+    ) -> None:
+        cases = (
+            ("billing", "billing_assessment", None, "wrong_phase"),
+            ("billing", "billing_assessment", None, "wrong_status"),
+            ("running", "status", RunStatus.RUNNING, "wrong_phase"),
+            ("running", "status", RunStatus.RUNNING, "wrong_status"),
+        )
+        for stop, event_type, status, mutation in cases:
+            with (
+                self.subTest(stop=stop, mutation=mutation),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                run_id = f"inspect-{stop}-nonexact-{mutation}"
+                _, database = self._run_mock_pre_effect_persistence_stop(
+                    temporary,
+                    run_id=run_id,
+                    event_type=event_type,
+                    status=status,
+                    error=OSError("fixed persistence failure"),
+                )
+                connection = sqlite3.connect(database)
+                try:
+                    self._drop_run_event_mutation_triggers(connection)
+                    row = connection.execute(
+                        """
+                        SELECT status, payload_json
+                        FROM run_events
+                        WHERE status IN ('failed', 'cancelled')
+                        """
+                    ).fetchone()
+                    self.assertIsNotNone(row)
+                    terminal_status = row[0]
+                    payload = json.loads(row[1])
+                    if mutation == "wrong_phase":
+                        payload["phase"] = "billing_preflight"
+                    else:
+                        terminal_status = RunStatus.BLOCKED.value
+                    event_id = canonical_digest(
+                        {
+                            "event_type": "status",
+                            "payload": payload,
+                            "run_id": run_id,
+                            "status": terminal_status,
+                        }
+                    )
+                    connection.execute(
+                        """
+                        UPDATE run_events
+                        SET event_id = ?, status = ?, payload_json = ?
+                        WHERE status IN ('failed', 'cancelled')
+                        """,
+                        (
+                            event_id,
+                            terminal_status,
+                            json.dumps(payload, sort_keys=True),
+                        ),
+                    )
+                    self._restore_run_event_mutation_triggers(connection)
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                report = inspect_authorization_shadows(database)
+                self.assertFalse(report.clean)
+                self.assertIn(
+                    (
+                        "mock_dispatch_receipt_missing"
+                        if stop == "running"
+                        else "mock_dispatch_decision_missing"
+                    ),
+                    report.runs[0].integrity_issues,
+                )
+
+    def test_mock_running_stop_rejects_downstream_evidence(self) -> None:
+        cases = (
+            ("running", "status", {"phase": "runner_execution"}),
+            (
+                "receipt",
+                MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE,
+                {},
+            ),
+            ("runner", "runner_event_observed", {"ordinal": 1}),
+            ("accounting", "execution_accounting", {}),
+            (
+                "artifact",
+                TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
+                {},
+            ),
+        )
+        for case, downstream_type, payload in cases:
+            with (
+                self.subTest(case=case),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                run_id = f"inspect-running-downstream-{case}"
+                _, database = self._run_mock_pre_effect_persistence_stop(
+                    temporary,
+                    run_id=run_id,
+                    event_type="status",
+                    status=RunStatus.RUNNING,
+                    error=OSError("fixed running persistence failure"),
+                )
+                downstream_status = (
+                    RunStatus.RUNNING.value if case == "running" else None
+                )
+                material: dict[str, object] = {
+                    "event_type": downstream_type,
+                    "payload": payload,
+                    "run_id": run_id,
+                }
+                if downstream_status is not None:
+                    material["status"] = downstream_status
+                connection = sqlite3.connect(database)
+                try:
+                    connection.execute(
+                        """
+                        INSERT INTO run_events (
+                            event_id,
+                            run_id,
+                            event_type,
+                            status,
+                            payload_json,
+                            occurred_at
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            canonical_digest(material),
+                            run_id,
+                            downstream_type,
+                            downstream_status,
+                            json.dumps(payload, sort_keys=True),
+                            10_000.0,
+                        ),
+                    )
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                report = inspect_authorization_shadows(database)
+                self.assertFalse(report.clean)
+                self.assertIn(
+                    (
+                        "mock_dispatch_receipt_payload_invalid"
+                        if case == "receipt"
+                        else "mock_dispatch_receipt_missing"
+                    ),
+                    report.runs[0].integrity_issues,
+                )
+
     def test_mock_dispatch_decision_and_receipt_cardinality_is_enforced(
         self,
     ) -> None:
@@ -5001,6 +5473,243 @@ class AuthorizationInspectionTests(unittest.TestCase):
             enforcement = report.runs[0].mock_dispatch_enforcement
             self.assertTrue(enforcement.required)
             self.assertTrue(enforcement.decision_observed)
+            self.assertFalse(enforcement.action_receipt_observed)
+            self.assertEqual(enforcement.integrity_issues, ())
+
+    def test_mock_dispatch_final_gate_stop_after_running_is_clean(self) -> None:
+        class FinalGateCancelled(BaseException):
+            pass
+
+        for case, error, expected_status in (
+            (
+                "blocked",
+                AuthorizationBlocked("fixed final-gate rejection"),
+                RunStatus.BLOCKED,
+            ),
+            (
+                "cancelled",
+                FinalGateCancelled("fixed final-gate cancellation"),
+                RunStatus.CANCELLED,
+            ),
+        ):
+            with (
+                self.subTest(case=case),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = self._profile_backed_mock_project(temporary)
+                database = root / ".ordomata" / "state.sqlite3"
+                original_assertion = (
+                    orchestrator_module.assert_mock_dispatch_authorized
+                )
+                call_count = 0
+
+                def stop_at_final_gate(*args, **kwargs):
+                    nonlocal call_count
+                    call_count += 1
+                    if call_count == 2:
+                        raise error
+                    return original_assertion(*args, **kwargs)
+
+                with (
+                    patch.object(
+                        orchestrator_module,
+                        "assert_mock_dispatch_authorized",
+                        new=stop_at_final_gate,
+                    ),
+                    self.assertRaises(type(error)),
+                ):
+                    asyncio.run(
+                        run_chief_of_staff(
+                            root,
+                            run_id=f"inspect-mock-final-gate-{case}",
+                        )
+                    )
+
+                self.assertEqual(call_count, 2)
+                report = inspect_authorization_shadows(database)
+                self.assertTrue(report.clean, report.to_mapping())
+                run = report.runs[0]
+                self.assertEqual(run.latest_status, expected_status.value)
+                enforcement = run.mock_dispatch_enforcement
+                self.assertTrue(enforcement.decision_observed)
+                self.assertFalse(enforcement.action_receipt_observed)
+                self.assertEqual(enforcement.integrity_issues, ())
+
+    def test_mock_dispatch_freshness_terminal_rejects_a_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._profile_backed_mock_project(temporary)
+            run_id = "inspect-mock-freshness-receipt-conflict"
+            database = root / ".ordomata" / "state.sqlite3"
+            with (
+                patch.object(
+                    orchestrator_module,
+                    "_execute_runner",
+                    side_effect=RuntimeError("fixed execution failure"),
+                ),
+                self.assertRaisesRegex(RuntimeError, "fixed execution failure"),
+            ):
+                asyncio.run(run_chief_of_staff(root, run_id=run_id))
+
+            baseline = inspect_authorization_shadows(database)
+            self.assertTrue(baseline.clean, baseline.to_mapping())
+            connection = sqlite3.connect(database)
+            try:
+                self._drop_run_event_mutation_triggers(connection)
+                payload = {
+                    "phase": "mock_dispatch_authorization_freshness"
+                }
+                connection.execute(
+                    """
+                    UPDATE run_events
+                    SET event_id = ?, payload_json = ?
+                    WHERE event_type = 'status' AND status = 'failed'
+                    """,
+                    (
+                        canonical_digest(
+                            {
+                                "event_type": "status",
+                                "payload": payload,
+                                "run_id": run_id,
+                                "status": RunStatus.FAILED.value,
+                            }
+                        ),
+                        json.dumps(payload, sort_keys=True),
+                    ),
+                )
+                self._restore_run_event_mutation_triggers(connection)
+                connection.commit()
+            finally:
+                connection.close()
+
+            report = inspect_authorization_shadows(database)
+            self.assertFalse(report.clean)
+            self.assertIn(
+                "mock_dispatch_receipt_after_pre_effect_stop",
+                report.runs[0].integrity_issues,
+            )
+
+    def test_mock_dispatch_nonpermit_requires_exact_terminal(self) -> None:
+        for case in ("wrong_phase", "wrong_status"):
+            with (
+                self.subTest(case=case),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = self._profile_backed_mock_project(temporary)
+                run_id = f"inspect-mock-nonpermit-{case}"
+                database = root / ".ordomata" / "state.sqlite3"
+                with (
+                    patch.object(
+                        orchestrator_module,
+                        "evaluate_mock_dispatch_authorization",
+                        side_effect=RuntimeError(
+                            "fixed authorization evaluation failure"
+                        ),
+                    ),
+                    self.assertRaises(AuthorizationBlocked),
+                ):
+                    asyncio.run(run_chief_of_staff(root, run_id=run_id))
+
+                baseline = inspect_authorization_shadows(database)
+                self.assertTrue(baseline.clean, baseline.to_mapping())
+                connection = sqlite3.connect(database)
+                try:
+                    self._drop_run_event_mutation_triggers(connection)
+                    status = (
+                        RunStatus.BLOCKED.value
+                        if case == "wrong_phase"
+                        else RunStatus.FAILED.value
+                    )
+                    payload = {
+                        "phase": (
+                            "billing_preflight"
+                            if case == "wrong_phase"
+                            else "mock_dispatch_authorization"
+                        )
+                    }
+                    connection.execute(
+                        """
+                        UPDATE run_events
+                        SET event_id = ?, status = ?, payload_json = ?
+                        WHERE event_type = 'status' AND status = 'blocked'
+                        """,
+                        (
+                            canonical_digest(
+                                {
+                                    "event_type": "status",
+                                    "payload": payload,
+                                    "run_id": run_id,
+                                    "status": status,
+                                }
+                            ),
+                            status,
+                            json.dumps(payload, sort_keys=True),
+                        ),
+                    )
+                    self._restore_run_event_mutation_triggers(connection)
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                report = inspect_authorization_shadows(database)
+                self.assertFalse(report.clean)
+                self.assertIn(
+                    "mock_dispatch_nonpermit_terminal_invalid",
+                    report.runs[0].integrity_issues,
+                )
+
+    def test_committed_nonpermit_dispatch_readback_failure_is_clean(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._profile_backed_mock_project(temporary)
+            run_id = "inspect-mock-nonpermit-readback-failure"
+            database = root / ".ordomata" / "state.sqlite3"
+            original_readback = (
+                orchestrator_module._require_exact_event_readback
+            )
+
+            def fail_dispatch_readback(
+                state,
+                observed_run_id,
+                event_type,
+                payload,
+                **kwargs,
+            ):
+                if event_type == MOCK_DISPATCH_DECISION_EVENT_TYPE:
+                    raise RuntimeError("fixed dispatch readback failure")
+                return original_readback(
+                    state,
+                    observed_run_id,
+                    event_type,
+                    payload,
+                    **kwargs,
+                )
+
+            with (
+                patch.object(
+                    orchestrator_module,
+                    "evaluate_mock_dispatch_authorization",
+                    side_effect=RuntimeError(
+                        "fixed authorization evaluation failure"
+                    ),
+                ),
+                patch.object(
+                    orchestrator_module,
+                    "_require_exact_event_readback",
+                    new=fail_dispatch_readback,
+                ),
+                self.assertRaisesRegex(
+                    RuntimeError,
+                    "fixed dispatch readback failure",
+                ),
+            ):
+                asyncio.run(run_chief_of_staff(root, run_id=run_id))
+
+            report = inspect_authorization_shadows(database)
+            self.assertTrue(report.clean, report.to_mapping())
+            enforcement = report.runs[0].mock_dispatch_enforcement
+            self.assertTrue(enforcement.decision_observed)
+            self.assertFalse(enforcement.authorization_eligible)
             self.assertFalse(enforcement.action_receipt_observed)
             self.assertEqual(enforcement.integrity_issues, ())
 
