@@ -1,5 +1,5 @@
 import asyncio
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from dataclasses import replace
 import json
 from pathlib import Path
@@ -9,6 +9,12 @@ import time
 import unittest
 from unittest.mock import patch
 
+from ordomata.admission_authorization import (
+    TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE,
+    TASK_ADMISSION_ACTION_SCOPE,
+    TASK_ADMISSION_DECISION_EVENT_TYPE,
+    TASK_ADMISSION_ENFORCEMENT_COVERAGE,
+)
 from ordomata.authorization import (
     AuthorizationEffect,
     DecisionReason,
@@ -49,11 +55,13 @@ from ordomata.routing import (
 )
 from ordomata.runners.mock import MockRunner
 from ordomata.shadow_authorization import (
+    ADMISSION_ACTION_SCOPE,
     DISPATCH_ACTION_SCOPE,
     task_authorization_intent_digest,
 )
 from ordomata.state import SQLiteStateStore
 from ordomata.task_evidence import (
+    TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE,
     TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
     TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
     build_task_attempt_binding_event,
@@ -188,6 +196,18 @@ class DispatchAuthorizationTests(unittest.TestCase):
         events = self._events(root, run_id)
         selection = self._only(events, "task_execution_selection")
         binding = self._only(events, "task_attempt_authorization_binding")
+        admission_decision = self._only(
+            events, TASK_ADMISSION_DECISION_EVENT_TYPE
+        )
+        admission_receipt = self._only(
+            events, TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE
+        )
+        admission_shadow = next(
+            event
+            for event in events
+            if event.event_type == "authorization_shadow_decision"
+            and event.payload.get("action_scope") == ADMISSION_ACTION_SCOPE
+        )
         billing = self._only(events, "billing_assessment")
         decision = self._only(events, MOCK_DISPATCH_DECISION_EVENT_TYPE)
         receipt = self._only(events, MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE)
@@ -205,7 +225,13 @@ class DispatchAuthorizationTests(unittest.TestCase):
             and event.payload.get("action_scope") == DISPATCH_ACTION_SCOPE
         )
 
-        self.assertEqual(binding.payload["schema_version"], 4)
+        self.assertEqual(binding.payload["schema_version"], 5)
+        self.assertEqual(
+            binding.payload[
+                "admission_authorization_enforcement_coverage"
+            ],
+            TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE,
+        )
         self.assertEqual(
             binding.payload["authorization_enforcement_coverage"],
             TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
@@ -215,6 +241,33 @@ class DispatchAuthorizationTests(unittest.TestCase):
                 "publication_authorization_enforcement_coverage"
             ],
             TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
+        )
+        self.assertEqual(
+            admission_decision.payload["enforcement_coverage"],
+            TASK_ADMISSION_ENFORCEMENT_COVERAGE,
+        )
+        self.assertEqual(
+            admission_decision.payload["action_scope"],
+            TASK_ADMISSION_ACTION_SCOPE,
+        )
+        self.assertTrue(
+            admission_decision.payload["authorization_eligible"]
+        )
+        self.assertEqual(
+            admission_decision.payload["task_attempt_binding_digest"],
+            binding.payload["binding_digest"],
+        )
+        self.assertEqual(
+            admission_receipt.payload["decision_digest"],
+            admission_decision.payload["decision_digest"],
+        )
+        self.assertEqual(
+            admission_receipt.payload["request_digest"],
+            admission_decision.payload["request_digest"],
+        )
+        self.assertEqual(
+            admission_receipt.payload["receipt"]["outcome"],
+            "succeeded",
         )
         self.assertEqual(
             decision.payload["enforcement_coverage"],
@@ -257,7 +310,10 @@ class DispatchAuthorizationTests(unittest.TestCase):
         )
 
         self.assertLess(selection.sequence, binding.sequence)
-        self.assertLess(binding.sequence, billing.sequence)
+        self.assertLess(binding.sequence, admission_decision.sequence)
+        self.assertLess(admission_decision.sequence, admission_receipt.sequence)
+        self.assertLess(admission_receipt.sequence, admission_shadow.sequence)
+        self.assertLess(admission_shadow.sequence, billing.sequence)
         self.assertLess(billing.sequence, decision.sequence)
         self.assertLess(decision.sequence, running.sequence)
         self.assertLess(running.sequence, dispatch_shadow.sequence)
@@ -313,7 +369,13 @@ class DispatchAuthorizationTests(unittest.TestCase):
         )
 
         serialized = json.dumps(
-            [decision.payload, receipt.payload], sort_keys=True
+            [
+                admission_decision.payload,
+                admission_receipt.payload,
+                decision.payload,
+                receipt.payload,
+            ],
+            sort_keys=True,
         )
         for private_value in private_values:
             self.assertNotIn(private_value, serialized)
@@ -397,47 +459,48 @@ class DispatchAuthorizationTests(unittest.TestCase):
     def test_deny_defer_and_indeterminate_decisions_never_execute(self) -> None:
         original_evaluate = ShadowAuthorizationEvaluator.evaluate
 
-        def force_indeterminate(evaluator, request, policy):
-            decision = original_evaluate(evaluator, request, policy)
-            return replace(
-                decision,
-                effect=AuthorizationEffect.INDETERMINATE,
-                reason_codes=(DecisionReason.EVIDENCE_STALE,),
-                reason_details=("evidence is stale",),
-                obligations=(),
-            )
-
-        for case in ("deny", "defer", "indeterminate"):
+        for case, effect, reason in (
+            (
+                "deny",
+                AuthorizationEffect.DENY,
+                DecisionReason.CLASS_DISABLED,
+            ),
+            (
+                "defer",
+                AuthorizationEffect.DEFER,
+                DecisionReason.APPROVAL_REQUIRED,
+            ),
+            (
+                "indeterminate",
+                AuthorizationEffect.INDETERMINATE,
+                DecisionReason.EVIDENCE_STALE,
+            ),
+        ):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
                 root = self._project(temporary)
-                task_path = root / "tasks" / "chief-of-staff-lite.json"
-                task = json.loads(task_path.read_text(encoding="utf-8"))
-                if case == "deny":
-                    task["authorization_intent"]["consequences"][
-                        "confidentiality"
-                    ] = "high"
-                elif case == "defer":
-                    task["approval_requirements"]["required_before_run"] = True
-                task_path.write_text(
-                    json.dumps(task, indent=2, sort_keys=True) + "\n",
-                    encoding="utf-8",
-                )
                 run_id = f"mock-dispatch-{case}"
                 prepared, profile, selection, runner = self._explicit_inputs(
                     root, run_id
                 )
-                evaluator_patch = (
+
+                def force_dispatch_nonpermit(evaluator, request, policy):
+                    decision = original_evaluate(evaluator, request, policy)
+                    if request.action.operation != MOCK_DISPATCH_OPERATION:
+                        return decision
+                    return replace(
+                        decision,
+                        effect=effect,
+                        reason_codes=(reason,),
+                        reason_details=("fixed dispatch nonpermit",),
+                        obligations=(),
+                    )
+
+                with (
                     patch.object(
                         ShadowAuthorizationEvaluator,
                         "evaluate",
-                        new=force_indeterminate,
-                    )
-                    if case == "indeterminate"
-                    else nullcontext()
-                )
-
-                with (
-                    evaluator_patch,
+                        new=force_dispatch_nonpermit,
+                    ),
                     recording_mock_calls() as calls,
                     self.assertRaises(AuthorizationBlocked),
                 ):
@@ -493,9 +556,9 @@ class DispatchAuthorizationTests(unittest.TestCase):
             private_error = "private-evaluator-secret-4e9b"
 
             with (
-                patch.object(
-                    ShadowAuthorizationEvaluator,
-                    "evaluate",
+                patch(
+                    "ordomata.orchestrator."
+                    "evaluate_mock_dispatch_authorization",
                     side_effect=RuntimeError(private_error),
                 ),
                 recording_mock_calls() as calls,

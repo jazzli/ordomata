@@ -78,11 +78,17 @@ records.
 - optional typed task-effect authorization intent, independent of the legacy
   numeric class, plus three non-enforcing Chief-of-Staff shadow decisions at
   admission, runner/model dispatch intent, and local-candidate publication;
-- the first two authoritative ABAC enforcement points: new profile-backed ordinary
-  attempts using the exact controller-owned in-memory `MockRunner`
-  implementation require a fixed-policy permit for the exact mock
-  `runner.execute` action before `RUNNING`, a freshness recheck immediately at
-  invocation, and a content-addressed terminal action receipt; accepted,
+- the first three authoritative ABAC enforcement points: new profile-backed
+  ordinary Class 1 attempts using the exact controller-owned in-memory
+  `MockRunner` implementation first require a fixed-policy task-admission
+  permit and durable succeeded admission receipt before the admission shadow,
+  billing preflight, dispatch, or `RUNNING`; the run record and private
+  directories created earlier are inert controller scaffolding. The full task
+  consequence vector is inherited, so Class 0, unsafe/high-impact, non-permit,
+  stale, malformed, or unprovable admission evidence stops before billing. A
+  separate fixed-policy permit is then required for the exact mock `runner.execute`
+  action before `RUNNING`, with a freshness recheck immediately at invocation
+  and a content-addressed terminal action receipt; accepted,
   credential-clean output then requires a separate fixed-policy Class 1 permit
   immediately before the first local-candidate filesystem mutation and an
   integrated reconciled action receipt; every non-permit,
@@ -93,14 +99,16 @@ records.
 - digest-only ordinary task-attempt bindings that cover the typed authorization
   intent and, for profile-backed attempts, the immutable execution selection,
   profile version, and configuration; new enforced mock attempts use one
-  schema-v4 binding that declares both dispatch and local-candidate publication
-  coverage, historical schema-v3 bindings declare dispatch only, and unprofiled
+  schema-v5 binding that declares admission, dispatch, and local-candidate
+  publication coverage; schema-v4 is frozen as dispatch plus publication,
+  historical schema-v3 bindings declare dispatch only, and unprofiled
   schema-v1 plus live or historical schema-v2 histories retain their prior
   meaning;
   schema-v2 execution accounting, billing-bound dispatch, and schema-v3
-  enforcing pre-effect/action receipts around schema-v5 local-candidate
-  publication for the v4 path, with exact metadata, filesystem, and receipt
-  reconciliation; historical paths retain schema-v2 non-enforcing receipts;
+  enforcing pre-effect/action receipts around the schema-v5 local-candidate
+  publication shadow for schema-v4/v5 enforcing paths, with exact metadata,
+  filesystem, and receipt reconciliation; schema-v1-v3 paths retain schema-v2
+  non-enforcing receipts;
 - append-only schema-v2 Class 0 comparison-trial bindings, lifecycle/accounting
   evidence, schema-v3 admission/dispatch shadows, and a separate schema-v4
   non-enforcing Class 1 private review-artifact publication shadow with
@@ -221,7 +229,7 @@ not install or launch a background service. `supervise` runs only in the
 foreground. It currently claims no work and starts no runner, model,
 subprocess, network action, repository worker, or Class 2/3 action because
 its exact claim/worker/tool boundaries lack authoritative ABAC coverage and
-verified repository containment; the narrow ordinary mock PEP grants neither.
+verified repository containment; the narrow ordinary mock PEPs grant neither.
 `reconcile` is a read-only
 preview unless `--apply` is supplied with the exact digest from a current
 preview.
@@ -333,7 +341,7 @@ non-delegable. Class 2/3 execution is still disabled.
 
 Later phases add attested disposable worker cells, controller-mediated egress
 and dependencies, adaptive promoted-profile routing and bounded recovery,
-evidence-backed task admission, durable outbox/credential executors for
+broader evidence-backed task admission, durable outbox/credential executors for
 consequential effects, tainted-data and isolated-memory handling, and staged
 soak gates. The orchestrator may propose improvements to its own repository but
 cannot activate them. These are documented constraints and roadmap items, not
@@ -347,13 +355,13 @@ claims about commands available today.
 - no Cursor Agent adapter yet (the desktop launcher alone is insufficient);
 - no repository worktree maintenance workflow yet;
 - no automatic outcome-to-router learning or retry/failover controller yet;
-- no general runtime ABAC coverage yet: only profile-backed, controller-owned
-  in-memory mock dispatch and its owner-private local-candidate publication have
-  authoritative decisions and action receipts; Chief-of-Staff admission, all
-  live/comparison paths, shared publication or promotion, mediated tools, and
-  supervisor admission/claim/control/cancellation remain shadow-only or
-  disabled, while current Class 0/1 and deterministic eligibility gates stay
-  authoritative defense in depth;
+- no general runtime ABAC coverage yet: only Class 1 admission of a new
+  profile-backed exact built-in-mock attempt, its mock dispatch, and its
+  owner-private local-candidate publication have authoritative decisions and
+  action receipts; live, comparison, unprofiled, supervisor, and general task
+  admission, shared publication or promotion, and mediated tools remain
+  shadow-only or disabled, while current Class 0/1 and deterministic
+  eligibility gates stay authoritative defense in depth;
 - no standing-envelope evaluator, worker-cell shell/egress backend,
   consequential-action outbox/executor, trusted-memory promotion, or adaptive
   unattended scheduler yet;

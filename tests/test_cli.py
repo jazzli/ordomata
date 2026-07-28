@@ -124,12 +124,18 @@ class CLITests(unittest.TestCase):
             self.assertEqual(status, 0, errors)
             report = json.loads(output)
             self.assertTrue(report["clean"])
-            self.assertEqual(report["inspected_event_count"], 6)
+            self.assertEqual(report["inspected_event_count"], 8)
             self.assertEqual(report["coverage_gap_count"], 0)
             self.assertEqual(report["parity_mismatch_count"], 0)
             self.assertEqual(report["authority_ceiling_mismatch_count"], 0)
             inspected_run = report["runs"][0]
             self.assertEqual(inspected_run["missing_scopes"], [])
+            self.assertEqual(
+                inspected_run[
+                    "admission_authorization_enforcement_coverage"
+                ],
+                "task_attempt_admission_decision_action_receipt",
+            )
             self.assertEqual(
                 inspected_run["authorization_enforcement_coverage"],
                 "task_attempt_mock_dispatch_decision_action_receipt",
@@ -139,6 +145,16 @@ class CLITests(unittest.TestCase):
                     "publication_authorization_enforcement_coverage"
                 ],
                 "task_attempt_local_candidate_publication_decision_action_receipt",
+            )
+            self.assertTrue(
+                inspected_run["task_admission_enforcement"][
+                    "authorization_eligible"
+                ]
+            )
+            self.assertTrue(
+                inspected_run["task_admission_enforcement"][
+                    "action_receipt_observed"
+                ]
             )
             self.assertTrue(
                 inspected_run["mock_dispatch_enforcement"][

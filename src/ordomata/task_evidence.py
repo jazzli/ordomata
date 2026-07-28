@@ -3,9 +3,10 @@
 Bindings and publication receipts are evidence, never authorization grants.
 Schema-v3 bindings additionally declare that a separate mock-dispatch decision
 and action receipt are required.  Schema-v4 retains that exact binding shape
-and declares a second, local-candidate publication enforcement chain.  In both
-cases authority comes from the typed runtime decision plus the independent
-legacy Class 0/1 gate.
+and declares a second, local-candidate publication enforcement chain.
+Schema-v5 retains the v4 binding and adds a controller-owned task-admission
+enforcement chain.  In every version authority comes from typed runtime
+decisions plus the independent legacy Class 0/1 gate.
 """
 
 from __future__ import annotations
@@ -49,6 +50,9 @@ TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE = (
 TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE = (
     "task_attempt_local_candidate_publication_decision_action_receipt"
 )
+TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE = (
+    "task_attempt_admission_decision_action_receipt"
+)
 
 _TASK_EXECUTION_MODES = {
     "mock": "in_memory_mock",
@@ -72,6 +76,7 @@ def build_task_attempt_binding_event(
     profile_configuration_digest: str | None = None,
     enforce_mock_dispatch: bool = False,
     enforce_local_candidate_publication: bool = False,
+    enforce_task_admission: bool = False,
 ) -> dict[str, Any]:
     """Bind later evidence to immutable, controller-authored attempt inputs."""
 
@@ -93,6 +98,10 @@ def build_task_attempt_binding_event(
         raise ValidationError(
             "local candidate publication enforcement flag must be a boolean"
         )
+    if not isinstance(enforce_task_admission, bool):
+        raise ValidationError(
+            "task admission enforcement flag must be a boolean"
+        )
     if enforce_mock_dispatch and (not selection_bound or runner_id != "mock"):
         raise ValidationError(
             "mock dispatch enforcement requires a selected mock profile"
@@ -100,6 +109,13 @@ def build_task_attempt_binding_event(
     if enforce_local_candidate_publication and not enforce_mock_dispatch:
         raise ValidationError(
             "local candidate publication enforcement requires mock dispatch enforcement"
+        )
+    if enforce_task_admission and (
+        not enforce_mock_dispatch or not enforce_local_candidate_publication
+    ):
+        raise ValidationError(
+            "task admission enforcement requires mock dispatch and local "
+            "candidate publication enforcement"
         )
 
     binding: dict[str, Any] = {
@@ -171,7 +187,9 @@ def build_task_attempt_binding_event(
         )
     payload = {
         "schema_version": (
-            4
+            5
+            if enforce_task_admission
+            else 4
             if enforce_local_candidate_publication
             else 3
             if enforce_mock_dispatch
@@ -195,6 +213,10 @@ def build_task_attempt_binding_event(
     if enforce_local_candidate_publication:
         payload["publication_authorization_enforcement_coverage"] = (
             TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
+        )
+    if enforce_task_admission:
+        payload["admission_authorization_enforcement_coverage"] = (
+            TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE
         )
     return payload
 
@@ -1106,6 +1128,7 @@ def _shadow_obligation_results(
 
 __all__ = [
     "TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE",
+    "TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE",
     "TASK_ATTEMPT_AUTHORIZATION_BINDING_EVENT_TYPE",
     "TASK_ATTEMPT_AUTHORIZATION_SHADOW_COVERAGE",
     "TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE",

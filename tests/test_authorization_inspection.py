@@ -10,6 +10,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from ordomata.admission_authorization import (
+    TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE,
+    TASK_ADMISSION_DECISION_EVENT_TYPE,
+    TASK_ADMISSION_ENFORCEMENT_COVERAGE,
+)
 from ordomata.authorization import canonical_digest
 from ordomata.authorization_inspection import (
     ADMISSION_SCOPE,
@@ -966,6 +971,8 @@ class AuthorizationInspectionTests(unittest.TestCase):
     def _downgrade_mock_history_to_schema3(self, database: Path) -> None:
         """Reconstruct the exact pre-publication-enforcement receipt chain."""
 
+        self._downgrade_mock_history_to_schema4(database)
+
         connection = sqlite3.connect(database)
         try:
             self._drop_run_event_mutation_triggers(connection)
@@ -1102,6 +1109,41 @@ class AuthorizationInspectionTests(unittest.TestCase):
             connection.execute(
                 "DELETE FROM run_events WHERE event_type = ?",
                 (LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,),
+            )
+            self._restore_run_event_mutation_triggers(connection)
+            connection.commit()
+        finally:
+            connection.close()
+
+    def _downgrade_mock_history_to_schema4(self, database: Path) -> None:
+        """Reconstruct the exact pre-admission-enforcement receipt chain."""
+
+        connection = sqlite3.connect(database)
+        try:
+            self._drop_run_event_mutation_triggers(connection)
+            binding_row = connection.execute(
+                "SELECT payload_json FROM run_events WHERE event_type = ?",
+                (TASK_ATTEMPT_BINDING_EVENT_TYPE,),
+            ).fetchone()
+            self.assertIsNotNone(binding_row)
+            binding_payload = json.loads(binding_row[0])
+            binding_payload["schema_version"] = 4
+            binding_payload.pop(
+                "admission_authorization_enforcement_coverage"
+            )
+            connection.execute(
+                "UPDATE run_events SET payload_json = ? WHERE event_type = ?",
+                (
+                    json.dumps(binding_payload, sort_keys=True),
+                    TASK_ATTEMPT_BINDING_EVENT_TYPE,
+                ),
+            )
+            connection.execute(
+                "DELETE FROM run_events WHERE event_type IN (?, ?)",
+                (
+                    TASK_ADMISSION_DECISION_EVENT_TYPE,
+                    TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE,
+                ),
             )
             self._restore_run_event_mutation_triggers(connection)
             connection.commit()
@@ -3968,8 +4010,22 @@ class AuthorizationInspectionTests(unittest.TestCase):
             report = inspect_authorization_shadows(database)
             self.assertTrue(report.clean, report.to_mapping())
             self.assertEqual(len(report.runs), 1)
-            self.assertEqual(report.inspected_event_count, 6)
+            self.assertEqual(report.inspected_event_count, 8)
             run = report.runs[0]
+            self.assertEqual(
+                run.admission_authorization_enforcement_coverage,
+                TASK_ADMISSION_ENFORCEMENT_COVERAGE,
+            )
+            admission = run.task_admission_enforcement
+            self.assertTrue(admission.required)
+            self.assertTrue(admission.decision_observed)
+            self.assertEqual(admission.effect, "permit")
+            self.assertTrue(admission.authorization_eligible)
+            self.assertTrue(admission.decision_current_at_evaluation)
+            self.assertTrue(admission.action_receipt_observed)
+            self.assertEqual(admission.action_receipt_outcome, "succeeded")
+            self.assertTrue(admission.permit_current_at_action_start)
+            self.assertEqual(admission.integrity_issues, ())
             self.assertEqual(
                 run.authorization_enforcement_coverage,
                 "task_attempt_mock_dispatch_decision_action_receipt",
@@ -4004,6 +4060,132 @@ class AuthorizationInspectionTests(unittest.TestCase):
                 str(root),
                 json.dumps(report.to_mapping(), sort_keys=True),
             )
+
+    def test_task_admission_decision_and_receipt_cardinality_is_enforced(
+        self,
+    ) -> None:
+        for case, expected_issue in (
+            ("missing_receipt", "task_admission_receipt_missing"),
+            ("duplicate_decision", "task_admission_decision_duplicate"),
+        ):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                _, database = self._run_profile_backed_mock(
+                    temporary,
+                    run_id=f"inspect-admission-{case}",
+                )
+                connection = sqlite3.connect(database)
+                try:
+                    if case == "missing_receipt":
+                        self._drop_run_event_mutation_triggers(connection)
+                        connection.execute(
+                            "DELETE FROM run_events WHERE event_type = ?",
+                            (TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE,),
+                        )
+                        self._restore_run_event_mutation_triggers(connection)
+                    else:
+                        row = connection.execute(
+                            """
+                            SELECT run_id, payload_json, occurred_at
+                            FROM run_events
+                            WHERE event_type = ?
+                            """,
+                            (TASK_ADMISSION_DECISION_EVENT_TYPE,),
+                        ).fetchone()
+                        self.assertIsNotNone(row)
+                        connection.execute(
+                            """
+                            INSERT INTO run_events (
+                                event_id,
+                                run_id,
+                                event_type,
+                                status,
+                                payload_json,
+                                occurred_at
+                            ) VALUES (?, ?, ?, NULL, ?, ?)
+                            """,
+                            (
+                                canonical_digest(
+                                    {"duplicate_admission": case}
+                                ),
+                                row[0],
+                                TASK_ADMISSION_DECISION_EVENT_TYPE,
+                                row[1],
+                                row[2],
+                            ),
+                        )
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                report = inspect_authorization_shadows(database)
+                self.assertFalse(report.clean)
+                self.assertIn(
+                    expected_issue,
+                    report.runs[0].integrity_issues,
+                )
+
+    def test_task_admission_semantic_tampering_is_redacted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            _, database = self._run_profile_backed_mock(
+                temporary,
+                run_id="inspect-admission-semantic-tamper",
+            )
+            private_marker = "private-admission-owner-marker"
+            connection = sqlite3.connect(database)
+            try:
+                self._drop_run_event_mutation_triggers(connection)
+                row = connection.execute(
+                    """
+                    SELECT run_id, payload_json
+                    FROM run_events
+                    WHERE event_type = ?
+                    """,
+                    (TASK_ADMISSION_DECISION_EVENT_TYPE,),
+                ).fetchone()
+                self.assertIsNotNone(row)
+                payload = json.loads(row[1])
+                payload["request"]["resource"]["owner"] = private_marker
+                payload["request_digest"] = canonical_digest(
+                    payload["request"]
+                )
+                payload["decision"]["request_digest"] = payload[
+                    "request_digest"
+                ]
+                payload["decision_digest"] = canonical_digest(
+                    payload["decision"]
+                )
+                event_id = canonical_digest(
+                    {
+                        "event_type": TASK_ADMISSION_DECISION_EVENT_TYPE,
+                        "payload": payload,
+                        "run_id": row[0],
+                    }
+                )
+                connection.execute(
+                    """
+                    UPDATE run_events
+                    SET event_id = ?, payload_json = ?
+                    WHERE event_type = ?
+                    """,
+                    (
+                        event_id,
+                        json.dumps(payload, sort_keys=True),
+                        TASK_ADMISSION_DECISION_EVENT_TYPE,
+                    ),
+                )
+                self._restore_run_event_mutation_triggers(connection)
+                connection.commit()
+            finally:
+                connection.close()
+
+            report = inspect_authorization_shadows(database)
+            projection = json.dumps(report.to_mapping(), sort_keys=True)
+            self.assertFalse(report.clean)
+            self.assertIn(
+                "task_admission_request_binding_mismatch",
+                report.runs[0].integrity_issues,
+            )
+            self.assertNotIn(private_marker, projection)
 
     def test_schema_v3_mock_history_remains_clean_without_publication_gate(
         self,
@@ -4084,6 +4266,69 @@ class AuthorizationInspectionTests(unittest.TestCase):
                 report.runs[0].integrity_issues,
             )
 
+    def test_class_zero_admission_nonpermit_is_a_clean_pre_effect_stop(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._profile_backed_mock_project(temporary)
+            task_path = root / "tasks" / "chief-of-staff-lite.json"
+            task_payload = json.loads(task_path.read_text(encoding="utf-8"))
+            task_payload["permission_class"] = int(PermissionClass.READ_ONLY)
+            task_path.write_text(
+                json.dumps(task_payload, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            database = root / ".ordomata" / "state.sqlite3"
+
+            with self.assertRaises(AuthorizationBlocked):
+                asyncio.run(
+                    run_chief_of_staff(
+                        root,
+                        run_id="inspect-admission-class-zero",
+                    )
+                )
+
+            report = inspect_authorization_shadows(database)
+            self.assertTrue(report.clean, report.to_mapping())
+            self.assertEqual(report.inspected_event_count, 1)
+            run = report.runs[0]
+            admission = run.task_admission_enforcement
+            self.assertTrue(admission.required)
+            self.assertTrue(admission.decision_observed)
+            self.assertEqual(admission.effect, "permit")
+            self.assertFalse(admission.authorization_eligible)
+            self.assertFalse(admission.action_receipt_observed)
+            self.assertEqual(admission.integrity_issues, ())
+
+    def test_committed_admission_decision_readback_failure_is_clean(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._profile_backed_mock_project(temporary)
+            database = root / ".ordomata" / "state.sqlite3"
+            with (
+                patch(
+                    "ordomata.orchestrator._require_exact_event_readback",
+                    side_effect=RuntimeError("fixed readback failure"),
+                ),
+                self.assertRaises(RuntimeError),
+            ):
+                asyncio.run(
+                    run_chief_of_staff(
+                        root,
+                        run_id="inspect-admission-readback-failure",
+                    )
+                )
+
+            report = inspect_authorization_shadows(database)
+            self.assertTrue(report.clean, report.to_mapping())
+            self.assertEqual(report.inspected_event_count, 1)
+            admission = report.runs[0].task_admission_enforcement
+            self.assertTrue(admission.decision_observed)
+            self.assertTrue(admission.authorization_eligible)
+            self.assertFalse(admission.action_receipt_observed)
+            self.assertEqual(admission.integrity_issues, ())
+
     def test_schema_v4_publication_shadow_is_optional_but_bound_if_present(
         self,
     ) -> None:
@@ -4092,6 +4337,7 @@ class AuthorizationInspectionTests(unittest.TestCase):
                 temporary,
                 run_id="inspect-publication-shadow-optional",
             )
+            self._downgrade_mock_history_to_schema4(database)
             connection = sqlite3.connect(database)
             try:
                 self._drop_run_event_mutation_triggers(connection)
@@ -4172,6 +4418,73 @@ class AuthorizationInspectionTests(unittest.TestCase):
             self.assertEqual(
                 run.local_candidate_publication_enforcement.integrity_issues,
                 (),
+            )
+
+    def test_schema_v4_history_rejects_admission_enforcement_evidence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            _, database = self._run_profile_backed_mock(
+                temporary,
+                run_id="inspect-historical-schema4",
+            )
+            connection = sqlite3.connect(database)
+            try:
+                decision_row = connection.execute(
+                    """
+                    SELECT event_id, run_id, payload_json, occurred_at
+                    FROM run_events
+                    WHERE event_type = ?
+                    """,
+                    (TASK_ADMISSION_DECISION_EVENT_TYPE,),
+                ).fetchone()
+                self.assertIsNotNone(decision_row)
+            finally:
+                connection.close()
+            self._downgrade_mock_history_to_schema4(database)
+
+            report = inspect_authorization_shadows(database)
+            self.assertTrue(report.clean, report.to_mapping())
+            self.assertEqual(report.inspected_event_count, 6)
+            run = report.runs[0]
+            self.assertIsNone(
+                run.admission_authorization_enforcement_coverage
+            )
+            self.assertFalse(run.task_admission_enforcement.required)
+            self.assertFalse(
+                run.task_admission_enforcement.decision_observed
+            )
+
+            connection = sqlite3.connect(database)
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO run_events (
+                        event_id,
+                        run_id,
+                        event_type,
+                        status,
+                        payload_json,
+                        occurred_at
+                    ) VALUES (?, ?, ?, NULL, ?, ?)
+                    """,
+                    (
+                        decision_row[0],
+                        decision_row[1],
+                        TASK_ADMISSION_DECISION_EVENT_TYPE,
+                        decision_row[2],
+                        decision_row[3],
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            report = inspect_authorization_shadows(database)
+            self.assertFalse(report.clean)
+            self.assertIn(
+                "task_admission_decision_unexpected",
+                report.runs[0].integrity_issues,
             )
 
     def test_publication_decision_cardinality_is_enforced(self) -> None:

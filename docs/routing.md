@@ -4,11 +4,13 @@ Routing is a deterministic control-plane concern. It filters and ranks eligible
 profiles; it never grants authority. Model output cannot select its own billing
 route, widen permissions, modify profile policy, or promote a new profile. The
 target runtime requires a fresh decision under the
-[authorization model](authorization-model.md) at dispatch and every later
-enforcement point. Two narrow PEPs now apply only after routing selects the
-exact controller-owned built-in mock implementation: one at mock dispatch and
-one at the resulting owner-private local-candidate publication. All other
-dispatch and effect boundaries remain non-enforcing or disabled. Existing
+[authorization model](authorization-model.md) at each enforcement point.
+Three narrow PEPs now apply only when routing selects the
+exact controller-owned built-in mock implementation for a new ordinary Class 1
+attempt: task admission, mock dispatch, and the resulting owner-private local-
+candidate publication. Admission inherits the full task consequence vector
+and precedes billing. All live, comparison, supervisor, general-admission, and
+other dispatch/effect boundaries remain non-enforcing or disabled. Existing
 Class 0/1 checks remain independent authoritative compatibility gates.
 
 ## Execution profile
@@ -66,9 +68,10 @@ or mutable values are not copied into the event. Model identifiers,
 profile settings, account/subscription identity, assessment evidence and
 warnings, capacity pool names, environment names, and local paths are omitted
 or represented by canonical digest refs. The event is linked by an ordinary
-task binding—schema v4 for new exact built-in-mock attempts, schema v3 for
-historical dispatch-only mock attempts, and schema v2 for live or historical
-selected attempts—and by admission/dispatch parameter
+task binding—schema v5 for new exact built-in-mock attempts, frozen schema v4
+for dispatch-plus-publication attempts, schema v3 for historical dispatch-only
+mock attempts, and schema v2 for live or historical selected attempts—and by
+admission/dispatch parameter
 digests. Its required
 append uses exact readback reconciliation: an unproven write blocks before the
 runner executes, while a commit-then-raise write may continue only after exact
@@ -80,8 +83,14 @@ preflight on billing security semantics, and that fresh evidence must remain
 valid through the recorded attempt horizon. A mismatch blocks before `RUNNING`
 or runner execution.
 
-For a schema-v4 built-in-mock attempt, routing evidence is also an input to a
-separate exact execute request. The controller must persist a fixed-policy
+For a schema-v5 built-in-mock attempt, routing evidence is first an input to a
+separate exact Class 1 admission request. The controller persists its decision,
+rebuilds current inputs, requires exact persisted-wrapper equality,
+independently replays policy, checks freshness, and appends a durable succeeded
+receipt before the admission shadow or billing. The run record and private
+directories that precede it are inert scaffolding. Class 0, unsafe/high-impact,
+non-permit, stale, evaluation, or evidence failures stop pre-billing. Routing
+evidence is then an input to a separate exact execute request. The controller must persist a fixed-policy
 decision before `RUNNING`, then recheck its freshness, exact obligations, and
 Class 0/1 ceiling immediately before invocation. A linked action receipt is
 required after invocation starts. If the result reaches candidate publication,
@@ -90,13 +99,18 @@ Class 1 request checked immediately before staging. Selection grants neither
 permit.
 
 The read-only authorization inspector validates one-and-only-one coverage for
-schema-v2/v3/v4 attempts and independently recomputes the candidate-set and policy
+schema-v2/v3/v4/v5 attempts and independently recomputes the candidate-set and policy
 digests, eligibility codes, six score dimensions, rank, selected-candidate
 links, plus the applicable shadow and enforcement order. Historical schema-v1
 bindings remain readable. Selection
 evidence never grants authority and never makes stale or unsafe billing
 evidence eligible. The `route` command remains a read-only preview, and an
 explicit profile rejected before run creation intentionally leaves no event.
+
+The next narrow authorization change should harden the existing dispatch final
+PEP with current-input rebuild, exact persisted-wrapper equality, and
+independent fixed-policy replay before broader routing or execution boundaries
+gain enforcement.
 
 ## Adaptive promoted-profile routing (target)
 

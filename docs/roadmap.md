@@ -46,26 +46,33 @@ of Staff task contract has explicit typed action/resource/consequence intent,
 and the run path records non-authoritative observations at admission, dispatch
 intent, and local-candidate publication. A read-only inspector recomputes
 digests, authenticated evidence freshness, legacy and authority-ceiling parity,
-and boundary coverage/order. New schema-v4 exact-mock attempts also bind
-schema-v2 execution accounting to a schema-v5 publication shadow, a separate
-publication decision, and schema-v3 enforcing pre-effect/action receipts;
-older paths retain schema-v2 non-enforcing receipts, and unresolved local
-publication state is quarantined.
+and boundary coverage/order. New schema-v5 exact-mock attempts add admission
+enforcement while retaining schema-v4's dispatch and publication chains,
+including schema-v2 execution accounting, a schema-v5 publication shadow, a
+separate publication decision, and schema-v3 enforcing pre-effect/action
+receipts. Schema-v1-v3 paths retain schema-v2 non-enforcing publication
+receipts, and unresolved local publication state is quarantined.
 Controlled comparisons add a schema-v2 trial
 binding, schema-v3 Class 0 admission/dispatch shadows, and a separate schema-v4
 Class 1 private-publication shadow with schema-v2 pre-effect/action receipts.
 Profile-backed ordinary attempts also append a required, content-addressed
 execution-selection event before their task binding. New exact built-in-mock
-attempts use schema v4; historical dispatch-only mock attempts use schema v3,
-and live or historical selected attempts use schema v2.
+attempts use schema v5; frozen schema v4 means dispatch plus publication,
+historical dispatch-only mock attempts use schema v3, and live or historical
+selected attempts use schema v2.
 It fixes the
 policy clock, task features, candidate set, fixed rejection codes, metric
 sources/scores/rank, and selected profile/version/configuration/overrides refs;
 the inspector independently recomputes those semantics and their binding and
 dispatch order. Raw model/settings/account/diagnostic values remain private.
-The first two authoritative PEPs now gate only profile-backed ordinary attempts
-through the exact controller-owned in-memory mock implementation and their
-owner-private candidate publication. The dispatch PEP persists
+The first three authoritative PEPs now gate only new profile-backed ordinary
+Class 1 attempts through the exact controller-owned in-memory mock
+implementation and their owner-private candidate publication. Schema-v5 adds
+an admission decision and durable succeeded receipt before the admission
+shadow, billing, dispatch, or `RUNNING`; the preceding run record and private
+directories are inert controller scaffolding. Admission inherits the full task
+consequence vector, and Class 0, unsafe/high-impact, non-permit, stale,
+evaluation, or evidence failures stop before billing. The dispatch PEP persists
 a fixed-policy decision before `RUNNING`, rechecks freshness, exact
 obligations, and the independent Class 0/1 ceiling immediately before
 invocation, and requires a linked action receipt once invocation begins. The
@@ -82,15 +89,20 @@ parallel because it cannot exercise worker authority.
   resources, mediated commands/tools, and controller bookkeeping actions.
 - Extend the implemented deterministic shadow evaluator from its focused Class
   0/1/adversarial fixtures to parity with every current allow and deny path.
-- Extend the two durable enforcing decision/action-receipt chains beyond the
-  narrow profile-backed built-in-mock dispatch and publication boundaries only
-  after semantics and parity stabilize.
+- Harden the existing mock-dispatch final PEP to rebuild from current
+  controller inputs, require exact equality with the persisted decision
+  wrapper, and independently replay the fixed policy before its freshness
+  check. Admission and publication already use that stronger pattern.
+- Extend the three durable enforcing decision/action-receipt chains beyond the
+  narrow profile-backed built-in-mock admission, dispatch, and publication
+  boundaries only after semantics and parity stabilize.
 - Preserve the implemented distinct `permit`, `defer`, `deny`, and
   `indeterminate` effects; add durable waiting/resumption so satisfying a
   digest-bound defer condition always creates a fresh decision.
-- Convert the remaining Chief-of-Staff admission and dispatch-intent shadow
-  observations into enforcement points only after parity; the separate exact
-  built-in-mock execute and local-candidate boundaries are already enforced;
+- Keep the Chief-of-Staff admission and dispatch-intent shadows as descriptive
+  evidence. The separate exact built-in-mock Class 1 admission, execute, and
+  local-candidate boundaries are enforced; general/live/comparison/supervisor
+  admission remains non-enforcing or disabled;
   the comparison trial's separate Class 1 review-artifact boundary is complete
   as non-enforcing audit evidence, while each mediated command or tool
   invocation remains to be added. Comparison admission, dispatch, publication,
@@ -131,7 +143,7 @@ library-only attempt-claim boundary, operator control transitions, and sticky
 cancellation now append typed, non-enforcing ABAC shadow observations with
 an explicit legacy-parity comparison. Worker dispatch is deliberately disabled
 until the exact worker boundary has authoritative ABAC coverage and verified
-repository containment; the narrow ordinary mock PEP does not supply either.
+repository containment; the narrow ordinary mock PEPs do not supply either.
 The read-only supervisor audit independently recomputes
 those observations and checks coverage, order, exact schema guards, and
 migration provenance without altering reconciliation plan digests. Ordinary

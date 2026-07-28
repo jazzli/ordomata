@@ -9,6 +9,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from ordomata.admission_authorization import (
+    TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE,
+    TASK_ADMISSION_DECISION_EVENT_TYPE,
+    TASK_ADMISSION_ENFORCEMENT_COVERAGE,
+)
 from ordomata.authorization import (
     AuthorizationEffect,
     DecisionReason,
@@ -29,9 +34,13 @@ from ordomata.publication_authorization import (
     LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
     evaluate_local_candidate_publication_authorization,
 )
-from ordomata.shadow_authorization import PUBLICATION_ACTION_SCOPE
+from ordomata.shadow_authorization import (
+    ADMISSION_ACTION_SCOPE,
+    PUBLICATION_ACTION_SCOPE,
+)
 from ordomata.state import SQLiteStateStore
 from ordomata.task_evidence import (
+    TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE,
     TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
     TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
     TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
@@ -165,6 +174,22 @@ class PublicationAuthorizationOrchestratorTests(unittest.TestCase):
                 events,
                 "task_attempt_authorization_binding",
             )
+            admission_decision = self._only(
+                events,
+                TASK_ADMISSION_DECISION_EVENT_TYPE,
+            )
+            admission_receipt = self._only(
+                events,
+                TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE,
+            )
+            admission_shadow = next(
+                event
+                for event in events
+                if event.event_type == "authorization_shadow_decision"
+                and event.payload.get("action_scope")
+                == ADMISSION_ACTION_SCOPE
+            )
+            billing = self._only(events, "billing_assessment")
             accounting = self._only(events, "execution_accounting")
             shadow = self._publication_shadow(events)
             decision = self._only(
@@ -185,7 +210,13 @@ class PublicationAuthorizationOrchestratorTests(unittest.TestCase):
                 if event.status is RunStatus.SUCCEEDED
             )
 
-            self.assertEqual(binding.payload["schema_version"], 4)
+            self.assertEqual(binding.payload["schema_version"], 5)
+            self.assertEqual(
+                binding.payload[
+                    "admission_authorization_enforcement_coverage"
+                ],
+                TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE,
+            )
             self.assertEqual(
                 binding.payload["authorization_enforcement_coverage"],
                 TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
@@ -195,6 +226,21 @@ class PublicationAuthorizationOrchestratorTests(unittest.TestCase):
                     "publication_authorization_enforcement_coverage"
                 ],
                 TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
+            )
+            self.assertEqual(
+                admission_decision.payload["enforcement_coverage"],
+                TASK_ADMISSION_ENFORCEMENT_COVERAGE,
+            )
+            self.assertTrue(
+                admission_decision.payload["authorization_eligible"]
+            )
+            self.assertEqual(
+                admission_receipt.payload["decision_digest"],
+                admission_decision.payload["decision_digest"],
+            )
+            self.assertEqual(
+                admission_receipt.payload["receipt"]["outcome"],
+                "succeeded",
             )
             self.assertEqual(decision.payload["mode"], "enforcing")
             self.assertEqual(decision.payload["effect"], "permit")
@@ -275,6 +321,17 @@ class PublicationAuthorizationOrchestratorTests(unittest.TestCase):
             action_digest = action_body.pop("receipt_digest")
             self.assertEqual(action_digest, canonical_digest(action_body))
 
+            self.assertLess(binding.sequence, admission_decision.sequence)
+            self.assertLess(
+                admission_decision.sequence,
+                admission_receipt.sequence,
+            )
+            self.assertLess(
+                admission_receipt.sequence,
+                admission_shadow.sequence,
+            )
+            self.assertLess(admission_shadow.sequence, billing.sequence)
+            self.assertLess(billing.sequence, accounting.sequence)
             self.assertLess(accounting.sequence, shadow.sequence)
             self.assertLess(shadow.sequence, decision.sequence)
             self.assertLess(decision.sequence, pre_effect.sequence)
@@ -282,7 +339,13 @@ class PublicationAuthorizationOrchestratorTests(unittest.TestCase):
             self.assertLess(action.sequence, terminal.sequence)
 
             serialized = json.dumps(
-                [decision.payload, pre_effect.payload, action.payload],
+                [
+                    admission_decision.payload,
+                    admission_receipt.payload,
+                    decision.payload,
+                    pre_effect.payload,
+                    action.payload,
+                ],
                 sort_keys=True,
             )
             for private_value in (

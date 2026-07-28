@@ -1,15 +1,16 @@
 # Runtime authorization model
 
-Status: target architecture adopted; profile-backed built-in-mock dispatch and local-candidate publication PEPs implemented; broader enforcement planned
+Status: target architecture adopted; profile-backed exact built-in-mock Class 1 admission, dispatch, and local-candidate publication PEPs implemented; broader enforcement planned
 
 Date: 2026-07-28
 
 This document defines the target authorization model for the local,
 single-operator orchestrator. It does not widen current authority. The runtime
-still enforces its existing Class 0/1 checks. Two separate ABAC enforcement
-points now gate only profile-backed ordinary attempts that use the exact
-controller-owned in-memory mock implementation: mock dispatch and the resulting
-owner-private local-candidate publication. Classes 2 and 3 remain disabled.
+still enforces its existing Class 0/1 checks. Three separate ABAC enforcement
+points now gate only new profile-backed ordinary Class 1 attempts that use the
+exact controller-owned in-memory mock implementation: task admission, mock
+dispatch, and the resulting owner-private local-candidate publication. Classes
+2 and 3 remain disabled.
 
 ## Normative project decision
 
@@ -110,11 +111,21 @@ These are real authority and validation points, not display-only fields. They
 must remain in place until a backward-compatible migration and parity tests
 prove the new PDP cannot widen behavior.
 
-New profile-backed ordinary attempts using the exact built-in `MockRunner`
-pass narrow controller-owned PEPs at the `runner.execute` and owner-private
-local-candidate publication boundaries. A schema-v4 attempt binding declares
-both chains; historical schema-v3 bindings declare dispatch only. After required selection and
-billing evidence, the controller builds an exact mock-only execute request,
+New profile-backed ordinary Class 1 attempts using the exact built-in
+`MockRunner` pass three narrow controller-owned PEPs at task admission,
+`runner.execute`, and owner-private local-candidate publication. A schema-v5
+attempt binding declares all three chains; frozen schema-v4 declares dispatch
+plus publication, and historical schema-v3 declares dispatch only. The run
+record and private directories created before admission are inert controller
+scaffolding. After required selection and binding evidence, the controller
+builds a fixed admission CREATE request over the isolated worktree, inherits
+the task's full consequence vector, persists its decision, rebuilds from
+current authoritative inputs, compares the exact persisted wrapper,
+independently replays policy, checks freshness, and requires a durable
+succeeded receipt. Class 0, unsafe/high-impact, non-permit, stale, evaluation,
+or evidence failures stop before the admission shadow, billing, dispatch, or
+`RUNNING`. After admission and required billing evidence, the controller builds
+an exact mock-only execute request,
 evaluates a fixed versioned policy, persists and reconciles the decision, and
 requires a fresh `permit`, a derived class no greater than the persisted run
 class or Class 1, exact supported obligations, and the independent legacy gate
@@ -126,9 +137,9 @@ candidate metadata. Its decision and enforcing pre-effect record must be
 durable before a second freshness check immediately adjacent to staging, and
 the existing reconciliation chain embeds its action receipt. Non-permits and
 uncertain decision persistence perform no governed action. Unprofiled
-schema-v1, live or historical schema-v2, and historical schema-v3 publication
-histories remain valid under their prior semantics, and comparison/supervisor
-paths do not inherit this authority.
+schema-v1, live or historical schema-v2, and historical schema-v3/v4 histories
+remain valid under their frozen semantics, and live, comparison, supervisor,
+or general-admission paths do not inherit this authority.
 
 The first task contract now distinguishes the owner-private local candidate
 action from future active/shared promotion. Independently, the publication
@@ -139,9 +150,11 @@ inherits task protection, sensitivity, and confidentiality/integrity/
 availability impact so higher impact is never relabeled as low;
 `required_before_promotion` does not apply to that private candidate write.
 New task attempts bind immutable run inputs and the controller-resolved typed
-authorization intent before admission. Dispatch also binds the persisted
+authorization intent before admission. Schema-v5 exact-mock attempts also bind
+the separate admission enforcement coverage before the admission decision and
+receipt. Dispatch also binds the persisted
 preflight billing assessment, while schema-v2 execution accounting links to the
-schema-v5 publication shadow. On schema-v4 exact-mock attempts, schema-v3
+schema-v5 publication shadow. On schema-v4/v5 exact-mock attempts, schema-v3
 pre-effect/action receipts carry the enforcing decision and canonical action
 receipt; older paths retain schema-v2 non-enforcing receipts. The shadow never
 becomes authority, and the existing Class 0/1 gate remains independently
@@ -173,8 +186,10 @@ types. The Chief-of-Staff contract supplies typed task-effect intent for
 non-enforcing admission and dispatch observations, while the controller
 supplies the exact local-create intent at publication. For the narrow
 profile-backed built-in-mock path, the controller additionally constructs
-separate exact execute and local-candidate CREATE requests at their respective
-boundaries.
+separate exact admission CREATE, execute, and local-candidate CREATE requests
+at their respective boundaries. The admission projection inherits the full
+task consequence vector so unsafe intent cannot be relabeled as harmless
+controller bookkeeping.
 
 Controlled comparison trials use a distinct controller projection for the
 Class 0 effect of reading and evaluating one immutable comparison snapshot. A
@@ -213,10 +228,11 @@ effective value from an authoritative source.
 The canonical decision is immutable before enforcement and contains the fields
 below. Phase 1C implements the value type, non-authoritative Chief-of-Staff
 shadow events, and narrow enforcing decisions for profile-backed built-in-mock
-dispatch and owner-private candidate publication. Those enforcing records are
-distinct from admission, dispatch-intent, and publication shadows. Historical
-ordinary and all controlled-comparison publication receipts remain
-non-enforcing; only the schema-v4 ordinary path carries an exact permit:
+Class 1 admission, dispatch, and owner-private candidate publication. Those
+enforcing records are distinct from admission, dispatch-intent, and
+publication shadows. Historical ordinary and all controlled-comparison
+publication receipts remain non-enforcing; schema-v4 carries dispatch plus
+publication permits, while schema-v5 adds the admission permit and receipt:
 
 - decision, request, and policy identifiers and digests;
 - an effect, fixed reason codes, and matched rule identifiers;
@@ -420,16 +436,19 @@ violation, not an instruction to follow.
    `task_attempt_admission_only`, `runner_model_dispatch_only`, and
    `local_candidate_publication_only` observations. Shadow build, evaluation,
    and append failures are sanitized and cannot allow or block legacy work.
-   Historical paths add required non-enforcing publication receipts. New
-   schema-v4 exact-mock attempts instead add a separate enforcing publication
-   decision and schema-v3 pre-effect/action receipts; failure to prove those
+   Historical paths add required non-enforcing publication receipts. Frozen
+   schema-v4 exact-mock attempts add a separate enforcing publication decision
+   and schema-v3 pre-effect/action receipts; new schema-v5 attempts retain that
+   chain and add an enforcing admission decision and durable succeeded receipt.
+   Failure to prove those
    audit records or the exact local effect fails closed. A read-only
    inspector recomputes canonical
    digests, evidence authenticity/freshness, legacy executability from the
    persisted run, the class from validated typed request attributes,
    derived-class authority-ceiling parity, and expected boundary coverage and
    controller-event order. Class-ceiling mismatches in shadows are evidence;
-   the narrow dispatch and publication PEPs enforce their independent ceilings.
+   the narrow admission, dispatch, and publication PEPs enforce their
+   independent ceilings.
    Ordinary candidates add a digest-only attempt binding,
    receipt-bound billing accounting, and exact metadata/filesystem
    reconciliation. Controlled comparison trials add a versioned Class 0 binding,
@@ -438,14 +457,18 @@ violation, not an instruction to follow.
    trials remain valid partial evidence. Other current decision paths remain
    planned.
 3. **Partly implemented — initial enforcement.** The first deterministic PEPs
-   gate only profile-backed ordinary dispatch through the exact built-in mock
-   runner and the resulting owner-private candidate publication. Dispatch
+   gate only Class 1 admission of a new profile-backed ordinary exact built-in
+   mock attempt, its dispatch, and the resulting owner-private candidate
+   publication. Admission requires a persisted decision, exact current-input
+   rebuild and persisted-wrapper equality, independent policy replay,
+   freshness, and a durable succeeded receipt before shadow or billing. Dispatch
    persists a fixed-policy decision before `RUNNING`, rechecks
    freshness and the Class 0/1 ceiling immediately before invocation, and
    requires a linked action receipt after invocation starts. Publication uses
    its own fixed Class 1 decision, pre-effect record, staging-bound freshness
-   check, and reconciled action receipt. Admission, shared publication or
-   promotion, comparison, supervisor worker dispatch, live harness,
+   check, and reconciled action receipt. General/live/comparison/supervisor
+   admission, shared publication or promotion, comparison execution,
+   supervisor worker dispatch, live harness,
    approvals/resumption, and mediated commands/tools remain non-enforcing or
    disabled. Retain legacy Class 0/1 checks as defense in depth through the
    migration.

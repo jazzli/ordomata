@@ -9,6 +9,7 @@ from ordomata.contracts import load_task_contract
 from ordomata.errors import ValidationError
 from ordomata.models import PermissionClass, RunRequest
 from ordomata.task_evidence import (
+    TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE,
     TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
     TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
     build_candidate_artifact_action_receipt,
@@ -290,6 +291,7 @@ class TaskEvidenceTests(unittest.TestCase):
                 **self.binding_kwargs,
                 enforce_mock_dispatch=False,
                 enforce_local_candidate_publication=False,
+                enforce_task_admission=False,
             ),
         )
         self.assertEqual(v1["schema_version"], 1)
@@ -333,6 +335,10 @@ class TaskEvidenceTests(unittest.TestCase):
             "publication_authorization_enforcement_coverage",
             v3,
         )
+        self.assertNotIn(
+            "admission_authorization_enforcement_coverage",
+            v3,
+        )
         self.assertEqual(
             canonical_digest(v3),
             "sha256:45451049237b97b060f82c0d3597eba6b8b674c2668edf0f1448c815169aa64c",
@@ -349,6 +355,7 @@ class TaskEvidenceTests(unittest.TestCase):
             **self.selection_kwargs,
             enforce_mock_dispatch=True,
             enforce_local_candidate_publication=True,
+            enforce_task_admission=False,
         )
 
         self.assertEqual(v4["schema_version"], 4)
@@ -365,6 +372,50 @@ class TaskEvidenceTests(unittest.TestCase):
         self.assertEqual(
             set(v4) - set(v3),
             {"publication_authorization_enforcement_coverage"},
+        )
+        self.assertNotIn(
+            "admission_authorization_enforcement_coverage",
+            v4,
+        )
+        self.assertEqual(
+            canonical_digest(v4),
+            "sha256:aa962ee1b4ab96f3930cfbc757b7f6448b4a36e3aa620d949116ee1058097eb8",
+        )
+
+    def test_schema_v5_adds_only_admission_coverage_to_v4(self) -> None:
+        v4 = build_task_attempt_binding_event(
+            **self.binding_kwargs,
+            **self.selection_kwargs,
+            enforce_mock_dispatch=True,
+            enforce_local_candidate_publication=True,
+            enforce_task_admission=False,
+        )
+        v5 = build_task_attempt_binding_event(
+            **self.binding_kwargs,
+            **self.selection_kwargs,
+            enforce_mock_dispatch=True,
+            enforce_local_candidate_publication=True,
+            enforce_task_admission=True,
+        )
+
+        self.assertEqual(v5["schema_version"], 5)
+        self.assertEqual(v5["binding"], v4["binding"])
+        self.assertEqual(v5["binding_digest"], v4["binding_digest"])
+        self.assertEqual(
+            v5["authorization_enforcement_coverage"],
+            TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
+        )
+        self.assertEqual(
+            v5["publication_authorization_enforcement_coverage"],
+            TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
+        )
+        self.assertEqual(
+            v5["admission_authorization_enforcement_coverage"],
+            TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE,
+        )
+        self.assertEqual(
+            set(v5) - set(v4),
+            {"admission_authorization_enforcement_coverage"},
         )
 
     def test_publication_enforcement_requires_boolean_mock_enforcement(self) -> None:
@@ -384,6 +435,42 @@ class TaskEvidenceTests(unittest.TestCase):
                 enforce_mock_dispatch=True,
                 enforce_local_candidate_publication=1,  # type: ignore[arg-type]
             )
+
+    def test_admission_enforcement_requires_boolean_dispatch_and_publication(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(ValidationError, "flag must be a boolean"):
+            build_task_attempt_binding_event(
+                **self.binding_kwargs,
+                **self.selection_kwargs,
+                enforce_mock_dispatch=True,
+                enforce_local_candidate_publication=True,
+                enforce_task_admission=1,  # type: ignore[arg-type]
+            )
+
+        for enforce_dispatch, enforce_publication in (
+            (False, False),
+            (True, False),
+            (False, True),
+        ):
+            with (
+                self.subTest(
+                    enforce_mock_dispatch=enforce_dispatch,
+                    enforce_local_candidate_publication=(
+                        enforce_publication
+                    ),
+                ),
+                self.assertRaises(ValidationError),
+            ):
+                build_task_attempt_binding_event(
+                    **self.binding_kwargs,
+                    **self.selection_kwargs,
+                    enforce_mock_dispatch=enforce_dispatch,
+                    enforce_local_candidate_publication=(
+                        enforce_publication
+                    ),
+                    enforce_task_admission=True,
+                )
 
     def test_shadow_receipt_shapes_remain_schema_v2(self) -> None:
         implicit_pre = build_candidate_artifact_pre_effect_receipt(
