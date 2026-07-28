@@ -87,14 +87,18 @@ before invocation. The linked action receipt and execution accounting must
 read back exactly before publication; unprovable post-effect receipt persistence quarantines the
 attempt. The
 publication PEP independently binds the succeeded dispatch and accounting,
-persists its own decision and pre-effect record, rechecks at the first staging
-mutation, and uses the reconciled filesystem receipt as its action receipt.
+reuses the v6 lineage with captured shipped resolver and evaluator replay,
+persists and exactly rereads its own decision and pre-effect record, exactly
+rereads the binding at the final PEP, and checks a new post-replay action time
+immediately before the first staging mutation. It uses the reconciled filesystem
+receipt as its action receipt.
 Schema v6 now commits a bounded canonical task-intent lineage in the binding.
-The final dispatch PEP requires exact equality with the current resolved intent,
-and read-only inspection replays v6 without a shadow preimage. The decision and
-receipt schemas remain unchanged: dispatch remains limited to Class 0/1 requests
-for the exact profile-backed controller-owned `MockRunner`, and new attempts
-still require Class 1 admission.
+The final dispatch and publication PEPs require exact equality with the captured
+shipped resolver, and read-only inspection replays v6 without a shadow preimage.
+The enforcing decision-event and action-receipt schemas remain unchanged:
+dispatch remains limited to Class 0/1 requests for the exact profile-backed
+controller-owned `MockRunner`, new attempts still require Class 1 admission,
+and publication remains an owner-private Class 1 local effect.
 General runtime ABAC enforcement is not implemented. This phase remains a
 prerequisite for adding a worker-dispatch path or repository worker with new
 mediated capabilities. A
@@ -105,14 +109,14 @@ parallel because it cannot exercise worker authority.
   resources, mediated commands/tools, and controller bookkeeping actions.
 - Extend the implemented deterministic shadow evaluator from its focused Class
   0/1/adversarial fixtures to parity with every current allow and deny path.
-- Preserve the implemented schema-v6 authoritative dispatch intent lineage and
-  its shadow-independent read-only replay; schema-v1 through v5 histories retain
-  their frozen meanings.
-- Next, thread the existing v6 lineage and shipped-resolver equality through the
-  owner-private local-candidate publication runtime PEP and final pre-mutation
-  replay, with exact binding readback. The publication request-projection
-  inspector already replays that preimage from the binding; do not create
-  another lineage or widen the Class 1 local-only effect.
+- Preserve the implemented schema-v6 authoritative task-intent lineage and its
+  shadow-independent dispatch and publication replay; schema-v1 through v5
+  histories retain their frozen meanings.
+- Next, add a versioned, privacy-bounded repository-registration contract and
+  read-only validator for canonical repository identity, exact verification
+  argv, protected and allowed paths, and resource and isolation limits. Hash the
+  registration evidence without creating a worktree, invoking a command or
+  worker, or enabling supervisor dispatch.
 - Extend the three durable enforcing decision/action-receipt chains beyond the
   narrow profile-backed built-in-mock admission, dispatch, and publication
   boundaries only after semantics and parity stabilize.

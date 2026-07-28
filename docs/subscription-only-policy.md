@@ -122,18 +122,21 @@ Other harnesses remain blocked until their billing route, account identity, incl
 The full suite uses deterministic mocks, sanitized event fixtures, and simulated route, credit, overage, capacity, identity, circuit, timeout, and postflight failures. Normal tests never invoke a model or network service.
 
 The schema-v6 task-attempt binding is limited to the exact controller-owned
-in-memory mock path. Its bounded canonical task-intent lineage and the final
-PEP's current-intent comparison add authorization provenance only: they do not
-change an allowed billing route, satisfy any live gate, invoke a harness, or
-enable credit, overage, API, cloud, comparison, supervisor, or external-action
-fallback. Schema-v1 through v5 histories retain their prior billing and
-authorization meanings.
+in-memory mock path. Its bounded canonical task-intent lineage is reused by the
+final dispatch and owner-private publication PEPs, which compare it with the
+captured shipped resolver and independently replay the shipped evaluator and
+fixed policy. Publication exactly rereads the binding, decision, and pre-effect
+record before post-replay action-time freshness and staging. These checks add
+authorization provenance only: they change no event or receipt schema, allowed
+billing route, or live gate; invoke no harness; and enable no credit, overage,
+API, cloud, comparison, supervisor, or external-action fallback. Schema-v1
+through v5 histories retain their prior billing and authorization meanings.
 
-The next narrow publication-runtime slice will reuse that existing v6 lineage
-and shipped-resolver equality at the owner-private final pre-mutation PEP, with
-exact binding readback. The publication request-projection inspector already
-replays the preimage from the binding; the slice creates no new lineage and
-changes no billing or live-route eligibility.
+The next narrow repository-registration slice is deterministic and read-only.
+It may validate and hash canonical repository identity, exact verification
+argv, protected and allowed paths, and resource and isolation limits, but it
+must not create a worktree, invoke a command or worker, enable supervisor
+dispatch, or change billing or live-route eligibility.
 
 `compare-run` is an opt-in execution workflow, not a bypass. It requires the same live gate and current evidence for every selected profile before creating comparison records. Trials use one immutable sanitized Class 0 snapshot, randomized repetition blocks, fresh sessions and workspaces, no shared outputs, and no external actions. Reports expose raw automated dimensions and separate human-review fields; they do not declare a winner or auto-promote a profile.
 

@@ -108,26 +108,31 @@ runner-ownership checks immediately before invocation. A linked action receipt
 and execution accounting must read back exactly before candidate publication;
 unprovable post-effect receipt persistence quarantines the attempt. If the
 result reaches candidate publication, the selection and succeeded dispatch
-receipt are inputs to a second exact Class 1 request checked immediately before
-staging. Selection and lineage grant neither permit. This slice changes no
-dispatch decision or receipt schema and widens no permission.
+receipt are inputs to a second exact Class 1 request. That PEP reuses the v6
+lineage, checks it against the captured shipped resolver, independently replays
+the shipped evaluator and fixed policy, and exactly reads back its decision and
+pre-effect record. At the final PEP it exactly rereads the binding, decision,
+and pre-effect record before rebuilding the permit, capturing the action-start
+time, checking freshness, and staging. Selection and lineage grant neither
+permit. This slice changes no enforcing decision-event or action-receipt schema
+and widens no permission.
 
 The read-only authorization inspector validates one-and-only-one coverage for
 schema-v2/v3/v4/v5/v6 attempts and independently recomputes the candidate-set
 and policy digests, eligibility codes, six score dimensions, rank,
 selected-candidate links, plus the applicable shadow and enforcement order.
 Historical schema-v1 bindings remain readable. For v6, it validates dispatch
-intent from the authoritative binding lineage and never from a shadow preimage.
+and publication intent from the authoritative binding lineage and never from a
+shadow preimage.
 Selection evidence never grants authority and never makes stale or unsafe billing
 evidence eligible. The `route` command remains a read-only preview, and an
 explicit profile rejected before run creation intentionally leaves no event.
 
-The next recommended narrow authorization slice is to thread the existing v6
-lineage and shipped-resolver equality through the owner-private local-candidate
-publication runtime PEP and final pre-mutation replay, with exact binding
-readback. The publication request-projection inspector already replays the v6
-preimage from that binding, so no new lineage is needed. The slice must not
-widen its Class 1 local-only effect or enable a live route.
+The next recommended narrow slice is a versioned, privacy-bounded repository-
+registration contract and read-only validator for canonical repository
+identity, exact verification argv, protected and allowed paths, and resource
+and isolation limits. It must not create a worktree, invoke a command or worker,
+enable supervisor dispatch, or enable a live route.
 
 ## Adaptive promoted-profile routing (target)
 

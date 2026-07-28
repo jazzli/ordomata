@@ -113,10 +113,14 @@ shipped runner class and instance boundaries. It exactly reads back `RUNNING`
 and repeats the current binding,
 policy, freshness, and ownership checks immediately before invocation. The
 linked action receipt and execution accounting must read back exactly before
-publication, and an unprovable post-effect receipt quarantines the attempt. An accepted,
-credential-clean result then receives a separate fixed-policy Class 1 decision
-and enforcing pre-effect record before freshness is rechecked at the first
-staging mutation; its reconciled filesystem receipt is the canonical action
+publication, and an unprovable post-effect receipt quarantines the attempt. An
+accepted, credential-clean result then receives a separate fixed-policy Class 1
+decision. That PEP reuses the schema-v6 lineage, checks equality with the
+captured shipped resolver, independently replays the shipped evaluator and
+fixed policy, and exactly reads back its decision and enforcing pre-effect
+record. Immediately before staging, it exactly rereads the binding, decision,
+and pre-effect record, rebuilds the permit, and checks a new post-replay action
+time for freshness; its reconciled filesystem receipt is the canonical action
 receipt.
 General runtime ABAC enforcement is still **planned**. `PermissionClass`
 remains authoritative across contracts, approval, routing, runner validation,
@@ -129,19 +133,21 @@ publication receipts and historical ordinary receipts are migration evidence
 only; schema-v4/v5/v6 ordinary publication is the narrow
 authoritative exception and cannot grant any broader effect.
 
-The dispatch-lineage slice uses the existing decision and receipt schemas and
-advances only current exact-mock attempt bindings to schema v6, so it adds no
-authority. The final PEP compares the durable canonical lineage with current
-controller-resolved intent, while read-only inspection replays v6 without a
-shadow preimage. Schema-v1 through v5 histories retain their frozen meanings.
-Dispatch remains limited to Class 0/1 requests for the exact profile-backed
-controller-owned `MockRunner`, while new attempts still require Class 1
-admission. The next recommended narrow authorization slice threads the existing
-v6 lineage and shipped-resolver equality through the owner-private
-local-candidate publication runtime PEP and final pre-mutation replay, with
-exact binding readback. The publication request-projection inspector already
-replays the v6 preimage from that binding, so no new lineage is needed. The
-slice must not widen the Class 1 local-only effect.
+The lineage slices use the existing enforcing decision-event and action-receipt
+schemas and advance only current exact-mock attempt bindings to schema v6, so
+they add no authority. The final dispatch and publication PEPs compare
+the durable canonical lineage with the captured shipped resolver and replay the
+shipped evaluator and fixed policy; read-only inspection replays v6 without a
+shadow preimage. Publication exactly rereads the binding, decision, and pre-
+effect record before post-replay action-time freshness and staging. Schema-v1
+through v5 histories retain their frozen meanings. Dispatch remains limited to
+Class 0/1 requests for the exact profile-backed controller-owned `MockRunner`,
+while new attempts still require Class 1 admission and publication remains an
+owner-private Class 1 local effect. The next recommended narrow slice is a
+versioned, privacy-bounded repository-registration contract and read-only
+validator for canonical repository identity, exact verification argv,
+protected and allowed paths, and resource and isolation limits. It must not
+create a worktree, invoke a command or worker, or enable supervisor dispatch.
 
 The target semantics for Class 3 standing envelopes, irreversible actions,
 the non-delegable root-authority kernel, consequential outbox execution,
@@ -392,7 +398,7 @@ evidence payloads remain separate operational state.
   self-contained lineage. Their
   admission order, current-input replay, persisted wrapper, upstream,
   artifact, billing, and v6 lineage links are independently checked without
-  using shadow preimages for v6 dispatch. Older histories
+  using shadow preimages for v6 dispatch or publication. Older histories
   retain their frozen semantics. New controlled
   comparison trials have a schema-v2 digest-bound Class 0 binding, Class 0
   admission/dispatch shadows, and a separately bounded non-enforcing Class 1

@@ -24,9 +24,15 @@ from ordomata.publication_authorization import (
     LOCAL_CANDIDATE_PUBLICATION_OPERATION,
     LOCAL_CANDIDATE_PUBLICATION_POLICY_ID,
     assert_local_candidate_publication_authorized,
+    assert_local_candidate_publication_fresh_at_action_start,
     build_local_candidate_publication_enforcement_receipt,
     build_local_candidate_publication_failure_payload,
     evaluate_local_candidate_publication_authorization,
+)
+from ordomata.shadow_authorization import resolve_task_authorization_intent
+from ordomata.task_evidence import (
+    TASK_AUTHORIZATION_INTENT_LINEAGE_KIND,
+    TASK_AUTHORIZATION_INTENT_LINEAGE_SCHEMA_VERSION,
 )
 
 
@@ -97,6 +103,30 @@ class LocalCandidatePublicationAuthorizationTests(unittest.TestCase):
             "legacy_executable": True,
         }
         values.update(overrides)
+        if "task_authorization_intent_lineage" not in overrides:
+            lineage_contract = values["contract"]
+            lineage_request = values["request"]
+            task_intent, intent_source = resolve_task_authorization_intent(
+                lineage_contract
+            )
+            lineage = {
+                "schema_version": (
+                    TASK_AUTHORIZATION_INTENT_LINEAGE_SCHEMA_VERSION
+                ),
+                "kind": TASK_AUTHORIZATION_INTENT_LINEAGE_KIND,
+                "intent_source": intent_source,
+                "task_definition_digest": lineage_contract.definition_hash,
+                "requested_permission_class": int(
+                    lineage_request.permission_class
+                ),
+                "task_authorization_intent": task_intent.to_canonical(),
+                "authorization_intent_digest": task_intent.digest,
+            }
+            values["task_authorization_intent_lineage"] = lineage
+            if "task_authorization_intent_lineage_digest" not in overrides:
+                values["task_authorization_intent_lineage_digest"] = (
+                    canonical_digest(lineage)
+                )
         return values
 
     @staticmethod
@@ -172,6 +202,7 @@ class LocalCandidatePublicationAuthorizationTests(unittest.TestCase):
 
             receipt = build_local_candidate_publication_enforcement_receipt(
                 authorization=authorization,
+                contract=self.contract,
                 action_started_at=101.0,
                 completed_at=102.0,
                 outcome=ReceiptOutcome.SUCCEEDED,
@@ -222,6 +253,85 @@ class LocalCandidatePublicationAuthorizationTests(unittest.TestCase):
                 "must-not-persist",
             ):
                 self.assertNotIn(private_value, serialized)
+
+    def test_request_parameters_bind_the_schema_v6_lineage_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            inputs = self._inputs(root)
+            authorization = evaluate_local_candidate_publication_authorization(
+                **inputs
+            )
+            profile_ref = canonical_digest({"profile_id": inputs["profile_id"]})
+            repository_ref = canonical_digest({"project_root": str(root)})
+            workspace_ref = canonical_digest(
+                {"workspace": str(inputs["request"].workspace)}
+            )
+            run_ref = canonical_digest({"run_id": inputs["request"].run_id})
+            expected_parameters = {
+                "artifact_digest": inputs["artifact_digest"],
+                "artifact_kind": inputs["artifact_kind"],
+                "artifact_metadata_digest": inputs[
+                    "artifact_metadata_digest"
+                ],
+                "artifact_size_bytes": inputs["artifact_size_bytes"],
+                "billing_disposition_digest": inputs[
+                    "billing_disposition_digest"
+                ],
+                "controller_owned_mock_runner": True,
+                "credential_scan_passed": True,
+                "destination_digest": inputs["destination_digest"],
+                "dispatch_action_receipt_digest": inputs[
+                    "dispatch_action_receipt_digest"
+                ],
+                "dispatch_decision_digest": inputs[
+                    "dispatch_decision_digest"
+                ],
+                "dispatch_request_digest": inputs["dispatch_request_digest"],
+                "evaluation_accepted": True,
+                "execution_accounting_digest": inputs[
+                    "execution_accounting_digest"
+                ],
+                "execution_selection_digest": inputs[
+                    "execution_selection_digest"
+                ],
+                "legacy_permission_class": int(
+                    inputs["request"].permission_class
+                ),
+                "output_schema_digest": canonical_digest(
+                    inputs["request"].output_schema
+                ),
+                "profile_ref": profile_ref,
+                "publication_authorization_intent_digest": (
+                    authorization.publication_authorization_intent_digest
+                ),
+                "repository_ref": repository_ref,
+                "run_ref": run_ref,
+                "safe_publication_prerequisites": True,
+                "task_attempt_binding_digest": inputs[
+                    "task_attempt_binding_digest"
+                ],
+                "task_authorization_intent_digest": (
+                    authorization.task_authorization_intent_digest
+                ),
+                "task_authorization_intent_lineage_digest": inputs[
+                    "task_authorization_intent_lineage_digest"
+                ],
+                "task_definition_digest": self.contract.definition_hash,
+                "workspace_ref": workspace_ref,
+            }
+
+            self.assertEqual(
+                authorization.task_authorization_intent_lineage_digest,
+                inputs["task_authorization_intent_lineage_digest"],
+            )
+            self.assertEqual(
+                authorization.request.action.parameters_digest,
+                canonical_digest(expected_parameters),
+            )
+            self.assertNotIn(
+                "task_authorization_intent_lineage_digest",
+                authorization.to_event_payload(),
+            )
 
     def test_class_zero_and_high_consequence_publication_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -407,6 +517,11 @@ class LocalCandidatePublicationAuthorizationTests(unittest.TestCase):
                     "evaluate_local_candidate_publication_authorization",
                     return_value=forged,
                 ),
+                patch.object(
+                    AuthorizationEvaluator,
+                    "evaluate",
+                    return_value=forged.decision,
+                ),
                 self.assertRaises(AuthorizationBlocked),
             ):
                 self._assert_at_effect(
@@ -415,6 +530,199 @@ class LocalCandidatePublicationAuthorizationTests(unittest.TestCase):
                     action_started_at=101.0,
                     persisted_payload=forged.to_event_payload(),
                 )
+
+    def test_lineage_and_patched_lower_risk_resolver_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            assert self.contract.authorization_intent is not None
+            high_intent = replace(
+                self.contract.authorization_intent,
+                consequences=replace(
+                    self.contract.authorization_intent.consequences,
+                    confidentiality=ImpactLevel.HIGH,
+                    sensitivity=ImpactLevel.HIGH,
+                ),
+            )
+            high_contract = replace(
+                self.contract,
+                authorization_intent=high_intent,
+            )
+            high_inputs = self._inputs(root, contract=high_contract)
+            low_intent, low_source = resolve_task_authorization_intent(
+                self.contract
+            )
+            forged_lineage = {
+                **high_inputs["task_authorization_intent_lineage"],
+                "intent_source": low_source,
+                "task_authorization_intent": low_intent.to_canonical(),
+                "authorization_intent_digest": low_intent.digest,
+            }
+
+            with patch(
+                "ordomata.publication_authorization."
+                "resolve_task_authorization_intent",
+                return_value=(low_intent, low_source),
+            ):
+                denied = evaluate_local_candidate_publication_authorization(
+                    **high_inputs
+                )
+                self.assertEqual(
+                    denied.decision.effect,
+                    AuthorizationEffect.DENY,
+                )
+                with self.assertRaisesRegex(
+                    ValidationError,
+                    "lineage is inconsistent",
+                ):
+                    evaluate_local_candidate_publication_authorization(
+                        **{
+                            **high_inputs,
+                            "task_authorization_intent_lineage": (
+                                forged_lineage
+                            ),
+                            "task_authorization_intent_lineage_digest": (
+                                canonical_digest(forged_lineage)
+                            ),
+                        }
+                    )
+
+    def test_strict_lineage_and_digest_validation_is_fixed_and_redacted(
+        self,
+    ) -> None:
+        private_marker = "private-publication-lineage-marker"
+        with tempfile.TemporaryDirectory() as temporary:
+            inputs = self._inputs(Path(temporary).resolve())
+            original = inputs["task_authorization_intent_lineage"]
+            malformed_intent = json.loads(json.dumps(original))
+            malformed_intent["task_authorization_intent"]["resource"][
+                "sensitivity"
+            ] = {"marker": private_marker}
+            cases = (
+                (
+                    "extra-key",
+                    {**original, private_marker: True},
+                ),
+                (
+                    "invalid-source",
+                    {**original, "intent_source": private_marker},
+                ),
+                (
+                    "unhashable-source",
+                    {**original, "intent_source": [private_marker]},
+                ),
+                (
+                    "boolean-schema",
+                    {**original, "schema_version": True},
+                ),
+                ("unhashable-intent-enum", malformed_intent),
+            )
+            for case, lineage in cases:
+                with (
+                    self.subTest(case=case),
+                    self.assertRaisesRegex(
+                        ValidationError,
+                        "lineage is inconsistent",
+                    ) as caught,
+                ):
+                    evaluate_local_candidate_publication_authorization(
+                        **{
+                            **inputs,
+                            "task_authorization_intent_lineage": lineage,
+                            "task_authorization_intent_lineage_digest": (
+                                canonical_digest(lineage)
+                            ),
+                        }
+                    )
+                self.assertNotIn(private_marker, str(caught.exception))
+
+            with self.assertRaisesRegex(
+                ValidationError,
+                "lineage is inconsistent",
+            ):
+                evaluate_local_candidate_publication_authorization(
+                    **{
+                        **inputs,
+                        "task_authorization_intent_lineage_digest": self._digest(
+                            "wrong-lineage"
+                        ),
+                    }
+                )
+
+            with self.assertRaisesRegex(
+                ValidationError,
+                "lineage is inconsistent",
+            ):
+                evaluate_local_candidate_publication_authorization(
+                    **{
+                        **inputs,
+                        "task_authorization_intent_lineage": private_marker,
+                    }
+                )
+
+    def test_lineage_mutation_is_rejected_by_final_private_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            inputs = self._inputs(Path(temporary).resolve())
+            authorization = evaluate_local_candidate_publication_authorization(
+                **inputs
+            )
+            lineage = {
+                **inputs["task_authorization_intent_lineage"],
+                "intent_source": "legacy_permission_class_fallback",
+            }
+
+            for case, overrides in (
+                (
+                    "lineage",
+                    {
+                        "task_authorization_intent_lineage": lineage,
+                        "task_authorization_intent_lineage_digest": (
+                            canonical_digest(lineage)
+                        ),
+                    },
+                ),
+                (
+                    "lineage-digest",
+                    {
+                        "task_authorization_intent_lineage_digest": self._digest(
+                            "other-lineage"
+                        )
+                    },
+                ),
+            ):
+                with self.subTest(case=case), self.assertRaises(
+                    AuthorizationBlocked
+                ):
+                    self._assert_at_effect(
+                        authorization,
+                        inputs,
+                        action_started_at=101.0,
+                        **overrides,
+                    )
+
+    def test_freshness_helper_rejects_stale_or_nonfinite_boundaries(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            inputs = self._inputs(Path(temporary).resolve())
+            authorization = evaluate_local_candidate_publication_authorization(
+                **inputs
+            )
+            assert_local_candidate_publication_fresh_at_action_start(
+                authorization,
+                action_started_at=101.0,
+            )
+            for case, action_started_at in (
+                ("before-issued", 99.0),
+                ("at-expiry", authorization.decision.expires_at),
+                ("nan", float("nan")),
+                ("positive-infinity", float("inf")),
+                ("negative-infinity", float("-inf")),
+            ):
+                with self.subTest(case=case), self.assertRaises(
+                    AuthorizationBlocked
+                ):
+                    assert_local_candidate_publication_fresh_at_action_start(
+                        authorization,
+                        action_started_at=action_started_at,
+                    )
 
     def test_cross_candidate_replay_and_persisted_mutation_are_rejected(
         self,

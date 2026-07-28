@@ -7700,49 +7700,52 @@ def _inspect_local_candidate_publication_request_projection(
     accounting = task_accounting.payload
     candidate = pre_effect
     if isinstance(candidate, Mapping):
-        expected_parameters_digest = canonical_digest(
-            {
-                "artifact_digest": artifact_digest,
-                "artifact_kind": candidate.get("artifact_kind"),
-                "artifact_metadata_digest": artifact_metadata_digest,
-                "artifact_size_bytes": candidate.get("artifact_size_bytes"),
-                "billing_disposition_digest": (
-                    task_accounting.billing_disposition_digest
-                ),
-                "controller_owned_mock_runner": True,
-                "credential_scan_passed": True,
-                "destination_digest": destination_digest,
-                "dispatch_action_receipt_digest": dispatch_receipt_digest,
-                "dispatch_decision_digest": dispatch_decision.decision_digest,
-                "dispatch_request_digest": dispatch_decision.request_digest,
-                "evaluation_accepted": True,
-                "execution_accounting_digest": (
-                    canonical_digest(accounting)
-                    if isinstance(accounting, Mapping)
-                    else None
-                ),
-                "execution_selection_digest": (
-                    task_execution_selection.selection_digest
-                ),
-                "legacy_permission_class": fact.permission_class,
-                "output_schema_digest": binding.get("output_schema_digest"),
-                "profile_ref": expected_profile_ref,
-                "publication_authorization_intent_digest": (
-                    publication_intent_digest
-                ),
-                "repository_ref": expected_repository_ref,
-                "run_ref": fact.run_ref,
-                "safe_publication_prerequisites": True,
-                "task_attempt_binding_digest": task_binding.binding_digest,
-                "task_authorization_intent_digest": binding.get(
-                    "authorization_intent_digest"
-                ),
-                "task_definition_digest": binding.get(
-                    "task_definition_digest"
-                ),
-                "workspace_ref": binding.get("workspace_ref"),
-            }
-        )
+        expected_parameters = {
+            "artifact_digest": artifact_digest,
+            "artifact_kind": candidate.get("artifact_kind"),
+            "artifact_metadata_digest": artifact_metadata_digest,
+            "artifact_size_bytes": candidate.get("artifact_size_bytes"),
+            "billing_disposition_digest": (
+                task_accounting.billing_disposition_digest
+            ),
+            "controller_owned_mock_runner": True,
+            "credential_scan_passed": True,
+            "destination_digest": destination_digest,
+            "dispatch_action_receipt_digest": dispatch_receipt_digest,
+            "dispatch_decision_digest": dispatch_decision.decision_digest,
+            "dispatch_request_digest": dispatch_decision.request_digest,
+            "evaluation_accepted": True,
+            "execution_accounting_digest": (
+                canonical_digest(accounting)
+                if isinstance(accounting, Mapping)
+                else None
+            ),
+            "execution_selection_digest": (
+                task_execution_selection.selection_digest
+            ),
+            "legacy_permission_class": fact.permission_class,
+            "output_schema_digest": binding.get("output_schema_digest"),
+            "profile_ref": expected_profile_ref,
+            "publication_authorization_intent_digest": (
+                publication_intent_digest
+            ),
+            "repository_ref": expected_repository_ref,
+            "run_ref": fact.run_ref,
+            "safe_publication_prerequisites": True,
+            "task_attempt_binding_digest": task_binding.binding_digest,
+            "task_authorization_intent_digest": binding.get(
+                "authorization_intent_digest"
+            ),
+            "task_definition_digest": binding.get(
+                "task_definition_digest"
+            ),
+            "workspace_ref": binding.get("workspace_ref"),
+        }
+        if task_binding.schema_version == 6:
+            expected_parameters[
+                "task_authorization_intent_lineage_digest"
+            ] = binding.get("authorization_intent_lineage_digest")
+        expected_parameters_digest = canonical_digest(expected_parameters)
         if request.action.parameters_digest != expected_parameters_digest:
             issues.append(
                 "local_candidate_publication_request_binding_mismatch"

@@ -5522,69 +5522,83 @@ class AuthorizationInspectionTests(unittest.TestCase):
                 )
 
     def test_publication_decision_semantic_tampering_is_redacted(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            _, database = self._run_profile_backed_mock(
-                temporary,
-                run_id="inspect-publication-semantic-tamper",
-            )
-            private_marker = "private-publication-owner-marker"
-            connection = sqlite3.connect(database)
-            try:
-                self._drop_run_event_mutation_triggers(connection)
-                row = connection.execute(
-                    """
-                    SELECT run_id, payload_json
-                    FROM run_events
-                    WHERE event_type = ?
-                    """,
-                    (LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,),
-                ).fetchone()
-                self.assertIsNotNone(row)
-                payload = json.loads(row[1])
-                payload["request"]["resource"]["owner"] = private_marker
-                payload["request_digest"] = canonical_digest(
-                    payload["request"]
+        for case in ("resource-owner", "lineage-parameter"):
+            with (
+                self.subTest(case=case),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                _, database = self._run_profile_backed_mock(
+                    temporary,
+                    run_id=f"inspect-publication-semantic-{case}",
                 )
-                payload["decision"]["request_digest"] = payload[
-                    "request_digest"
-                ]
-                payload["decision_digest"] = canonical_digest(
-                    payload["decision"]
-                )
-                event_id = canonical_digest(
-                    {
-                        "event_type": (
-                            LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE
+                private_marker = f"private-publication-{case}-marker"
+                connection = sqlite3.connect(database)
+                try:
+                    self._drop_run_event_mutation_triggers(connection)
+                    row = connection.execute(
+                        """
+                        SELECT run_id, payload_json
+                        FROM run_events
+                        WHERE event_type = ?
+                        """,
+                        (LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,),
+                    ).fetchone()
+                    self.assertIsNotNone(row)
+                    assert row is not None
+                    payload = json.loads(row[1])
+                    if case == "resource-owner":
+                        payload["request"]["resource"][
+                            "owner"
+                        ] = private_marker
+                    else:
+                        payload["request"]["action"][
+                            "parameters_digest"
+                        ] = canonical_digest(
+                            {"omitted_lineage": private_marker}
+                        )
+                    payload["request_digest"] = canonical_digest(
+                        payload["request"]
+                    )
+                    payload["decision"]["request_digest"] = payload[
+                        "request_digest"
+                    ]
+                    payload["decision_digest"] = canonical_digest(
+                        payload["decision"]
+                    )
+                    event_id = canonical_digest(
+                        {
+                            "event_type": (
+                                LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE
+                            ),
+                            "payload": payload,
+                            "run_id": row[0],
+                        }
+                    )
+                    connection.execute(
+                        """
+                        UPDATE run_events
+                        SET event_id = ?, payload_json = ?
+                        WHERE event_type = ?
+                        """,
+                        (
+                            event_id,
+                            json.dumps(payload, sort_keys=True),
+                            LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
                         ),
-                        "payload": payload,
-                        "run_id": row[0],
-                    }
-                )
-                connection.execute(
-                    """
-                    UPDATE run_events
-                    SET event_id = ?, payload_json = ?
-                    WHERE event_type = ?
-                    """,
-                    (
-                        event_id,
-                        json.dumps(payload, sort_keys=True),
-                        LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
-                    ),
-                )
-                self._restore_run_event_mutation_triggers(connection)
-                connection.commit()
-            finally:
-                connection.close()
+                    )
+                    self._restore_run_event_mutation_triggers(connection)
+                    connection.commit()
+                finally:
+                    connection.close()
 
-            report = inspect_authorization_shadows(database)
-            projection = json.dumps(report.to_mapping(), sort_keys=True)
-            self.assertFalse(report.clean)
-            self.assertIn(
-                "local_candidate_publication_request_binding_mismatch",
-                report.runs[0].integrity_issues,
-            )
-            self.assertNotIn(private_marker, projection)
+                report = inspect_authorization_shadows(database)
+                projection = json.dumps(report.to_mapping(), sort_keys=True)
+                self.assertFalse(report.clean)
+                self.assertIn(
+                    "local_candidate_publication_request_binding_mismatch",
+                    report.runs[0].integrity_issues,
+                )
+                self.assertNotIn(private_marker, projection)
 
     def test_publication_decision_order_and_upstream_links_are_enforced(
         self,
