@@ -75,10 +75,19 @@ verifier, reviewer, and recovery are versioned RBAC subject attributes with
 separation-of-duty constraints; a role never grants authority by itself.
 
 This remains principally a target architecture, not a claim of general ABAC
-coverage. The first two narrow authoritative PEPs now apply only to new
-profile-backed ordinary attempts using the controller-owned in-memory mock
-runner implementation. Subclasses cannot receive that permit. It constructs a
-separate exact `runner.execute` request, evaluates a fixed mock-only policy,
+coverage. The first three narrow authoritative PEPs now apply only to new
+profile-backed ordinary Class 1 attempts using the controller-owned in-memory
+mock runner implementation. Subclasses and instances with rebound runner
+boundary methods cannot receive those permits. After
+the run record, private run directories, selection, and binding exist as inert
+controller scaffolding, the admission PEP constructs a fixed Class 1 CREATE
+request for the isolated attempt, inherits the task's full consequence vector,
+persists its decision, rebuilds the request from current controller inputs,
+compares the exact persisted wrapper, independently replays the fixed policy,
+and appends a durable succeeded admission receipt. Class 0, unsafe/high-impact,
+non-permit, stale, or unprovable admission evidence stops before the admission
+shadow, billing preflight, dispatch, or `RUNNING`. The dispatch PEP constructs
+a separate exact `runner.execute` request, evaluates a fixed mock-only policy,
 persists the decision before `RUNNING`, rechecks its
 fresh Class 0/1 ceiling immediately before invocation, and appends a linked
 terminal action receipt. Only a validated identity-matched no-process mock
@@ -100,14 +109,16 @@ policy/evidence digests, legacy-result parity, and
 independent authority-ceiling parity. These observations
 remain non-permits and cannot authorize execution or publication;
 shadow-decision persistence remains best-effort. Schema-v3 mock attempt
-bindings declare dispatch enforcement; new schema-v4 bindings retain that
-chain and separately declare local-candidate publication enforcement. Their
+bindings declare dispatch enforcement; frozen schema-v4 bindings add
+local-candidate publication enforcement; new schema-v5 bindings retain both
+chains and separately declare Class 1 task-admission enforcement. Their
 enforcing decisions and action receipts are distinct from the shadows.
 Unprofiled schema-v1 bindings, live or historical schema-v2 bindings,
-historical schema-v3 bindings, and every comparison path retain their prior
-non-enforcing publication interpretation.
+historical schema-v3/v4 bindings, and every comparison path retain their prior
+meaning.
 There is still no
-general admission, live/shared publication, or promotion PEP, per-command/tool mediation,
+general, live, comparison, or supervisor admission PEP, live/shared
+publication or promotion PEP, per-command/tool mediation,
 approval-resumption path, supervisor worker permit, or live-harness ABAC
 enforcement. Existing gates remain in force, and the migration cannot widen
 the Class 0/1 ceiling.
@@ -152,10 +163,15 @@ trigger
      and closed billing circuit
   -> build sanitized child environment
   -> choose an eligible execution profile
-  -> create append-only run record
+  -> create the append-only run record, private directories, execution
+     selection, and task binding as inert controller scaffolding
+  -> for a new profile-backed exact built-in-mock Class 1 attempt only,
+     persist an admission decision, rebuild/replay it at the boundary, and
+     require a durable succeeded admission receipt
   -> append the non-authoritative Phase 1C task-admission observation
-  -> for a new profile-backed controller mock attempt only, persist and enforce
-     a fresh fixed-policy decision for the exact mock runner invocation
+  -> inspect and persist billing preflight evidence
+  -> for that same narrow path, persist and enforce a fresh fixed-policy
+     decision for the exact mock runner invocation
   -> transition to RUNNING only after that narrow decision is eligible
   -> append the non-authoritative task-effect dispatch-intent observation
   -> recheck the permit freshness immediately at the invocation boundary
@@ -168,7 +184,7 @@ trigger
   -> run deterministic evaluation
   -> append a shadow local-candidate observation bound to the validated bytes
      and digest, using the controller-owned local-create projection
-  -> for the schema-v4 exact-mock path only, persist a separate fixed-policy
+  -> for the schema-v5 exact-mock path only, persist a separate fixed-policy
      Class 1 publication decision and enforcing pre-effect record
   -> recheck that permit immediately before the first staging mutation
   -> reconcile the local artifact, metadata, and integrated action receipt;
@@ -223,9 +239,10 @@ settings, account/subscription values, diagnostics, prompts, paths, and
 environment values are represented only by digests or omitted. Every source
 candidate must still match the controller-loaded catalog, and the selected
 source assessment must match fresh horizon-valid runner preflight evidence. A
-schema-v4 binding links new exact built-in-mock dispatch and publication
-enforcement; schema v3 retains its historical dispatch-only meaning, and schema
-v2 remains for live and historical selected attempts. Both admission/dispatch observations
+schema-v5 binding links new exact built-in-mock admission, dispatch, and
+publication enforcement; frozen schema v4 retains dispatch-plus-publication,
+schema v3 retains its historical dispatch-only meaning, and schema v2 remains
+for live and historical selected attempts. Both admission/dispatch observations
 link the selection digest. Exact persistence is required before execution; the
 read-only
 inspector independently recomputes shape, digests, filters, scores, rank,
@@ -342,19 +359,22 @@ authoritative acceptance checks.
 ## Ordinary local-candidate publication
 
 Every new Chief-of-Staff attempt records a digest-only binding before its
-admission shadow. The binding covers the controller-resolved typed
-authorization intent as well as immutable run inputs, and dispatch binds the
+admission shadow. For a schema-v5 exact-mock attempt, the run record and
+private run directories that precede the binding are inert controller
+scaffolding: they cannot authorize billing, dispatch, `RUNNING`, or
+publication. The binding covers the controller-resolved typed authorization
+intent as well as immutable run inputs, and dispatch binds the
 persisted preflight billing assessment. After runner execution, schema-v2
 accounting projects the identity and billing disposition fields needed to
 recompute one sanitized billing digest. Runner-provided version text is reduced
 to a content reference, execution mode is restricted to controller-known
 labels, and billing/accounting events are content-addressed for exact ambiguous
 write reconciliation. An accepted, credential-clean candidate then receives a
-schema-v5 non-enforcing publication shadow. On the schema-v4 exact-mock path,
+schema-v5 non-enforcing publication shadow. On the schema-v5 exact-mock path,
 the controller also persists a separate fixed-policy publication decision and
 a schema-v3 enforcing pre-effect receipt before the first artifact-directory
-mutation. Historical schema-v1-v3 paths retain the schema-v2 non-enforcing
-pre-effect receipt.
+mutation. Frozen schema-v4 retains the same enforcing publication chain;
+schema-v1-v3 paths retain schema-v2 non-enforcing pre-effect receipts.
 
 The controller stages owner-private bytes under a deterministic name, opens the
 parent chain without following mutable symlinks, and retains verified parent
@@ -362,9 +382,9 @@ and inode descriptors through receipt reconciliation. It fsyncs the file and
 namespace, reconciles immutable artifact metadata by exact readback, promotes
 without overwrite, and verifies the final bytes, mode, size, inode, parent
 identity, and expected hard-link count. A deterministic action receipt records
-succeeded, failed, cancelled, or unknown outcome. For schema-v4 attempts it is
-schema v3 and embeds the canonical ABAC action receipt; older paths retain the
-schema-v2 legacy-gate receipt. Proven
+succeeded, failed, cancelled, or unknown outcome. For schema-v4/v5 enforcing
+attempts it is schema v3 and embeds the canonical ABAC action receipt;
+schema-v1-v3 paths retain the schema-v2 legacy-gate receipt. Proven
 missing receipts roll back only the owned final inode; an unexpected surviving
 link or any unprovable metadata, staging, final-name, directory-sync, receipt,
 or terminal state quarantines the attempt. An artifact metadata row alone is
@@ -375,25 +395,31 @@ controller-owned terminal record is an attention-required incomplete history;
 a bound attempt that has not reached billing may still be legitimately in
 progress.
 
-For a selected controller-owned mock profile, the binding is schema v4 and
-declares two separate chains. The first is billing assessment, exact mock-
-dispatch request and fixed-policy decision, Class 0/1 eligibility enforcement
+For a selected controller-owned mock profile, the binding is schema v5 and
+declares three separate chains. The first is an exact Class 1 admission CREATE
+request and fixed-policy decision followed by current-input rebuild, exact
+persisted-wrapper comparison, independent policy replay, freshness checking,
+and a durable succeeded admission receipt. It inherits the full task
+consequence vector; Class 0, unsafe/high-impact, non-permit, stale, evaluation,
+or evidence failures stop before the admission shadow and billing preflight.
+The second is billing assessment, exact mock-dispatch request and fixed-policy
+decision, Class 0/1 eligibility enforcement
 before `RUNNING`, a final freshness check immediately before invocation, and a
 terminal action receipt linked to the decision and enforced action. A deny,
 defer, indeterminate result, stale permit, unsupported
 obligation, ceiling mismatch, or unproven decision append invokes no runner.
-The second binds that succeeded dispatch receipt, content-addressed accounting,
+The third binds that succeeded dispatch receipt, content-addressed accounting,
 billing disposition, exact artifact and destination, accepted evaluation, and
 credential scan into an independent Class 1 publication request. Its required
 decision and pre-effect append must reconcile before mutation, and freshness,
 exact obligations, and both Class ceilings are rechecked immediately before
 staging. A non-permit or uncertain decision append creates no staged bytes or
 metadata. Schema-v1 unprofiled, schema-v2 selected/live, and historical
-schema-v3 histories remain valid with their previous publication semantics.
+schema-v3/v4 histories remain valid with their previous semantics.
 
-Neither chain authorizes shared, remote, active-policy, promotion, deployment,
+None of the three chains authorizes shared, remote, active-policy, promotion, deployment,
 live-harness, supervisor-worker, or Class 2/3 effects. The existing Class 0/1
-gate remains an independent prerequisite and cannot be widened by either PEP.
+gate remains an independent prerequisite and cannot be widened by any PEP.
 
 ## Controlled comparison
 

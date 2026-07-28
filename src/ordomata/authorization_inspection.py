@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import math
 import os
@@ -50,6 +50,18 @@ from .authorization import (
     SubjectAttributes,
     canonical_digest,
     derive_permission_class_from_attributes,
+)
+from .admission_authorization import (
+    TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE,
+    TASK_ADMISSION_ACTION_SCOPE,
+    TASK_ADMISSION_DECISION_EVENT_TYPE,
+    TASK_ADMISSION_ENFORCEMENT_COVERAGE,
+    TASK_ADMISSION_EVENT_SCHEMA_VERSION,
+    TASK_ADMISSION_EXECUTOR_ID,
+    TASK_ADMISSION_OPERATION,
+    TASK_ADMISSION_POLICY_ID,
+    TASK_ADMISSION_POLICY_VERSION,
+    TASK_ADMISSION_RESOURCE_TYPE,
 )
 from .dispatch_authorization import (
     MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE,
@@ -145,6 +157,9 @@ TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE = (
 TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE = (
     LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
 )
+TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE = (
+    TASK_ADMISSION_ENFORCEMENT_COVERAGE
+)
 ADMISSION_SCOPE = "task_attempt_admission_only"
 DISPATCH_SCOPE = "runner_model_dispatch_only"
 PUBLICATION_SCOPE = "local_candidate_publication_only"
@@ -190,6 +205,7 @@ _MAX_COMPARISON_ACCOUNTING_EVENTS_PER_RUN = 2
 _MAX_COMPARISON_ARTIFACT_EVENTS_PER_TYPE_PER_RUN = 2
 _MAX_TASK_BINDING_EVENTS_PER_RUN = 2
 _MAX_TASK_EXECUTION_SELECTION_EVENTS_PER_RUN = 2
+_MAX_TASK_ADMISSION_EVENTS_PER_TYPE_PER_RUN = 2
 _MAX_MOCK_DISPATCH_EVENTS_PER_TYPE_PER_RUN = 2
 _MAX_LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENTS_PER_RUN = 2
 _MAX_TASK_ARTIFACT_EVENTS_PER_TYPE_PER_RUN = 2
@@ -201,6 +217,11 @@ _MAX_OBLIGATION_RESULTS = 32
 _MAX_PAYLOAD_BYTES = 512 * 1024
 _SHADOW_EVIDENCE_LIFETIME_SECONDS = 120.0
 _MISSING = object()
+
+_SELECTED_TASK_BINDING_SCHEMA_VERSIONS = frozenset({2, 3, 4, 5})
+_DISPATCH_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS = frozenset({3, 4, 5})
+_PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS = frozenset({4, 5})
+_ADMISSION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS = frozenset({5})
 
 _COMPARISON_ACCOUNTING_KEYS = frozenset(
     {
@@ -433,6 +454,47 @@ class MockDispatchEnforcementInspection:
 
 
 @dataclass(frozen=True, slots=True)
+class TaskAdmissionEnforcementInspection:
+    """Sanitized findings for exact profile-backed mock admission."""
+
+    required: bool
+    decision_observed: bool
+    decision_sequence: int | None
+    effect: str | None
+    authorization_eligible: bool | None
+    decision_current_at_evaluation: bool | None
+    action_receipt_observed: bool
+    action_receipt_sequence: int | None
+    action_receipt_outcome: str | None
+    permit_current_at_action_start: bool | None
+    integrity_issues: tuple[str, ...]
+
+    @property
+    def attention_required(self) -> bool:
+        return bool(self.integrity_issues)
+
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            "required": self.required,
+            "decision_observed": self.decision_observed,
+            "decision_sequence": self.decision_sequence,
+            "effect": self.effect,
+            "authorization_eligible": self.authorization_eligible,
+            "decision_current_at_evaluation": (
+                self.decision_current_at_evaluation
+            ),
+            "action_receipt_observed": self.action_receipt_observed,
+            "action_receipt_sequence": self.action_receipt_sequence,
+            "action_receipt_outcome": self.action_receipt_outcome,
+            "permit_current_at_action_start": (
+                self.permit_current_at_action_start
+            ),
+            "integrity_issues": list(self.integrity_issues),
+            "attention_required": self.attention_required,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class LocalCandidatePublicationEnforcementInspection:
     """Sanitized findings for exact local-candidate publication enforcement."""
 
@@ -488,6 +550,7 @@ class RunAuthorizationInspection:
     run_kind: str
     authorization_shadow_coverage: str
     authorization_action_receipt_coverage: str | None
+    admission_authorization_enforcement_coverage: str | None
     authorization_enforcement_coverage: str | None
     publication_authorization_enforcement_coverage: str | None
     permission_class: int | None
@@ -497,6 +560,7 @@ class RunAuthorizationInspection:
     observed_scopes: tuple[str, ...]
     missing_scopes: tuple[str, ...]
     events: tuple[ShadowDecisionInspection, ...]
+    task_admission_enforcement: TaskAdmissionEnforcementInspection
     mock_dispatch_enforcement: MockDispatchEnforcementInspection
     local_candidate_publication_enforcement: (
         LocalCandidatePublicationEnforcementInspection
@@ -509,6 +573,7 @@ class RunAuthorizationInspection:
             bool(self.missing_scopes)
             or bool(self.integrity_issues)
             or any(event.attention_required for event in self.events)
+            or self.task_admission_enforcement.attention_required
             or self.mock_dispatch_enforcement.attention_required
             or self.local_candidate_publication_enforcement.attention_required
         )
@@ -524,6 +589,9 @@ class RunAuthorizationInspection:
             "authorization_action_receipt_coverage": (
                 self.authorization_action_receipt_coverage
             ),
+            "admission_authorization_enforcement_coverage": (
+                self.admission_authorization_enforcement_coverage
+            ),
             "authorization_enforcement_coverage": (
                 self.authorization_enforcement_coverage
             ),
@@ -537,6 +605,9 @@ class RunAuthorizationInspection:
             "observed_scopes": list(self.observed_scopes),
             "missing_scopes": list(self.missing_scopes),
             "events": [event.to_mapping() for event in self.events],
+            "task_admission_enforcement": (
+                self.task_admission_enforcement.to_mapping()
+            ),
             "mock_dispatch_enforcement": (
                 self.mock_dispatch_enforcement.to_mapping()
             ),
@@ -696,6 +767,7 @@ class _TaskAttemptBindingFacts:
     authorization_action_receipt_coverage: str = (
         TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE
     )
+    admission_authorization_enforcement_coverage: str | None = None
     authorization_enforcement_coverage: str | None = None
     publication_authorization_enforcement_coverage: str | None = None
     schema_version: int | None = None
@@ -710,6 +782,45 @@ class _TaskExecutionSelectionFacts:
     selection: Mapping[str, Any] | None
     selection_digest: str | None
     selected: Mapping[str, Any] | None
+    issues: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _TaskAdmissionDecisionFacts:
+    """Validated admission decision retained only inside the inspector."""
+
+    observed: bool
+    sequence: int | None
+    occurred_at: float | None
+    payload: Mapping[str, Any] | None
+    request: Mapping[str, Any] | None
+    policy: Mapping[str, Any] | None
+    decision: Mapping[str, Any] | None
+    request_digest: str | None
+    policy_digest: str | None
+    decision_digest: str | None
+    effect: str | None
+    authorization_eligible: bool | None
+    decision_current_at_evaluation: bool | None
+    issued_at: float | None
+    expires_at: float | None
+    issues: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _TaskAdmissionReceiptFacts:
+    """Validated admission action receipt retained only internally."""
+
+    observed: bool
+    sequence: int | None
+    occurred_at: float | None
+    payload: Mapping[str, Any] | None
+    receipt: Mapping[str, Any] | None
+    outcome: str | None
+    started_at: float | None
+    completed_at: float | None
+    permit_current_at_action_start: bool | None
+    pre_effect_stop_valid: bool
     issues: tuple[str, ...]
 
 
@@ -922,6 +1033,22 @@ def inspect_authorization_shadows(
                             facts,
                         )
                     )
+                    task_admission_decision_rows = (
+                        _read_task_admission_events(
+                            connection,
+                            facts,
+                            event_type=TASK_ADMISSION_DECISION_EVENT_TYPE,
+                        )
+                    )
+                    task_admission_receipt_rows = (
+                        _read_task_admission_events(
+                            connection,
+                            facts,
+                            event_type=(
+                                TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE
+                            ),
+                        )
+                    )
                     mock_dispatch_decision_rows = (
                         _read_mock_dispatch_events(
                             connection,
@@ -969,6 +1096,8 @@ def inspect_authorization_shadows(
                     comparison_artifact_rows = ()
                     task_binding_rows = ()
                     task_execution_selection_rows = ()
+                    task_admission_decision_rows = ()
+                    task_admission_receipt_rows = ()
                     mock_dispatch_decision_rows = ()
                     mock_dispatch_receipt_rows = ()
                     local_candidate_publication_decision_rows = ()
@@ -1067,6 +1196,28 @@ def inspect_authorization_shadows(
                 row
             )
 
+    task_admission_decision_rows_by_run: dict[
+        str, list[sqlite3.Row]
+    ] = {fact.raw_run_id: [] for fact in facts}
+    for row in task_admission_decision_rows:
+        raw_event_run_id = row["run_id"]
+        if (
+            isinstance(raw_event_run_id, str)
+            and raw_event_run_id in task_admission_decision_rows_by_run
+        ):
+            task_admission_decision_rows_by_run[raw_event_run_id].append(row)
+
+    task_admission_receipt_rows_by_run: dict[
+        str, list[sqlite3.Row]
+    ] = {fact.raw_run_id: [] for fact in facts}
+    for row in task_admission_receipt_rows:
+        raw_event_run_id = row["run_id"]
+        if (
+            isinstance(raw_event_run_id, str)
+            and raw_event_run_id in task_admission_receipt_rows_by_run
+        ):
+            task_admission_receipt_rows_by_run[raw_event_run_id].append(row)
+
     mock_dispatch_decision_rows_by_run: dict[
         str, list[sqlite3.Row]
     ] = {fact.raw_run_id: [] for fact in facts}
@@ -1164,6 +1315,31 @@ def inspect_authorization_shadows(
             task_binding,
             task_execution_selection_rows_by_run[fact.raw_run_id],
         )
+        task_admission_decision = _inspect_task_admission_decision(
+            fact,
+            task_binding,
+            task_execution_selection,
+            task_admission_decision_rows_by_run[fact.raw_run_id],
+            terminal_event_rows_by_run[fact.raw_run_id],
+            shadow_rows=event_rows_for_run,
+            receipt_rows=(
+                task_admission_receipt_rows_by_run[fact.raw_run_id]
+            ),
+        )
+        task_admission_receipt = _inspect_task_admission_receipt(
+            fact,
+            task_binding,
+            task_execution_selection,
+            task_admission_decision,
+            task_admission_receipt_rows_by_run[fact.raw_run_id],
+            terminal_event_rows_by_run[fact.raw_run_id],
+            shadow_rows=event_rows_for_run,
+        )
+        task_admission_enforcement = _project_task_admission_enforcement(
+            task_binding,
+            task_admission_decision,
+            task_admission_receipt,
+        )
         valid_task_binding = (
             task_binding.binding is not None and not task_binding.issues
         )
@@ -1185,6 +1361,8 @@ def inspect_authorization_shadows(
             task_binding,
             task_execution_selection,
             task_billing,
+            task_admission_decision,
+            task_admission_receipt,
             event_rows_for_run,
             mock_dispatch_decision_rows_by_run[fact.raw_run_id],
         )
@@ -1301,7 +1479,15 @@ def inspect_authorization_shadows(
             )
             for row in event_rows_for_run
         )
-        expected = {ADMISSION_SCOPE}
+        expected = (
+            set()
+            if (
+                task_binding.schema_version
+                in _ADMISSION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
+                and task_admission_receipt.pre_effect_stop_valid
+            )
+            else {ADMISSION_SCOPE}
+        )
         if fact.running_observed:
             expected.add(DISPATCH_SCOPE)
         task_publication_evidence_observed = (
@@ -1319,10 +1505,12 @@ def inspect_authorization_shadows(
         )
         if (
             valid_task_binding
-            and task_binding.schema_version == 4
+            and task_binding.schema_version
+            in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
             and publication_shadow_observed
         ) or (
-            task_binding.schema_version != 4
+            task_binding.schema_version
+            not in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
             and (
                 fact.succeeded_observed
                 or (fact.artifact_observed and not valid_task_binding)
@@ -1343,6 +1531,7 @@ def inspect_authorization_shadows(
             *fact.issues,
             *task_binding.issues,
             *task_execution_selection.issues,
+            *task_admission_enforcement.integrity_issues,
             *task_billing.issues,
             *mock_dispatch_decision.issues,
             *mock_dispatch_receipt.issues,
@@ -1438,6 +1627,62 @@ def inspect_authorization_shadows(
             if event.action_scope is not None
         }
         admission_sequence = sequences_by_scope.get(ADMISSION_SCOPE)
+        admission_decision_sequence = task_admission_decision.sequence
+        admission_receipt_sequence = task_admission_receipt.sequence
+        if admission_decision_sequence is not None:
+            if (
+                task_binding.sequence is None
+                or admission_decision_sequence <= task_binding.sequence
+                or (
+                    task_execution_selection.sequence is not None
+                    and admission_decision_sequence
+                    <= task_execution_selection.sequence
+                )
+                or (
+                    admission_receipt_sequence is not None
+                    and admission_decision_sequence
+                    >= admission_receipt_sequence
+                )
+                or (
+                    admission_sequence is not None
+                    and admission_decision_sequence >= admission_sequence
+                )
+                or (
+                    fact.billing_sequence is not None
+                    and admission_decision_sequence >= fact.billing_sequence
+                )
+                or (
+                    fact.running_sequence is not None
+                    and admission_decision_sequence >= fact.running_sequence
+                )
+                or (
+                    fact.terminal_sequence is not None
+                    and admission_decision_sequence >= fact.terminal_sequence
+                )
+            ):
+                run_issues.append("task_admission_decision_order_invalid")
+        if admission_receipt_sequence is not None:
+            if (
+                admission_decision_sequence is None
+                or admission_receipt_sequence <= admission_decision_sequence
+                or (
+                    admission_sequence is not None
+                    and admission_receipt_sequence >= admission_sequence
+                )
+                or (
+                    fact.billing_sequence is not None
+                    and admission_receipt_sequence >= fact.billing_sequence
+                )
+                or (
+                    fact.running_sequence is not None
+                    and admission_receipt_sequence >= fact.running_sequence
+                )
+                or (
+                    fact.terminal_sequence is not None
+                    and admission_receipt_sequence >= fact.terminal_sequence
+                )
+            ):
+                run_issues.append("task_admission_receipt_order_invalid")
         if mock_dispatch_decision.sequence is not None:
             if (
                 admission_sequence is None
@@ -1621,7 +1866,8 @@ def inspect_authorization_shadows(
                 run_issues.append("runner_event_order_invalid")
         publication_sequence = sequences_by_scope.get(PUBLICATION_SCOPE)
         publication_receipts_expected = (
-            task_binding.schema_version != 4
+            task_binding.schema_version
+            not in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
             or _local_candidate_publication_receipts_expected(
                 fact,
                 local_candidate_publication_decision,
@@ -1725,7 +1971,8 @@ def inspect_authorization_shadows(
                 fact.accounting_sequence is None
                 or task_pre_effect_sequence <= fact.accounting_sequence
                 or (
-                    task_binding.schema_version != 4
+                    task_binding.schema_version
+                    not in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
                     and publication_sequence is None
                 )
                 or (
@@ -1733,7 +1980,8 @@ def inspect_authorization_shadows(
                     and task_pre_effect_sequence <= publication_sequence
                 )
                 or (
-                    task_binding.schema_version == 4
+                    task_binding.schema_version
+                    in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
                     and (
                         publication_decision_sequence is None
                         or task_pre_effect_sequence
@@ -1794,6 +2042,12 @@ def inspect_authorization_shadows(
                     if valid_task_binding
                     else None
                 ),
+                admission_authorization_enforcement_coverage=(
+                    task_binding
+                    .admission_authorization_enforcement_coverage
+                    if valid_task_binding
+                    else None
+                ),
                 authorization_enforcement_coverage=(
                     task_binding.authorization_enforcement_coverage
                     if valid_task_binding
@@ -1812,6 +2066,7 @@ def inspect_authorization_shadows(
                 observed_scopes=observed,
                 missing_scopes=missing,
                 events=events,
+                task_admission_enforcement=task_admission_enforcement,
                 mock_dispatch_enforcement=mock_dispatch_enforcement,
                 local_candidate_publication_enforcement=(
                     local_candidate_publication_enforcement
@@ -1822,6 +2077,8 @@ def inspect_authorization_shadows(
 
     inspected_event_count = (
         len(event_rows)
+        + len(task_admission_decision_rows)
+        + len(task_admission_receipt_rows)
         + len(mock_dispatch_decision_rows)
         + len(mock_dispatch_receipt_rows)
         + len(local_candidate_publication_decision_rows)
@@ -2702,6 +2959,52 @@ def _read_task_execution_selection_events(
     return tuple(rows)
 
 
+def _read_task_admission_events(
+    connection: sqlite3.Connection,
+    facts: tuple[_RunFacts, ...],
+    *,
+    event_type: str,
+) -> tuple[sqlite3.Row, ...]:
+    """Read two admission events per type so duplicates stay observable."""
+
+    if not facts:
+        return ()
+    if event_type not in {
+        TASK_ADMISSION_DECISION_EVENT_TYPE,
+        TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE,
+    }:
+        raise ValueError("unsupported task admission event type")
+    placeholders = ",".join("?" for _ in facts)
+    parameters: tuple[Any, ...] = (
+        event_type,
+        *(fact.raw_run_id for fact in facts),
+        _MAX_TASK_ADMISSION_EVENTS_PER_TYPE_PER_RUN,
+    )
+    rows = connection.execute(
+        f"""
+        WITH ranked_task_admission_events AS (
+            SELECT
+                event_id,
+                run_id,
+                sequence,
+                occurred_at,
+                payload_json,
+                ROW_NUMBER() OVER (
+                    PARTITION BY run_id ORDER BY sequence
+                ) AS event_rank
+            FROM run_events
+            WHERE event_type = ? AND run_id IN ({placeholders})
+        )
+        SELECT event_id, run_id, sequence, occurred_at, payload_json
+        FROM ranked_task_admission_events
+        WHERE event_rank <= ?
+        ORDER BY run_id, sequence
+        """,
+        parameters,
+    ).fetchall()
+    return tuple(rows)
+
+
 def _read_task_artifact_receipt_events(
     connection: sqlite3.Connection,
     facts: tuple[_RunFacts, ...],
@@ -2970,43 +3273,61 @@ def _inspect_task_attempt_binding(
         "binding_digest",
         "schema_version",
     }
-    if schema_version in {3, 4}:
+    if schema_version in _DISPATCH_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS:
         expected_outer_keys.add("authorization_enforcement_coverage")
-    if schema_version == 4:
+    if schema_version in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS:
         expected_outer_keys.add(
             "publication_authorization_enforcement_coverage"
+        )
+    if schema_version in _ADMISSION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS:
+        expected_outer_keys.add(
+            "admission_authorization_enforcement_coverage"
         )
     if payload is None or set(payload) != expected_outer_keys:
         return _invalid_task_binding(
             sequence,
             "task_binding_payload_invalid",
-            schema_version=(schema_version if schema_version in {3, 4} else None),
+            schema_version=(
+                schema_version if schema_version in {3, 4, 5} else None
+            ),
         )
     if (
         isinstance(schema_version, bool)
         or not isinstance(schema_version, int)
-        or schema_version not in {1, 2, 3, 4}
+        or schema_version not in {1, 2, 3, 4, 5}
         or payload.get("authorization_shadow_coverage")
         != TASK_ATTEMPT_SHADOW_COVERAGE
         or payload.get("authorization_action_receipt_coverage")
         != TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE
         or (
-            schema_version in {3, 4}
+            schema_version
+            in _DISPATCH_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
             and payload.get("authorization_enforcement_coverage")
             != TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE
         )
         or (
-            schema_version == 4
+            schema_version
+            in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
             and payload.get(
                 "publication_authorization_enforcement_coverage"
             )
             != TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
         )
+        or (
+            schema_version
+            in _ADMISSION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
+            and payload.get(
+                "admission_authorization_enforcement_coverage"
+            )
+            != TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE
+        )
     ):
         return _invalid_task_binding(
             sequence,
             "task_binding_payload_invalid",
-            schema_version=(schema_version if schema_version in {3, 4} else None),
+            schema_version=(
+                schema_version if schema_version in {3, 4, 5} else None
+            ),
         )
     binding = payload.get("binding")
     if not _is_task_attempt_binding_shape(
@@ -3016,7 +3337,9 @@ def _inspect_task_attempt_binding(
         return _invalid_task_binding(
             sequence,
             "task_binding_payload_invalid",
-            schema_version=(schema_version if schema_version in {3, 4} else None),
+            schema_version=(
+                schema_version if schema_version in {3, 4, 5} else None
+            ),
         )
     assert isinstance(binding, Mapping)
     binding_digest = payload.get("binding_digest")
@@ -3027,14 +3350,22 @@ def _inspect_task_attempt_binding(
             None,
             None,
             ("task_binding_digest_mismatch",),
+            admission_authorization_enforcement_coverage=(
+                TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE
+                if schema_version
+                in _ADMISSION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
+                else None
+            ),
             authorization_enforcement_coverage=(
                 TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE
-                if schema_version in {3, 4}
+                if schema_version
+                in _DISPATCH_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
                 else None
             ),
             publication_authorization_enforcement_coverage=(
                 TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
-                if schema_version == 4
+                if schema_version
+                in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
                 else None
             ),
             schema_version=schema_version,
@@ -3063,14 +3394,22 @@ def _inspect_task_attempt_binding(
         binding,
         binding_digest,
         tuple(issues),
+        admission_authorization_enforcement_coverage=(
+            TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE
+            if schema_version
+            in _ADMISSION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
+            else None
+        ),
         authorization_enforcement_coverage=(
             TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE
-            if schema_version in {3, 4}
+            if schema_version
+            in _DISPATCH_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
             else None
         ),
         publication_authorization_enforcement_coverage=(
             TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
-            if schema_version == 4
+            if schema_version
+            in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
             else None
         ),
         schema_version=schema_version,
@@ -3089,14 +3428,22 @@ def _invalid_task_binding(
         None,
         None,
         (issue,),
+        admission_authorization_enforcement_coverage=(
+            TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE
+            if schema_version
+            in _ADMISSION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
+            else None
+        ),
         authorization_enforcement_coverage=(
             TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE
-            if schema_version in {3, 4}
+            if schema_version
+            in _DISPATCH_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
             else None
         ),
         publication_authorization_enforcement_coverage=(
             TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
-            if schema_version == 4
+            if schema_version
+            in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
             else None
         ),
         schema_version=schema_version,
@@ -3110,7 +3457,10 @@ def _inspect_task_execution_selection(
 ) -> _TaskExecutionSelectionFacts:
     """Validate one bounded, controller-authored profile-selection record."""
 
-    required = task_binding.schema_version in {2, 3, 4}
+    required = (
+        task_binding.schema_version
+        in _SELECTED_TASK_BINDING_SCHEMA_VERSIONS
+    )
     if fact.task_execution_selection_event_count == 0:
         return _TaskExecutionSelectionFacts(
             False,
@@ -3188,7 +3538,10 @@ def _inspect_task_execution_selection(
         issues.append("execution_selection_payload_invalid")
         selected = None
     binding = task_binding.binding
-    if task_binding.schema_version not in {2, 3, 4}:
+    if (
+        task_binding.schema_version
+        not in _SELECTED_TASK_BINDING_SCHEMA_VERSIONS
+    ):
         issues.append("execution_selection_unbound")
     elif not isinstance(binding, Mapping) or task_binding.issues:
         issues.append("execution_selection_binding_mismatch")
@@ -3993,17 +4346,1007 @@ def _task_billing_policy_consistent(payload: Mapping[str, Any]) -> bool:
     )
 
 
+def _inspect_task_admission_decision(
+    fact: _RunFacts,
+    task_binding: _TaskAttemptBindingFacts,
+    task_execution_selection: _TaskExecutionSelectionFacts,
+    rows: list[sqlite3.Row],
+    terminal_rows: list[sqlite3.Row],
+    shadow_rows: list[sqlite3.Row] | None = None,
+    receipt_rows: list[sqlite3.Row] | None = None,
+) -> _TaskAdmissionDecisionFacts:
+    """Validate and independently re-evaluate the admission PEP decision."""
+
+    required = (
+        task_binding.schema_version
+        in _ADMISSION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
+    )
+    if not required:
+        if rows:
+            return _empty_task_admission_decision(
+                observed=True,
+                issue="task_admission_decision_unexpected",
+            )
+        return _empty_task_admission_decision()
+    if len(rows) != 1:
+        persistence_stop = bool(
+            not rows
+            and _is_task_admission_pre_effect_stop(
+                fact,
+                task_binding,
+                None,
+                terminal_rows,
+                shadow_rows=shadow_rows or [],
+                receipt_rows=receipt_rows or [],
+            )
+        )
+        return _empty_task_admission_decision(
+            observed=bool(rows),
+            issue=(
+                None
+                if persistence_stop
+                else "task_admission_decision_missing"
+                if not rows
+                else "task_admission_decision_duplicate"
+            ),
+        )
+
+    row = rows[0]
+    sequence = _optional_sequence(row["sequence"])
+    occurred_at = _optional_timestamp(row["occurred_at"])
+    payload = _bounded_json_mapping(row["payload_json"])
+    issues: list[str] = []
+    if sequence is None:
+        issues.append("task_admission_decision_sequence_invalid")
+    if occurred_at is None:
+        issues.append("task_admission_decision_timestamp_invalid")
+    if not isinstance(payload, Mapping):
+        return _empty_task_admission_decision(
+            observed=True,
+            sequence=sequence,
+            occurred_at=occurred_at,
+            issue="task_admission_decision_payload_invalid",
+            additional_issues=issues,
+        )
+
+    failure = payload.get("failure_stage") is not None
+    expected_keys = {
+        "action_scope",
+        "admission_authorization_intent_digest",
+        "authorization_eligible",
+        "authority_ceiling_satisfied",
+        "block_reason_codes",
+        "context_digest",
+        "controller_owned_mock_runner",
+        "decision",
+        "decision_current_at_evaluation",
+        "decision_digest",
+        "derived_permission_class",
+        "effect",
+        "enforcement_coverage",
+        "evaluated_at",
+        "execution_selection_digest",
+        "legacy_executable",
+        "mode",
+        "obligations_supported",
+        "policy",
+        "policy_digest",
+        "pre_run_approver_ref",
+        "pre_run_approval_required",
+        "profile_configuration_digest",
+        "profile_ref",
+        "profile_version_ref",
+        "prompt_digest",
+        "request",
+        "request_digest",
+        "requested_permission_class",
+        "run_ref",
+        "schema_version",
+        "task_attempt_binding_digest",
+        "task_authorization_intent_digest",
+    }
+    if failure:
+        expected_keys.add("failure_stage")
+    if set(payload) != expected_keys:
+        issues.append("task_admission_decision_payload_invalid")
+    if (
+        payload.get("schema_version") != TASK_ADMISSION_EVENT_SCHEMA_VERSION
+        or payload.get("mode") != "enforcing"
+        or payload.get("action_scope") != TASK_ADMISSION_ACTION_SCOPE
+        or payload.get("enforcement_coverage")
+        != TASK_ADMISSION_ENFORCEMENT_COVERAGE
+    ):
+        issues.append("task_admission_decision_payload_invalid")
+    if not _event_identifier_matches(
+        row,
+        event_type=TASK_ADMISSION_DECISION_EVENT_TYPE,
+        payload=payload,
+        run_id=fact.raw_run_id,
+    ):
+        issues.append("task_admission_decision_event_identifier_mismatch")
+
+    binding = task_binding.binding
+    selected = task_execution_selection.selected
+    selected_mock = bool(
+        isinstance(selected, Mapping)
+        and selected.get("runner_id") == "mock"
+        and fact.raw_runner_id == "mock"
+    )
+    if (
+        not isinstance(binding, Mapping)
+        or task_binding.binding_digest is None
+        or payload.get("run_ref") != fact.run_ref
+        or payload.get("run_ref") != binding.get("run_ref")
+        or payload.get("profile_ref") != binding.get("profile_ref")
+        or payload.get("task_attempt_binding_digest")
+        != task_binding.binding_digest
+        or payload.get("execution_selection_digest")
+        != task_execution_selection.selection_digest
+        or payload.get("profile_version_ref")
+        != binding.get("profile_version_ref")
+        or payload.get("profile_configuration_digest")
+        != binding.get("profile_configuration_digest")
+        or payload.get("context_digest") != binding.get("context_digest")
+        or payload.get("prompt_digest") != binding.get("prompt_digest")
+        or payload.get("task_authorization_intent_digest")
+        != binding.get("authorization_intent_digest")
+        or _permission_class(payload.get("requested_permission_class"))
+        != fact.permission_class
+        or fact.permission_class
+        not in (
+            int(PermissionClass.READ_ONLY),
+            int(PermissionClass.LOCAL_DRAFT),
+        )
+        or payload.get("controller_owned_mock_runner") is not selected_mock
+        or payload.get("legacy_executable") is not True
+        or not isinstance(payload.get("pre_run_approval_required"), bool)
+        or not _is_digest(payload.get("pre_run_approver_ref"))
+        or not _is_digest(
+            payload.get("admission_authorization_intent_digest")
+        )
+    ):
+        issues.append("task_admission_decision_binding_mismatch")
+
+    evaluated_at = _optional_timestamp(payload.get("evaluated_at"))
+    if evaluated_at is None or (
+        occurred_at is not None and occurred_at < evaluated_at
+    ):
+        issues.append("task_admission_decision_timestamp_invalid")
+    effect = _known_string(payload.get("effect"), _KNOWN_EFFECTS)
+    eligible = _optional_boolean(payload.get("authorization_eligible"))
+    current = _optional_boolean(
+        payload.get("decision_current_at_evaluation")
+    )
+    if effect is None or eligible is None or current is None:
+        issues.append("task_admission_decision_projection_invalid")
+
+    if failure:
+        if not _is_exact_task_admission_failure(payload):
+            issues.append("task_admission_decision_failure_invalid")
+        return _TaskAdmissionDecisionFacts(
+            True,
+            sequence,
+            occurred_at,
+            payload,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            effect,
+            eligible,
+            current,
+            None,
+            None,
+            tuple(sorted(set(issues))),
+        )
+
+    request_mapping = payload.get("request")
+    policy_mapping = payload.get("policy")
+    decision_mapping = payload.get("decision")
+    request_digest = payload.get("request_digest")
+    policy_digest = payload.get("policy_digest")
+    decision_digest = payload.get("decision_digest")
+    if not _digest_matches(request_digest, request_mapping):
+        issues.append("task_admission_request_digest_mismatch")
+        request_digest = None
+    if not _digest_matches(policy_digest, policy_mapping):
+        issues.append("task_admission_policy_digest_mismatch")
+        policy_digest = None
+    if not _digest_matches(decision_digest, decision_mapping):
+        issues.append("task_admission_decision_digest_mismatch")
+        decision_digest = None
+
+    request = _mock_dispatch_request_from_mapping(request_mapping)
+    policy = _mock_dispatch_policy_from_mapping(policy_mapping)
+    if request is None:
+        issues.append("task_admission_request_invalid")
+    if policy is None:
+        issues.append("task_admission_policy_invalid")
+    if not _is_decision_shape(decision_mapping):
+        issues.append("task_admission_authorization_decision_invalid")
+    if request is not None:
+        issues.extend(
+            _inspect_task_admission_request_projection(
+                fact,
+                task_binding,
+                task_execution_selection,
+                payload,
+                request,
+            )
+        )
+    if policy is not None:
+        issues.extend(
+            _inspect_task_admission_policy_projection(
+                policy,
+                pre_run_approval_required=(
+                    payload.get("pre_run_approval_required") is True
+                ),
+                pre_run_approver_ref=payload.get("pre_run_approver_ref"),
+            )
+        )
+
+    expected_decision: Mapping[str, Any] | None = None
+    if request is not None and policy is not None:
+        try:
+            expected_decision = ShadowAuthorizationEvaluator().evaluate(
+                request,
+                policy,
+            ).to_canonical()
+        except (TypeError, ValueError, ValidationError):
+            issues.append("task_admission_authorization_reevaluation_failed")
+    if expected_decision is not None and decision_mapping != expected_decision:
+        issues.append("task_admission_authorization_reevaluation_mismatch")
+
+    issued_at = (
+        _optional_timestamp(decision_mapping.get("issued_at"))
+        if isinstance(decision_mapping, Mapping)
+        else None
+    )
+    expires_at = (
+        _optional_timestamp(decision_mapping.get("expires_at"))
+        if isinstance(decision_mapping, Mapping)
+        else None
+    )
+    recomputed_current = bool(
+        evaluated_at is not None
+        and issued_at is not None
+        and expires_at is not None
+        and issued_at <= evaluated_at < expires_at
+    )
+    derived = (
+        _permission_class(decision_mapping.get("derived_permission_class"))
+        if isinstance(decision_mapping, Mapping)
+        else None
+    )
+    recomputed_ceiling = bool(
+        derived is not None
+        and derived <= int(PermissionClass.LOCAL_DRAFT)
+        and fact.permission_class == int(PermissionClass.LOCAL_DRAFT)
+    )
+    obligations = (
+        decision_mapping.get("obligations")
+        if isinstance(decision_mapping, Mapping)
+        else None
+    )
+    supported_obligations = _mock_dispatch_obligations_supported(
+        effect,
+        obligations,
+    )
+    policy_matches = bool(
+        isinstance(decision_mapping, Mapping)
+        and request is not None
+        and policy is not None
+        and decision_mapping.get("request_id") == request.request_id
+        and decision_mapping.get("request_digest") == request.digest
+        and decision_mapping.get("policy_bundle_id") == policy.bundle_id
+        and decision_mapping.get("policy_version") == policy.version
+        and decision_mapping.get("policy_digest") == policy.digest
+        and issued_at == evaluated_at
+    )
+    recomputed_blocks: list[str] = []
+    if payload.get("controller_owned_mock_runner") is not True:
+        recomputed_blocks.append("controller_owned_mock_runner_not_verified")
+    if fact.permission_class != int(PermissionClass.LOCAL_DRAFT):
+        recomputed_blocks.append("task_permission_class_not_local_draft")
+    if payload.get("legacy_executable") is not True:
+        recomputed_blocks.append("legacy_gate_not_executable")
+    if payload.get("pre_run_approval_required") is True:
+        recomputed_blocks.append("pre_run_approval_not_supported")
+    if not policy_matches:
+        recomputed_blocks.append("authorization_policy_mismatch")
+    if effect != AuthorizationEffect.PERMIT.value:
+        recomputed_blocks.append("authorization_effect_not_permit")
+    if not recomputed_current:
+        recomputed_blocks.append("authorization_decision_not_current")
+    if not recomputed_ceiling:
+        recomputed_blocks.append("authorization_class_ceiling_exceeded")
+    if not supported_obligations:
+        recomputed_blocks.append("authorization_obligation_unsupported")
+    recomputed_eligible = not recomputed_blocks
+    if (
+        payload.get("effect")
+        != (
+            decision_mapping.get("effect")
+            if isinstance(decision_mapping, Mapping)
+            else None
+        )
+        or payload.get("derived_permission_class") != derived
+        or payload.get("decision_current_at_evaluation")
+        is not recomputed_current
+        or payload.get("authority_ceiling_satisfied")
+        is not recomputed_ceiling
+        or payload.get("obligations_supported")
+        is not supported_obligations
+        or payload.get("authorization_eligible") is not recomputed_eligible
+        or payload.get("block_reason_codes") != recomputed_blocks
+        or payload.get("evaluated_at") != issued_at
+    ):
+        issues.append("task_admission_decision_projection_mismatch")
+
+    return _TaskAdmissionDecisionFacts(
+        True,
+        sequence,
+        occurred_at,
+        payload,
+        request_mapping if isinstance(request_mapping, Mapping) else None,
+        policy_mapping if isinstance(policy_mapping, Mapping) else None,
+        decision_mapping if isinstance(decision_mapping, Mapping) else None,
+        request_digest if isinstance(request_digest, str) else None,
+        policy_digest if isinstance(policy_digest, str) else None,
+        decision_digest if isinstance(decision_digest, str) else None,
+        effect,
+        eligible,
+        current,
+        issued_at,
+        expires_at,
+        tuple(sorted(set(issues))),
+    )
+
+
+def _empty_task_admission_decision(
+    *,
+    observed: bool = False,
+    sequence: int | None = None,
+    occurred_at: float | None = None,
+    issue: str | None = None,
+    additional_issues: list[str] | None = None,
+) -> _TaskAdmissionDecisionFacts:
+    issues = list(additional_issues or ())
+    if issue is not None:
+        issues.append(issue)
+    return _TaskAdmissionDecisionFacts(
+        observed,
+        sequence,
+        occurred_at,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        tuple(sorted(set(issues))),
+    )
+
+
+def _is_exact_task_admission_failure(payload: Mapping[str, Any]) -> bool:
+    return bool(
+        payload.get("failure_stage") == "request_or_evaluation"
+        and payload.get("request") is None
+        and payload.get("request_digest") is None
+        and payload.get("policy") is None
+        and payload.get("policy_digest") is None
+        and payload.get("decision") is None
+        and payload.get("decision_digest") is None
+        and payload.get("effect") == AuthorizationEffect.INDETERMINATE.value
+        and payload.get("derived_permission_class") is None
+        and payload.get("decision_current_at_evaluation") is False
+        and payload.get("authority_ceiling_satisfied") is False
+        and payload.get("obligations_supported") is False
+        and payload.get("authorization_eligible") is False
+        and payload.get("block_reason_codes")
+        == ["authorization_evaluation_failed"]
+    )
+
+
+def _inspect_task_admission_request_projection(
+    fact: _RunFacts,
+    task_binding: _TaskAttemptBindingFacts,
+    task_execution_selection: _TaskExecutionSelectionFacts,
+    wrapper: Mapping[str, Any],
+    request: AuthorizationRequest,
+) -> tuple[str, ...]:
+    binding = task_binding.binding
+    selected = task_execution_selection.selected
+    if not isinstance(binding, Mapping):
+        return ("task_admission_request_binding_mismatch",)
+    expected_resource_identifier = canonical_digest(
+        {
+            "execution_selection_digest": task_execution_selection.selection_digest,
+            "resource_type": TASK_ADMISSION_RESOURCE_TYPE,
+            "run_ref": fact.run_ref,
+            "task_attempt_binding_digest": task_binding.binding_digest,
+            "workspace_ref": binding.get("workspace_ref"),
+        }
+    )
+    expected_parameters_digest = canonical_digest(
+        {
+            "admission_authorization_intent_digest": wrapper.get(
+                "admission_authorization_intent_digest"
+            ),
+            "attempt": binding.get("attempt"),
+            "context_digest": binding.get("context_digest"),
+            "controller_owned_mock_runner": wrapper.get(
+                "controller_owned_mock_runner"
+            ),
+            "execution_selection_digest": task_execution_selection.selection_digest,
+            "legacy_permission_class": fact.permission_class,
+            "output_schema_digest": binding.get("output_schema_digest"),
+            "pre_run_approval_requirements_digest": binding.get(
+                "pre_run_approval_requirements_digest"
+            ),
+            "profile_configuration_digest": binding.get(
+                "profile_configuration_digest"
+            ),
+            "profile_ref": binding.get("profile_ref"),
+            "profile_version_ref": binding.get("profile_version_ref"),
+            "prompt_digest": binding.get("prompt_digest"),
+            "repository_ref": binding.get("repository_ref"),
+            "run_directory_ref": canonical_digest(
+                {"run_directory": fact.raw_run_directory}
+            ),
+            "run_ref": fact.run_ref,
+            "runner_overrides_digest": binding.get(
+                "runner_overrides_digest"
+            ),
+            "task_attempt_binding_digest": task_binding.binding_digest,
+            "task_authorization_intent_digest": binding.get(
+                "authorization_intent_digest"
+            ),
+            "task_definition_digest": binding.get(
+                "task_definition_digest"
+            ),
+            "timeout_seconds": binding.get("timeout_seconds"),
+            "workspace_ref": binding.get("workspace_ref"),
+        }
+    )
+    admission_intent = {
+        "action": {
+            "intended_effect": "admit_profile_backed_mock_task_attempt",
+            "operation": TASK_ADMISSION_OPERATION,
+            "verb": ActionVerb.CREATE.value,
+        },
+        "consequences": request.consequences.to_canonical(),
+        "resource": {
+            "protected": request.resource.protected,
+            "resource_type": TASK_ADMISSION_RESOURCE_TYPE,
+            "sensitivity": request.resource.sensitivity.value,
+            "trust_boundary": "isolated_run_workspace",
+        },
+    }
+    expected = bool(
+        request.request_id == f"{TASK_ADMISSION_ACTION_SCOPE}:{fact.run_ref}"
+        and request.subject.principal_id == "agent:task-attempt"
+        and request.subject.controller_id == "ordomata:local-controller"
+        and request.subject.role is Role.IMPLEMENTER
+        and request.subject.role_version == "1"
+        and request.subject.profile_id == binding.get("profile_ref")
+        and request.subject.runner_id == "mock"
+        and request.subject.session_id == f"attempt:{fact.run_ref}"
+        and request.action.verb is ActionVerb.CREATE
+        and request.action.operation == TASK_ADMISSION_OPERATION
+        and request.action.parameters_digest == expected_parameters_digest
+        and request.action.intended_effect
+        == "admit_profile_backed_mock_task_attempt"
+        and request.action.tool_id is None
+        and not request.action.descriptive_claims
+        and request.resource.resource_type == TASK_ADMISSION_RESOURCE_TYPE
+        and request.resource.identifier == expected_resource_identifier
+        and request.resource.version == binding.get("task_definition_digest")
+        and request.resource.owner == "operator:local"
+        and request.resource.trust_boundary == "isolated_run_workspace"
+        and request.resource.repository_id == binding.get("repository_ref")
+        and request.resource.content_digest == binding.get("context_digest")
+        and request.environment.isolation_state is IsolationState.VERIFIED
+        and request.environment.network_state is NetworkState.DISABLED
+        and request.environment.billing_route is BillingRoute.MOCK
+        and request.environment.capacity_state is CapacityState.NOT_APPLICABLE
+        and request.environment.paid_continuation_protection
+        is PaidContinuationProtection.NOT_APPLICABLE
+        and request.environment.circuit_state is CircuitState.CLOSED
+        and request.environment.flow_state == "admission_proposed"
+        and not request.environment.approval_grants
+        and wrapper.get("admission_authorization_intent_digest")
+        == canonical_digest(admission_intent)
+        and isinstance(selected, Mapping)
+        and selected.get("runner_id") == "mock"
+    )
+    issues: list[str] = []
+    if not expected:
+        issues.append("task_admission_request_binding_mismatch")
+    expected_evidence = {
+        "subject": EvidenceSource.CONTROLLER,
+        "action": EvidenceSource.LOCAL_REGISTRY,
+        "resource": EvidenceSource.LOCAL_REGISTRY,
+        "environment": EvidenceSource.CONTROLLER,
+        "consequences": EvidenceSource.LOCAL_REGISTRY,
+    }
+    evidence_by_attribute = {item.attribute: item for item in request.evidence}
+    evaluated_at = request.environment.evaluated_at
+    if (
+        len(request.evidence) != len(expected_evidence)
+        or len(evidence_by_attribute) != len(request.evidence)
+        or set(evidence_by_attribute) != set(expected_evidence)
+    ):
+        issues.append("task_admission_evidence_invalid")
+    else:
+        for attribute, expected_source in expected_evidence.items():
+            item = evidence_by_attribute[attribute]
+            if (
+                item.evidence_id
+                != f"{TASK_ADMISSION_ACTION_SCOPE}:{attribute}"
+                or item.source is not expected_source
+                or item.source_id != f"ordomata:{expected_source.value}"
+                or item.observed_at != evaluated_at
+                or item.expires_at
+                != evaluated_at + _SHADOW_EVIDENCE_LIFETIME_SECONDS
+                or item.authenticated is not True
+                or item.value_digest
+                != canonical_digest(request.attribute_value(attribute))
+            ):
+                issues.append("task_admission_evidence_invalid")
+                break
+    return tuple(sorted(set(issues)))
+
+
+def _inspect_task_admission_policy_projection(
+    policy: PolicyBundle,
+    *,
+    pre_run_approval_required: bool,
+    pre_run_approver_ref: Any,
+) -> tuple[str, ...]:
+    approval_requirements: tuple[ApprovalRequirement, ...] = ()
+    if pre_run_approval_required and _is_digest(pre_run_approver_ref):
+        approval_requirements = (
+            ApprovalRequirement(
+                requirement_id=(
+                    "task_contract_pre_run_operator_approval"
+                ),
+                verbs=(ActionVerb.CREATE,),
+                resource_types=(TASK_ADMISSION_RESOURCE_TYPE,),
+                allowed_approver_ids=(pre_run_approver_ref,),
+            ),
+        )
+    expected = replace(
+        PolicyBundle.current_stage(
+            issued_at=0.0,
+            approval_requirements=approval_requirements,
+        ),
+        bundle_id=TASK_ADMISSION_POLICY_ID,
+        version=TASK_ADMISSION_POLICY_VERSION,
+        enabled_classes=(PermissionClass.LOCAL_DRAFT,),
+        allowed_verbs=(ActionVerb.CREATE,),
+        allowed_roles=(Role.IMPLEMENTER,),
+        allowed_operations=(TASK_ADMISSION_OPERATION,),
+        allowed_resource_types=(TASK_ADMISSION_RESOURCE_TYPE,),
+        allowed_trust_boundaries=("isolated_run_workspace",),
+        allowed_flow_states=("admission_proposed",),
+        allowed_network_states=(NetworkState.DISABLED,),
+        allowed_billing_routes=(BillingRoute.MOCK,),
+        approval_requirements=approval_requirements,
+    )
+    return (
+        ()
+        if policy.to_canonical() == expected.to_canonical()
+        else ("task_admission_policy_mismatch",)
+    )
+
+
+def _inspect_task_admission_receipt(
+    fact: _RunFacts,
+    task_binding: _TaskAttemptBindingFacts,
+    task_execution_selection: _TaskExecutionSelectionFacts,
+    decision: _TaskAdmissionDecisionFacts,
+    rows: list[sqlite3.Row],
+    terminal_rows: list[sqlite3.Row],
+    *,
+    shadow_rows: list[sqlite3.Row] | None = None,
+) -> _TaskAdmissionReceiptFacts:
+    enforcing = (
+        task_binding.schema_version
+        in _ADMISSION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
+    )
+    if not enforcing:
+        if rows:
+            return _empty_task_admission_receipt(
+                observed=True,
+                issue="task_admission_receipt_unexpected",
+            )
+        return _empty_task_admission_receipt()
+
+    stop_valid = _is_task_admission_pre_effect_stop(
+        fact,
+        task_binding,
+        decision,
+        terminal_rows,
+        shadow_rows=shadow_rows or [],
+        receipt_rows=rows,
+    )
+    receipt_expected = bool(
+        decision.authorization_eligible is True and not stop_valid
+    )
+    effect_after_nonpermit = bool(
+        decision.observed
+        and decision.authorization_eligible is False
+        and (
+            shadow_rows
+            or fact.billing_sequence is not None
+            or fact.running_observed
+            or fact.accounting_sequence is not None
+            or fact.runner_event_count > 0
+            or fact.artifact_observed
+        )
+    )
+    if len(rows) != 1:
+        missing_issue = (
+            "task_admission_effect_after_nonpermit"
+            if effect_after_nonpermit
+            else "task_admission_receipt_missing"
+            if not rows and receipt_expected
+            else "task_admission_receipt_duplicate"
+            if rows
+            else None
+        )
+        return _empty_task_admission_receipt(
+            observed=bool(rows),
+            pre_effect_stop_valid=stop_valid,
+            issue=missing_issue,
+        )
+
+    row = rows[0]
+    sequence = _optional_sequence(row["sequence"])
+    occurred_at = _optional_timestamp(row["occurred_at"])
+    payload = _bounded_json_mapping(row["payload_json"])
+    issues: list[str] = []
+    if sequence is None:
+        issues.append("task_admission_receipt_sequence_invalid")
+    if occurred_at is None:
+        issues.append("task_admission_receipt_timestamp_invalid")
+    expected_keys = {
+        "action_scope",
+        "admission_result_digest",
+        "decision_digest",
+        "enforcement_coverage",
+        "execution_selection_digest",
+        "mode",
+        "profile_ref",
+        "receipt",
+        "receipt_digest",
+        "request_digest",
+        "run_ref",
+        "schema_version",
+        "task_attempt_binding_digest",
+    }
+    if not isinstance(payload, Mapping) or set(payload) != expected_keys:
+        return _empty_task_admission_receipt(
+            observed=True,
+            sequence=sequence,
+            occurred_at=occurred_at,
+            issue="task_admission_receipt_payload_invalid",
+            additional_issues=issues,
+        )
+    if (
+        payload.get("schema_version") != TASK_ADMISSION_EVENT_SCHEMA_VERSION
+        or payload.get("mode") != "enforcing"
+        or payload.get("action_scope") != TASK_ADMISSION_ACTION_SCOPE
+        or payload.get("enforcement_coverage")
+        != TASK_ADMISSION_ENFORCEMENT_COVERAGE
+    ):
+        issues.append("task_admission_receipt_payload_invalid")
+    receipt = payload.get("receipt")
+    if not isinstance(receipt, Mapping) or set(receipt) != {
+        "completed_at",
+        "decision_digest",
+        "enforced_action_digest",
+        "executor_id",
+        "obligation_results",
+        "outcome",
+        "receipt_id",
+        "request_digest",
+        "result_digest",
+        "started_at",
+    }:
+        return _empty_task_admission_receipt(
+            observed=True,
+            sequence=sequence,
+            occurred_at=occurred_at,
+            payload=payload,
+            issue="task_admission_receipt_body_invalid",
+            additional_issues=issues,
+        )
+    binding = task_binding.binding
+    expected_result_digest = canonical_digest(
+        {
+            "admission_state": "admitted",
+            "execution_selection_digest": task_execution_selection.selection_digest,
+            "run_ref": fact.run_ref,
+            "task_attempt_binding_digest": task_binding.binding_digest,
+        }
+    )
+    if (
+        not isinstance(binding, Mapping)
+        or payload.get("run_ref") != fact.run_ref
+        or payload.get("profile_ref") != binding.get("profile_ref")
+        or payload.get("task_attempt_binding_digest")
+        != task_binding.binding_digest
+        or payload.get("execution_selection_digest")
+        != task_execution_selection.selection_digest
+        or payload.get("request_digest") != decision.request_digest
+        or payload.get("decision_digest") != decision.decision_digest
+        or payload.get("admission_result_digest") != expected_result_digest
+        or receipt.get("request_digest") != decision.request_digest
+        or receipt.get("decision_digest") != decision.decision_digest
+        or receipt.get("result_digest") != expected_result_digest
+    ):
+        issues.append("task_admission_receipt_binding_mismatch")
+    if not _digest_matches(payload.get("receipt_digest"), receipt):
+        issues.append("task_admission_receipt_digest_mismatch")
+    expected_receipt_id = canonical_digest(
+        {
+            "decision_digest": decision.decision_digest,
+            "execution_selection_digest": task_execution_selection.selection_digest,
+            "request_digest": decision.request_digest,
+            "task_attempt_binding_digest": task_binding.binding_digest,
+            "receipt_kind": "task_admission_action",
+        }
+    )
+    if (
+        receipt.get("receipt_id") != expected_receipt_id
+        or row["event_id"] != expected_receipt_id
+    ):
+        issues.append("task_admission_receipt_event_identifier_mismatch")
+    if receipt.get("executor_id") != TASK_ADMISSION_EXECUTOR_ID:
+        issues.append("task_admission_receipt_executor_mismatch")
+    expected_action_digest = (
+        canonical_digest(
+            {
+                "action": decision.request.get("action"),
+                "resource": decision.request.get("resource"),
+            }
+        )
+        if isinstance(decision.request, Mapping)
+        else None
+    )
+    if receipt.get("enforced_action_digest") != expected_action_digest:
+        issues.append("task_admission_receipt_action_mismatch")
+    decision_obligations = (
+        decision.decision.get("obligations")
+        if isinstance(decision.decision, Mapping)
+        else None
+    )
+    if not _mock_dispatch_receipt_obligations_match(
+        decision_obligations,
+        receipt.get("obligation_results"),
+    ):
+        issues.append("task_admission_receipt_obligation_mismatch")
+    outcome = _known_string(
+        receipt.get("outcome"),
+        frozenset(item.value for item in ReceiptOutcome),
+    )
+    started_at = _optional_timestamp(receipt.get("started_at"))
+    completed_at = _optional_timestamp(receipt.get("completed_at"))
+    permit_current = bool(
+        decision.effect == AuthorizationEffect.PERMIT.value
+        and decision.authorization_eligible is True
+        and started_at is not None
+        and decision.issued_at is not None
+        and decision.expires_at is not None
+        and decision.issued_at <= started_at < decision.expires_at
+    )
+    if outcome != ReceiptOutcome.SUCCEEDED.value:
+        issues.append("task_admission_receipt_outcome_invalid")
+    if (
+        started_at is None
+        or completed_at is None
+        or completed_at < started_at
+        or occurred_at is None
+        or occurred_at < completed_at
+    ):
+        issues.append("task_admission_receipt_timestamp_invalid")
+    if not permit_current:
+        issues.append("task_admission_receipt_permit_not_current")
+    return _TaskAdmissionReceiptFacts(
+        True,
+        sequence,
+        occurred_at,
+        payload,
+        receipt,
+        outcome,
+        started_at,
+        completed_at,
+        permit_current,
+        False,
+        tuple(sorted(set(issues))),
+    )
+
+
+def _empty_task_admission_receipt(
+    *,
+    observed: bool = False,
+    sequence: int | None = None,
+    occurred_at: float | None = None,
+    payload: Mapping[str, Any] | None = None,
+    pre_effect_stop_valid: bool = False,
+    issue: str | None = None,
+    additional_issues: list[str] | None = None,
+) -> _TaskAdmissionReceiptFacts:
+    issues = list(additional_issues or ())
+    if issue is not None:
+        issues.append(issue)
+    return _TaskAdmissionReceiptFacts(
+        observed,
+        sequence,
+        occurred_at,
+        payload,
+        None,
+        None,
+        None,
+        None,
+        None,
+        pre_effect_stop_valid,
+        tuple(sorted(set(issues))),
+    )
+
+
+def _is_task_admission_pre_effect_stop(
+    fact: _RunFacts,
+    task_binding: _TaskAttemptBindingFacts,
+    decision: _TaskAdmissionDecisionFacts | None,
+    rows: list[sqlite3.Row],
+    *,
+    shadow_rows: list[sqlite3.Row],
+    receipt_rows: list[sqlite3.Row],
+) -> bool:
+    """Recognize only exact fail-closed stops before durable admission."""
+
+    if len(rows) != 1 or receipt_rows:
+        return False
+    row = rows[0]
+    payload = _bounded_json_mapping(row["payload_json"])
+    sequence = _optional_sequence(row["sequence"])
+    if (
+        row["event_type"] != "status"
+        or not isinstance(payload, Mapping)
+        or set(payload) != {"phase"}
+        or sequence is None
+        or sequence != fact.terminal_sequence
+        or task_binding.sequence is None
+        or sequence <= task_binding.sequence
+        or _optional_timestamp(row["occurred_at"]) is None
+        or not _event_identifier_matches_status(row, payload, fact.raw_run_id)
+        or fact.billing_sequence is not None
+        or fact.running_observed
+        or fact.succeeded_observed
+        or fact.accounting_sequence is not None
+        or fact.runner_event_count != 0
+        or fact.artifact_observed
+        or fact.task_artifact_intent_event_count != 0
+        or fact.task_artifact_action_receipt_event_count != 0
+        or shadow_rows
+    ):
+        return False
+    phase = payload.get("phase")
+    status = row["status"]
+    if decision is None or not decision.observed:
+        return bool(
+            phase == "task_admission_authorization_persistence"
+            and status in {
+                RunStatus.FAILED.value,
+                RunStatus.CANCELLED.value,
+            }
+            and fact.latest_status == status
+        )
+    if decision.sequence is None or sequence <= decision.sequence:
+        return False
+    if (
+        phase == "task_admission_authorization_persistence"
+        and status in {RunStatus.FAILED.value, RunStatus.CANCELLED.value}
+    ):
+        return fact.latest_status == status
+    if (
+        phase == "task_admission_authorization"
+        and status == RunStatus.BLOCKED.value
+    ):
+        return bool(
+            fact.latest_status == status
+            and decision.authorization_eligible is False
+        )
+    if (
+        phase == "task_admission_authorization_evaluation"
+        and status == RunStatus.CANCELLED.value
+    ):
+        return bool(
+            fact.latest_status == status
+            and decision.authorization_eligible is False
+            and decision.effect == AuthorizationEffect.INDETERMINATE.value
+        )
+    if (
+        phase == "task_admission_authorization_freshness"
+        and status == RunStatus.BLOCKED.value
+    ):
+        return bool(
+            fact.latest_status == status
+            and decision.authorization_eligible is True
+            and decision.effect == AuthorizationEffect.PERMIT.value
+        )
+    if (
+        phase == "task_admission_action_receipt_persistence"
+        and status in {RunStatus.FAILED.value, RunStatus.CANCELLED.value}
+    ):
+        return bool(
+            fact.latest_status == status
+            and decision.authorization_eligible is True
+            and decision.effect == AuthorizationEffect.PERMIT.value
+        )
+    return False
+
+
+def _project_task_admission_enforcement(
+    task_binding: _TaskAttemptBindingFacts,
+    decision: _TaskAdmissionDecisionFacts,
+    receipt: _TaskAdmissionReceiptFacts,
+) -> TaskAdmissionEnforcementInspection:
+    issues = tuple(sorted(set((*decision.issues, *receipt.issues))))
+    return TaskAdmissionEnforcementInspection(
+        required=(
+            task_binding.schema_version
+            in _ADMISSION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
+        ),
+        decision_observed=decision.observed,
+        decision_sequence=decision.sequence,
+        effect=decision.effect,
+        authorization_eligible=decision.authorization_eligible,
+        decision_current_at_evaluation=(
+            decision.decision_current_at_evaluation
+        ),
+        action_receipt_observed=receipt.observed,
+        action_receipt_sequence=receipt.sequence,
+        action_receipt_outcome=receipt.outcome,
+        permit_current_at_action_start=(
+            receipt.permit_current_at_action_start
+        ),
+        integrity_issues=issues,
+    )
+
+
 def _inspect_mock_dispatch_decision(
     fact: _RunFacts,
     task_binding: _TaskAttemptBindingFacts,
     task_execution_selection: _TaskExecutionSelectionFacts,
     task_billing: _TaskBillingFacts,
+    task_admission_decision: _TaskAdmissionDecisionFacts,
+    task_admission_receipt: _TaskAdmissionReceiptFacts,
     shadow_rows: list[sqlite3.Row],
     rows: list[sqlite3.Row],
 ) -> _MockDispatchDecisionFacts:
     """Validate and independently re-evaluate the enforcing mock decision."""
 
-    required = task_binding.schema_version in {3, 4}
+    required = (
+        task_binding.schema_version
+        in _DISPATCH_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
+        and not (
+            task_binding.schema_version
+            in _ADMISSION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
+            and task_admission_receipt.pre_effect_stop_valid
+        )
+    )
     if not required:
         if rows:
             return _empty_mock_dispatch_decision(
@@ -4925,7 +6268,10 @@ def _inspect_mock_dispatch_receipt(
 ) -> _MockDispatchReceiptFacts:
     """Validate the exact post-invocation receipt and its temporal links."""
 
-    enforcing = task_binding.schema_version in {3, 4}
+    enforcing = (
+        task_binding.schema_version
+        in _DISPATCH_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
+    )
     if not enforcing:
         if rows:
             return _empty_mock_dispatch_receipt(
@@ -5315,7 +6661,10 @@ def _project_mock_dispatch_enforcement(
 ) -> MockDispatchEnforcementInspection:
     issues = tuple(sorted(set((*decision.issues, *receipt.issues))))
     return MockDispatchEnforcementInspection(
-        required=task_binding.schema_version in {3, 4},
+        required=(
+            task_binding.schema_version
+            in _DISPATCH_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
+        ),
         decision_observed=decision.observed,
         decision_sequence=decision.sequence,
         effect=decision.effect,
@@ -5346,7 +6695,10 @@ def _inspect_local_candidate_publication_decision(
 ) -> _LocalCandidatePublicationDecisionFacts:
     """Validate and independently re-evaluate the publication PEP decision."""
 
-    required = task_binding.schema_version == 4
+    required = (
+        task_binding.schema_version
+        in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
+    )
     boundary_observed = _local_candidate_publication_boundary_observed(
         fact,
         shadow_rows,
@@ -6236,7 +7588,10 @@ def _project_local_candidate_publication_enforcement(
         if isinstance(action, Mapping)
         else None
     )
-    enforcing = task_binding.schema_version == 4
+    enforcing = (
+        task_binding.schema_version
+        in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
+    )
     permit_current = (
         bool(
             decision.effect == AuthorizationEffect.PERMIT.value
@@ -7209,7 +8564,10 @@ def _inspect_task_artifact_receipts(
         )
 
     issues: list[str] = []
-    enforcing = task_binding.schema_version == 4
+    enforcing = (
+        task_binding.schema_version
+        in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
+    )
     freshness_stop = _is_local_candidate_publication_freshness_stop(
         fact,
         publication_decision,
@@ -7489,7 +8847,10 @@ def _inspect_task_pre_effect_receipt(
         "started_at",
         "task_attempt_binding_digest",
     }
-    enforcing = task_binding.schema_version == 4
+    enforcing = (
+        task_binding.schema_version
+        in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
+    )
     if enforcing:
         expected_keys.update(
             {
@@ -7643,7 +9004,10 @@ def _inspect_task_action_receipt(
         "started_at",
         "task_attempt_binding_digest",
     }
-    enforcing = task_binding.schema_version == 4
+    enforcing = (
+        task_binding.schema_version
+        in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
+    )
     if enforcing:
         expected_keys.update(
             {
@@ -9132,7 +10496,10 @@ def _inspect_task_boundary_shadow_binding(
         "authorization_intent_digest"
     ]:
         issues.append("task_boundary_intent_binding_mismatch")
-    if task_binding.schema_version in {2, 3, 4}:
+    if (
+        task_binding.schema_version
+        in _SELECTED_TASK_BINDING_SCHEMA_VERSIONS
+    ):
         selection_digest = binding.get("execution_selection_digest")
         if (
             task_execution_selection.issues
@@ -9221,7 +10588,10 @@ def _inspect_task_boundary_shadow_binding(
             != ("closed" if mock_runner else "unknown")
         ):
             issues.append("task_dispatch_billing_binding_mismatch")
-    if task_binding.schema_version in {2, 3, 4}:
+    if (
+        task_binding.schema_version
+        in _SELECTED_TASK_BINDING_SCHEMA_VERSIONS
+    ):
         parameters["execution_selection_digest"] = binding[
             "execution_selection_digest"
         ]
@@ -9298,12 +10668,14 @@ def _inspect_task_publication_shadow_binding(
         issues.append("task_publication_shadow_receipt_mismatch")
     shadow_request_key = (
         "publication_shadow_request_digest"
-        if task_binding.schema_version == 4
+        if task_binding.schema_version
+        in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
         else "publication_request_digest"
     )
     shadow_decision_key = (
         "publication_shadow_decision_digest"
-        if task_binding.schema_version == 4
+        if task_binding.schema_version
+        in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
         else "publication_decision_digest"
     )
     if (
@@ -9351,7 +10723,8 @@ def _inspect_task_publication_shadow_binding(
         }
     )
     if (
-        task_binding.schema_version != 4
+        task_binding.schema_version
+        not in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
         and pre_effect.get("action_digest") != expected_action_digest
     ):
         issues.append("task_publication_action_digest_mismatch")
@@ -9413,7 +10786,8 @@ def _inspect_task_publication_shadow_binding(
     action_receipt = task_artifact_receipts.action
     decision = payload.get("decision")
     if (
-        task_binding.schema_version != 4
+        task_binding.schema_version
+        not in _PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS
         and isinstance(action_receipt, Mapping)
         and isinstance(decision, Mapping)
     ):
@@ -10106,7 +11480,7 @@ def _is_task_attempt_binding_shape(
         "runner_overrides_digest",
         "task_definition_digest",
     }
-    if schema_version in {2, 3, 4}:
+    if schema_version in _SELECTED_TASK_BINDING_SCHEMA_VERSIONS:
         expected_keys.update(
             {
                 "execution_selection_digest",
@@ -10121,7 +11495,7 @@ def _is_task_attempt_binding_shape(
                 "profile_version_ref",
             }
         )
-        if schema_version in {3, 4}:
+        if schema_version in _DISPATCH_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS:
             expected_keys.update(
                 {
                     "pre_run_approval_requirements_digest",
@@ -10546,11 +11920,13 @@ __all__ = [
     "SUPPORTED_SHADOW_SCHEMA_VERSIONS",
     "TASK_ATTEMPT_RUN_KIND",
     "TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE",
+    "TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE",
     "TASK_ATTEMPT_BINDING_EVENT_TYPE",
     "TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE",
     "TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE",
     "TASK_ATTEMPT_SHADOW_COVERAGE",
     "TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE",
     "TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE",
+    "TaskAdmissionEnforcementInspection",
     "inspect_authorization_shadows",
 ]

@@ -20,6 +20,16 @@ from typing import Any
 from uuid import uuid4
 
 from .approval import ApprovalPolicy
+from .admission_authorization import (
+    TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE,
+    TASK_ADMISSION_DECISION_EVENT_TYPE,
+    TaskAdmissionAuthorization,
+    assert_task_admission_authorized,
+    build_task_admission_action_receipt,
+    build_task_admission_failure_payload,
+    evaluate_task_admission_authorization,
+    task_admission_authorization_intent_digest,
+)
 from .artifact_filesystem import (
     ARTIFACT_ABSENT,
     ARTIFACT_MATCHES,
@@ -137,6 +147,31 @@ DEFAULT_EXPECTATIONS = Path("fixtures/chief_of_staff/expectations.json")
 DEFAULT_MOCK_OUTPUT = Path("fixtures/chief_of_staff/valid-output.json")
 DEFAULT_PROFILE_PATH = Path("profiles/default.json")
 DEFAULT_MOCK_PROFILE_ID = "mock.deterministic.local-draft"
+
+_MOCK_RUNNER_INSTANCE_BOUNDARIES = frozenset(
+    {
+        "cancel",
+        "detect_capabilities",
+        "execute",
+        "inspect_billing_route",
+        "runner_id",
+        "validate_environment",
+    }
+)
+
+
+def _is_controller_owned_mock_runner(runner: AgentRunner) -> bool:
+    """Reject subclasses and per-instance boundary method replacement."""
+
+    if type(runner) is not MockRunner:
+        return False
+    try:
+        instance_attributes = vars(runner)
+    except TypeError:
+        return False
+    return not bool(
+        _MOCK_RUNNER_INSTANCE_BOUNDARIES.intersection(instance_attributes)
+    )
 
 
 class _CandidateArtifactPublicationUncertain(ConfigurationError):
@@ -607,13 +642,14 @@ async def run_chief_of_staff(
     if (
         active_runner.runner_id == "mock"
         and selected_execution is not None
-        and type(active_runner) is not MockRunner
+        and not _is_controller_owned_mock_runner(active_runner)
     ):
         raise ValidationError(
             "selected mock execution requires the controller-owned mock runner"
         )
     enforce_mock_dispatch = (
-        type(active_runner) is MockRunner and selected_execution is not None
+        _is_controller_owned_mock_runner(active_runner)
+        and selected_execution is not None
     )
     ordomata_root = _contained_path(root, resolve_state_root(root))
     selected_run_root = _contained_path(
@@ -706,6 +742,7 @@ async def run_chief_of_staff(
             ),
             enforce_mock_dispatch=enforce_mock_dispatch,
             enforce_local_candidate_publication=enforce_mock_dispatch,
+            enforce_task_admission=enforce_mock_dispatch,
         )
         task_binding_digest = task_binding["binding_digest"]
         assert isinstance(task_binding_digest, str)
@@ -729,6 +766,302 @@ async def run_chief_of_staff(
                 phase="task_attempt_binding",
             )
             raise
+        task_admission_authorization: TaskAdmissionAuthorization | None = None
+        if enforce_mock_dispatch:
+            assert selected_execution is not None
+            assert execution_selection_digest is not None
+            assert selected_profile_id is not None
+            controller_owned_mock_runner = _is_controller_owned_mock_runner(
+                active_runner
+            )
+            assert controller_owned_mock_runner
+            admission_run_ref = canonical_digest(
+                {"run_id": selected_run_id}
+            )
+            admission_profile_ref = canonical_digest(
+                {"profile_id": selected_profile_id}
+            )
+            admission_profile_version_ref = (
+                selected_execution.selected_profile_version_ref
+            )
+            admission_profile_configuration_digest = (
+                selected_execution.selected_profile_configuration_digest
+            )
+            admission_pre_run_approval_required = (
+                prepared.contract.approval_requirements.required_before_run
+            )
+            admission_pre_run_approver_ref = canonical_digest(
+                {
+                    "approver": (
+                        prepared.contract.approval_requirements.approver
+                    )
+                }
+            )
+            admission_evaluated_at = time.time()
+            admission_evaluation_error: BaseException | None = None
+            admission_intent_digest = ""
+            try:
+                admission_intent_digest = (
+                    task_admission_authorization_intent_digest(
+                        prepared.contract
+                    )
+                )
+                task_admission_authorization = (
+                    evaluate_task_admission_authorization(
+                        contract=prepared.contract,
+                        request=request,
+                        runner_id=active_runner.runner_id,
+                        profile_id=selected_profile_id,
+                        project_root=root,
+                        controller_owned_mock_runner=(
+                            controller_owned_mock_runner
+                        ),
+                        task_attempt_binding_digest=task_binding_digest,
+                        execution_selection_digest=(
+                            execution_selection_digest
+                        ),
+                        profile_version_ref=admission_profile_version_ref,
+                        profile_configuration_digest=(
+                            admission_profile_configuration_digest
+                        ),
+                        context_digest=(
+                            prepared.context_pack.snapshot_hash
+                        ),
+                        prompt_digest=prompt_digest,
+                        evaluated_at=admission_evaluated_at,
+                        legacy_executable=legacy_executable,
+                    )
+                )
+                admission_payload = (
+                    task_admission_authorization.to_event_payload()
+                )
+            except Exception:
+                task_admission_authorization = None
+                admission_payload = build_task_admission_failure_payload(
+                    run_ref=admission_run_ref,
+                    profile_ref=admission_profile_ref,
+                    task_attempt_binding_digest=task_binding_digest,
+                    execution_selection_digest=execution_selection_digest,
+                    profile_version_ref=admission_profile_version_ref,
+                    profile_configuration_digest=(
+                        admission_profile_configuration_digest
+                    ),
+                    context_digest=prepared.context_pack.snapshot_hash,
+                    prompt_digest=prompt_digest,
+                    task_authorization_intent_digest=(
+                        resolved_task_authorization_intent_digest
+                    ),
+                    admission_authorization_intent_digest=(
+                        admission_intent_digest
+                    ),
+                    requested_permission_class=request.permission_class,
+                    controller_owned_mock_runner=(
+                        controller_owned_mock_runner
+                    ),
+                    legacy_executable=legacy_executable,
+                    pre_run_approval_required=(
+                        admission_pre_run_approval_required
+                    ),
+                    pre_run_approver_ref=admission_pre_run_approver_ref,
+                    evaluated_at=admission_evaluated_at,
+                )
+            except BaseException as cancellation_error:
+                task_admission_authorization = None
+                admission_evaluation_error = cancellation_error
+                admission_payload = build_task_admission_failure_payload(
+                    run_ref=admission_run_ref,
+                    profile_ref=admission_profile_ref,
+                    task_attempt_binding_digest=task_binding_digest,
+                    execution_selection_digest=execution_selection_digest,
+                    profile_version_ref=admission_profile_version_ref,
+                    profile_configuration_digest=(
+                        admission_profile_configuration_digest
+                    ),
+                    context_digest=prepared.context_pack.snapshot_hash,
+                    prompt_digest=prompt_digest,
+                    task_authorization_intent_digest=(
+                        resolved_task_authorization_intent_digest
+                    ),
+                    admission_authorization_intent_digest=(
+                        admission_intent_digest
+                    ),
+                    requested_permission_class=request.permission_class,
+                    controller_owned_mock_runner=(
+                        controller_owned_mock_runner
+                    ),
+                    legacy_executable=legacy_executable,
+                    pre_run_approval_required=(
+                        admission_pre_run_approval_required
+                    ),
+                    pre_run_approver_ref=admission_pre_run_approver_ref,
+                    evaluated_at=admission_evaluated_at,
+                )
+            admission_event_id = _controller_event_id(
+                selected_run_id,
+                TASK_ADMISSION_DECISION_EVENT_TYPE,
+                admission_payload,
+            )
+            try:
+                _append_required_event(
+                    state,
+                    selected_run_id,
+                    TASK_ADMISSION_DECISION_EVENT_TYPE,
+                    admission_payload,
+                    event_id=admission_event_id,
+                )
+                _require_exact_event_readback(
+                    state,
+                    selected_run_id,
+                    TASK_ADMISSION_DECISION_EVENT_TYPE,
+                    admission_payload,
+                    event_id=admission_event_id,
+                )
+            except BaseException as admission_evidence_error:
+                _best_effort_terminal_status(
+                    state,
+                    selected_run_id,
+                    status=(
+                        RunStatus.CANCELLED
+                        if admission_evaluation_error is not None
+                        or not isinstance(
+                            admission_evidence_error,
+                            Exception,
+                        )
+                        else RunStatus.FAILED
+                    ),
+                    phase="task_admission_authorization_persistence",
+                )
+                if admission_evaluation_error is not None:
+                    raise admission_evaluation_error from (
+                        admission_evidence_error
+                    )
+                raise
+            if admission_evaluation_error is not None:
+                _best_effort_terminal_status(
+                    state,
+                    selected_run_id,
+                    status=RunStatus.CANCELLED,
+                    phase="task_admission_authorization_evaluation",
+                )
+                raise admission_evaluation_error
+            if (
+                task_admission_authorization is None
+                or not task_admission_authorization.authorized_at_evaluation
+            ):
+                _append_terminal_event(
+                    state,
+                    selected_run_id,
+                    {"phase": "task_admission_authorization"},
+                    status=RunStatus.BLOCKED,
+                )
+                raise AuthorizationBlocked(
+                    "task admission requires a fresh exact Class 1 authorization permit"
+                )
+
+            admission_action_started_at = time.time()
+            try:
+                assert_task_admission_authorized(
+                    task_admission_authorization,
+                    action_started_at=admission_action_started_at,
+                    persisted_payload=admission_payload,
+                    contract=prepared.contract,
+                    request=request,
+                    runner_id=active_runner.runner_id,
+                    profile_id=selected_profile_id,
+                    project_root=root,
+                    controller_owned_mock_runner=(
+                        controller_owned_mock_runner
+                    ),
+                    task_attempt_binding_digest=task_binding_digest,
+                    execution_selection_digest=execution_selection_digest,
+                    profile_version_ref=admission_profile_version_ref,
+                    profile_configuration_digest=(
+                        admission_profile_configuration_digest
+                    ),
+                    context_digest=prepared.context_pack.snapshot_hash,
+                    prompt_digest=prompt_digest,
+                    legacy_executable=legacy_executable,
+                )
+                admission_receipt_payload = (
+                    build_task_admission_action_receipt(
+                        authorization=task_admission_authorization,
+                        action_started_at=admission_action_started_at,
+                        completed_at=time.time(),
+                    )
+                )
+            except AuthorizationBlocked:
+                _append_terminal_event(
+                    state,
+                    selected_run_id,
+                    {
+                        "phase": (
+                            "task_admission_authorization_freshness"
+                        )
+                    },
+                    status=RunStatus.BLOCKED,
+                )
+                raise
+            except BaseException as admission_receipt_build_error:
+                _best_effort_terminal_status(
+                    state,
+                    selected_run_id,
+                    status=(
+                        RunStatus.CANCELLED
+                        if not isinstance(
+                            admission_receipt_build_error,
+                            Exception,
+                        )
+                        else RunStatus.FAILED
+                    ),
+                    phase="task_admission_action_receipt_persistence",
+                )
+                raise
+            admission_receipt = admission_receipt_payload.get("receipt")
+            admission_receipt_id = (
+                admission_receipt.get("receipt_id")
+                if isinstance(admission_receipt, Mapping)
+                else None
+            )
+            if not isinstance(admission_receipt_id, str):
+                _best_effort_terminal_status(
+                    state,
+                    selected_run_id,
+                    status=RunStatus.FAILED,
+                    phase="task_admission_action_receipt_persistence",
+                )
+                raise ValidationError(
+                    "task admission action receipt identifier is missing"
+                )
+            try:
+                _append_required_event(
+                    state,
+                    selected_run_id,
+                    TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE,
+                    admission_receipt_payload,
+                    event_id=admission_receipt_id,
+                )
+                _require_exact_event_readback(
+                    state,
+                    selected_run_id,
+                    TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE,
+                    admission_receipt_payload,
+                    event_id=admission_receipt_id,
+                )
+            except BaseException as admission_receipt_error:
+                _best_effort_terminal_status(
+                    state,
+                    selected_run_id,
+                    status=(
+                        RunStatus.CANCELLED
+                        if not isinstance(
+                            admission_receipt_error,
+                            Exception,
+                        )
+                        else RunStatus.FAILED
+                    ),
+                    phase="task_admission_action_receipt_persistence",
+                )
+                raise
         _best_effort_shadow_observation(
             state,
             selected_run_id,
@@ -3187,6 +3520,33 @@ def _event_persistence_state(
     ):
         return True
     return None
+
+
+def _require_exact_event_readback(
+    state: SQLiteStateStore,
+    run_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+    *,
+    event_id: str,
+    status: RunStatus | None = None,
+) -> None:
+    """Require one exact durable event before crossing an enforcement seam."""
+
+    if (
+        _event_persistence_state(
+            state,
+            run_id,
+            event_type,
+            payload,
+            event_id=event_id,
+            status=status,
+        )
+        is not True
+    ):
+        raise ConfigurationError(
+            "required controller evidence could not be read back exactly"
+        )
 
 
 def _append_artifact_with_readback(

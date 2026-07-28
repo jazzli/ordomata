@@ -9,6 +9,10 @@ import time
 import unittest
 from unittest.mock import patch
 
+from ordomata.admission_authorization import (
+    TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE,
+    TASK_ADMISSION_DECISION_EVENT_TYPE,
+)
 from ordomata.authorization import canonical_digest
 from ordomata.billing import LIVE_RUN_EVIDENCE_MARGIN_SECONDS
 from ordomata.cli import _run_profile
@@ -49,9 +53,13 @@ from ordomata.routing import (
     runner_overrides_for_profile,
 )
 from ordomata.runners.mock import MockRunner
-from ordomata.shadow_authorization import task_authorization_intent_digest
+from ordomata.shadow_authorization import (
+    ADMISSION_ACTION_SCOPE,
+    task_authorization_intent_digest,
+)
 from ordomata.state import SQLiteStateStore
 from ordomata.task_evidence import (
+    TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE,
     TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
     TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
     TASK_EXECUTION_SELECTION_EVENT_TYPE,
@@ -365,6 +373,24 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
             billing = next(
                 event for event in events if event.event_type == "billing_assessment"
             )
+            admission_decision = next(
+                event
+                for event in events
+                if event.event_type == TASK_ADMISSION_DECISION_EVENT_TYPE
+            )
+            admission_receipt = next(
+                event
+                for event in events
+                if event.event_type
+                == TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE
+            )
+            admission_shadow = next(
+                event
+                for event in events
+                if event.event_type == "authorization_shadow_decision"
+                and event.payload.get("action_scope")
+                == ADMISSION_ACTION_SCOPE
+            )
             running = next(
                 event
                 for event in events
@@ -372,9 +398,24 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
                 and event.payload.get("phase") == "runner_execution"
             )
             self.assertLess(selection_event.sequence, binding.sequence)
-            self.assertLess(selection_event.sequence, billing.sequence)
-            self.assertLess(selection_event.sequence, running.sequence)
-            self.assertEqual(binding.payload["schema_version"], 4)
+            self.assertLess(binding.sequence, admission_decision.sequence)
+            self.assertLess(
+                admission_decision.sequence,
+                admission_receipt.sequence,
+            )
+            self.assertLess(
+                admission_receipt.sequence,
+                admission_shadow.sequence,
+            )
+            self.assertLess(admission_shadow.sequence, billing.sequence)
+            self.assertLess(billing.sequence, running.sequence)
+            self.assertEqual(binding.payload["schema_version"], 5)
+            self.assertEqual(
+                binding.payload[
+                    "admission_authorization_enforcement_coverage"
+                ],
+                TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE,
+            )
             self.assertEqual(
                 binding.payload["authorization_enforcement_coverage"],
                 TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
@@ -521,7 +562,40 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
                 for event in events
                 if event.event_type == "task_attempt_authorization_binding"
             )
-            self.assertEqual(binding.payload["schema_version"], 4)
+            admission_decision = next(
+                event
+                for event in events
+                if event.event_type == TASK_ADMISSION_DECISION_EVENT_TYPE
+            )
+            admission_receipt = next(
+                event
+                for event in events
+                if event.event_type
+                == TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE
+            )
+            admission_shadow = next(
+                event
+                for event in events
+                if event.event_type == "authorization_shadow_decision"
+                and event.payload.get("action_scope")
+                == ADMISSION_ACTION_SCOPE
+            )
+            billing = next(
+                event for event in events if event.event_type == "billing_assessment"
+            )
+            running = next(
+                event
+                for event in events
+                if event.event_type == "status"
+                and event.payload.get("phase") == "runner_execution"
+            )
+            self.assertEqual(binding.payload["schema_version"], 5)
+            self.assertEqual(
+                binding.payload[
+                    "admission_authorization_enforcement_coverage"
+                ],
+                TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE,
+            )
             self.assertEqual(
                 binding.payload["authorization_enforcement_coverage"],
                 TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
@@ -536,6 +610,18 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
                 binding.payload["binding"]["execution_selection_digest"],
                 selection_event.payload["selection_digest"],
             )
+            self.assertLess(selection_event.sequence, binding.sequence)
+            self.assertLess(binding.sequence, admission_decision.sequence)
+            self.assertLess(
+                admission_decision.sequence,
+                admission_receipt.sequence,
+            )
+            self.assertLess(
+                admission_receipt.sequence,
+                admission_shadow.sequence,
+            )
+            self.assertLess(admission_shadow.sequence, billing.sequence)
+            self.assertLess(billing.sequence, running.sequence)
 
     def test_selection_event_digests_model_settings_and_private_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

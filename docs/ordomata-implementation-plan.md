@@ -1,6 +1,6 @@
 # Ordomata Implementation Plan
 
-Status: proposed expansion; baseline and Billing Hard-Stop v2 implemented; profile-backed built-in-mock dispatch and local-candidate publication PEPs implemented; Phase 2 durable supervisor control-plane tracer partially implemented with dispatch disabled; broader enforcement planned
+Status: proposed expansion; baseline and Billing Hard-Stop v2 implemented; profile-backed exact built-in-mock Class 1 admission, dispatch, and local-candidate publication PEPs implemented; Phase 2 durable supervisor control-plane tracer partially implemented with dispatch disabled; broader enforcement planned
 
 Date: 2026-07-28
 
@@ -77,18 +77,28 @@ current-stage evaluator, adversarial fixtures, typed Chief-of-Staff task-effect
 intent, three append-only boundary observations with legacy-result and
 authority-ceiling parity, and a strictly read-only parity/coverage/order
 inspector. New ordinary Chief-of-Staff attempts add a digest-only binding,
-schema-v2 accounting, and a schema-v5 publication shadow. New schema-v4 exact-
-mock attempts add a separate enforcing publication decision and schema-v3
-pre-effect/action receipts with exact local effect reconciliation; historical
-paths retain schema-v2 non-enforcing receipts. Controlled
+schema-v2 accounting, and a schema-v5 publication shadow. New schema-v5 exact-
+mock attempts add Class 1 admission enforcement while retaining schema-v4's
+dispatch and publication chains, including the separate enforcing publication
+decision and schema-v3 pre-effect/action receipts with exact local effect
+reconciliation; schema-v1-v3 paths retain schema-v2 non-enforcing publication
+receipts. Controlled
 comparisons add a schema-v2 trial binding, schema-v3
 Class 0 admission/dispatch shadows, and a separate schema-v4 non-enforcing
 Class 1 private-publication shadow with schema-v2 pre-effect/action receipts.
 
-The first two runtime ABAC enforcement points now gate only profile-backed
-ordinary attempts through the exact controller-owned in-memory mock
-implementation and the resulting owner-private candidate write. A schema-v4
-binding declares both chains; the controller persists a fixed-policy dispatch
+The first three runtime ABAC enforcement points now gate only new
+profile-backed ordinary Class 1 attempts through the exact controller-owned
+in-memory mock implementation and the resulting owner-private candidate write.
+A schema-v5 binding declares admission, dispatch, and publication; frozen
+schema-v4 declares dispatch plus publication. The run record and private
+directories before admission are inert controller scaffolding. Admission
+inherits the full task consequence vector, persists a fixed-policy decision,
+rebuilds current inputs, compares the exact persisted wrapper, independently
+replays policy, checks freshness, and requires a durable succeeded receipt
+before the admission shadow or billing. Class 0, unsafe/high-impact,
+non-permit, stale, evaluation, or evidence failures stop pre-billing. The
+controller then persists a fixed-policy dispatch
 decision before `RUNNING`, rechecks freshness, exact obligations, the derived
 Class 0/1 ceiling, and the independent legacy gate immediately before
 invocation, and requires a linked action receipt once invocation begins. An
@@ -100,11 +110,17 @@ General runtime ABAC enforcement is still **planned**. `PermissionClass`
 remains authoritative across contracts, approval, routing, runner validation,
 persistence, evaluation, and comparison, alongside the distributed billing,
 identity, environment, profile, isolation, capacity, and circuit gates.
-Admission, shared publication or promotion, comparison, supervisor workers, live harnesses,
-approval resumption, and mediated commands/tools remain non-enforcing or
-disabled. Comparison publication receipts and historical ordinary receipts are
-migration evidence only; schema-v4 ordinary publication is the narrow
+General/live/comparison/supervisor admission, shared publication or promotion,
+comparison execution, supervisor workers, live harnesses, approval resumption,
+and mediated commands/tools remain non-enforcing or disabled. Comparison
+publication receipts and historical ordinary receipts are migration evidence
+only; schema-v4/v5 ordinary publication is the narrow
 authoritative exception and cannot grant any broader effect.
+
+The next narrow authorization slice should harden the existing dispatch final
+PEP with current-input rebuilding, exact persisted-wrapper equality, and
+independent fixed-policy replay before extending enforcement to broader
+boundaries.
 
 The target semantics for Class 3 standing envelopes, irreversible actions,
 the non-delegable root-authority kernel, consequential outbox execution,
@@ -123,7 +139,7 @@ This remains the proposed long-form expansion of [the current roadmap](roadmap.m
 | Phase 0 - foundation implemented | Baseline entering expanded Phase 0 |
 | Phase 1A - Billing Hard-Stop v2 implemented | Expanded Phase 1 core billing controls |
 | Phase 1B - controlled subscription comparison next | Operator-gated experiment after current Billing Hard-Stop v2 evidence; its evidence informs routing without auto-promotion |
-| Phase 1C - runtime authorization rebaseline partially implemented | Typed Chief-of-Staff task intent, three-boundary shadow parity/inspection, exact built-in-mock dispatch and local-candidate publication PEPs, then broader path coverage and enforcement prerequisites in Phases 2-3 |
+| Phase 1C - runtime authorization rebaseline partially implemented | Typed Chief-of-Staff task intent, three-boundary shadow parity/inspection, exact built-in-mock Class 1 admission, dispatch, and local-candidate publication PEPs, then broader path coverage and enforcement prerequisites in Phases 2-3 |
 | Phase 2 - repository-maintenance tracer bullets, control-plane prerequisite partially implemented | Expanded Phase 2 dispatch-disabled tracer plus Phases 3-4 repository work |
 | Phase 3 - bounded local loop | Remaining expanded Phase 2 worker loop and Phase 7 |
 | Phase 4 - evidence-driven adaptation | Expanded Phases 5-7 |
@@ -338,9 +354,9 @@ evidence payloads remain separate operational state.
 ### Acceptance criteria
 
 - Existing unprofiled/historical mock behavior remains compatible; the covered
-  profile-backed built-in-mock boundaries invoke the runner and mutate the
-  local candidate only from their respective fresh exact permits and otherwise
-  fail closed.
+  profile-backed built-in-mock Class 1 path admits the attempt, invokes the
+  runner, and mutates the local candidate only from its respective fresh exact
+  permits and receipts and otherwise fails closed.
 - Every new feature has an explicit disabled default.
 - Threat cases map to a deterministic prevention, detection, or fail-closed response.
 - The implemented shadow evaluator has focused parity and adversarial cases for
@@ -348,10 +364,12 @@ evidence payloads remain separate operational state.
   attributes, independently reports a derived class above persisted authority,
   and does not change a
   current allow or deny outcome. Chief-of-Staff admission, dispatch intent, and
-  local-candidate publication are observed and inspectable; new schema-v4 mock
-  attempts also carry an independent enforcing publication decision and
-  pre-effect/action receipts whose upstream, artifact, and billing links are
-  independently checked. Older histories retain non-enforcing receipts. New controlled
+  local-candidate publication shadows remain observed and inspectable; new
+  schema-v5 mock attempts also carry an independent enforcing admission
+  decision/receipt plus the schema-v4 dispatch and publication chains. Their
+  admission order, current-input replay, persisted wrapper, upstream,
+  artifact, and billing links are independently checked. Older histories
+  retain their frozen semantics. New controlled
   comparison trials have a schema-v2 digest-bound Class 0 binding, Class 0
   admission/dispatch shadows, and a separately bounded non-enforcing Class 1
   private-artifact publication shadow with pre-effect/action receipts. Legacy
@@ -438,14 +456,14 @@ deliberately
 does not call the claim API or any
 runner. Authoritative coverage at the exact worker dispatch/tool boundaries
 and verified repository containment remain prerequisites for dispatch; the
-narrow ordinary mock PEP supplies neither. No live
+narrow ordinary mock PEPs supply neither. No live
 model, worker subprocess, network action, repository worker, Class 2/3 effect,
 or OS schedule is enabled, and the Phase 2 acceptance criteria are not yet
 satisfied.
 
 ### Deliverables
 
-- Extend the initial enforcing PDP beyond the profile-backed built-in-mock PEP
+- Extend the initial enforcing PDP beyond the three profile-backed built-in-mock PEPs
   only after boundary-specific shadow parity. Keep the legacy Class 0/1 gate as
   defense in depth, and persist each exact request, decision, obligations,
   policy/evidence digests, and enforcement outcome append-only.
