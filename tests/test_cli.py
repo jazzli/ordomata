@@ -124,11 +124,26 @@ class CLITests(unittest.TestCase):
             self.assertEqual(status, 0, errors)
             report = json.loads(output)
             self.assertTrue(report["clean"])
-            self.assertEqual(report["inspected_event_count"], 3)
+            self.assertEqual(report["inspected_event_count"], 5)
             self.assertEqual(report["coverage_gap_count"], 0)
             self.assertEqual(report["parity_mismatch_count"], 0)
             self.assertEqual(report["authority_ceiling_mismatch_count"], 0)
-            self.assertEqual(report["runs"][0]["missing_scopes"], [])
+            inspected_run = report["runs"][0]
+            self.assertEqual(inspected_run["missing_scopes"], [])
+            self.assertEqual(
+                inspected_run["authorization_enforcement_coverage"],
+                "task_attempt_mock_dispatch_decision_action_receipt",
+            )
+            self.assertTrue(
+                inspected_run["mock_dispatch_enforcement"][
+                    "authorization_eligible"
+                ]
+            )
+            self.assertTrue(
+                inspected_run["mock_dispatch_enforcement"][
+                    "action_receipt_observed"
+                ]
+            )
 
     def test_auth_inspect_returns_one_for_recomputed_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

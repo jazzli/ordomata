@@ -1,12 +1,14 @@
 # Runtime authorization model
 
-Status: target architecture adopted; Chief-of-Staff three-boundary shadow and local-candidate receipt slice implemented; enforcement planned
+Status: target architecture adopted; first profile-backed built-in-mock dispatch PEP implemented; broader enforcement planned
 
-Date: 2026-07-26
+Date: 2026-07-28
 
 This document defines the target authorization model for the local,
 single-operator orchestrator. It does not widen current authority. The runtime
-still enforces its existing Class 0/1 checks, and Classes 2 and 3 remain
+still enforces its existing Class 0/1 checks. A separate first ABAC
+enforcement point now gates only profile-backed ordinary attempts that use the
+exact controller-owned in-memory mock implementation. Classes 2 and 3 remain
 disabled.
 
 ## Normative project decision
@@ -108,6 +110,20 @@ These are real authority and validation points, not display-only fields. They
 must remain in place until a backward-compatible migration and parity tests
 prove the new PDP cannot widen behavior.
 
+New profile-backed ordinary attempts using the exact built-in `MockRunner`
+also pass a narrow controller-owned PEP at the `runner.execute` boundary. A
+schema-v3 attempt binding declares that coverage. After required selection and
+billing evidence, the controller builds an exact mock-only execute request,
+evaluates a fixed versioned policy, persists and reconciles the decision, and
+requires a fresh `permit`, a derived class no greater than the persisted run
+class or Class 1, exact supported obligations, and the independent legacy gate
+before invoking the runner. The action start is checked immediately before the
+call; a linked terminal action receipt is required once invocation begins.
+Non-permits and uncertain decision persistence invoke no runner. Unprofiled
+schema-v1 and live or historical schema-v2 selected bindings remain valid
+shadow-only evidence, and comparison/supervisor paths do not inherit this
+authority.
+
 The first task contract now distinguishes the owner-private local candidate
 action from future active/shared promotion. Independently, the publication
 boundary always uses a controller-owned `artifact.publish_local_candidate`
@@ -146,9 +162,10 @@ Classes 0/1.
 The canonical request contract is JSON with a stable digest and these typed
 groups. Phase 1C implements these groups as immutable standard-library value
 types. The Chief-of-Staff contract supplies typed task-effect intent for
-admission and dispatch, while the controller supplies the exact local-create
-intent at publication. Its run path constructs a fresh request at all three
-boundaries:
+non-enforcing admission and dispatch observations, while the controller
+supplies the exact local-create intent at publication. For the narrow
+profile-backed built-in-mock path, the controller additionally constructs a
+separate exact execute request immediately before the runner boundary.
 
 Controlled comparison trials use a distinct controller projection for the
 Class 0 effect of reading and evaluating one immutable comparison snapshot. A
@@ -185,11 +202,12 @@ effective value from an authoritative source.
 ## Canonical decision and action receipt
 
 The canonical decision is immutable before enforcement and contains the fields
-below. Phase 1C implements the value type and non-authoritative Chief-of-Staff
-shadow events. Newly bound Chief-of-Staff attempts and controlled comparisons
-also persist non-enforcing pre-effect and observed-action receipts around their
-separately bounded private artifact mutations. These records do not issue an
-executable permit or a durable enforcement receipt:
+below. Phase 1C implements the value type, non-authoritative Chief-of-Staff
+shadow events, and the first narrow enforcing decision for profile-backed
+built-in-mock dispatch. That enforcing record is distinct from admission,
+dispatch-intent, and publication shadows. Chief-of-Staff candidate publication
+and controlled-comparison publication still use non-enforcing pre-effect and
+observed-action receipts; those records do not issue an executable permit:
 
 - decision, request, and policy identifiers and digests;
 - an effect, fixed reason codes, and matched rule identifiers;
@@ -408,11 +426,15 @@ violation, not an instruction to follow.
    publication shadow with pre-effect/action-receipt evidence. Historical v1
    trials remain valid partial evidence. Other current decision paths remain
    planned.
-3. **Planned — initial enforcement.** Put one deterministic PDP behind the
-   current approval gate and add PEPs at admission, dispatch, and local artifact
-   publication. Persist append-only authorization decisions, approval receipts,
-   and action receipts. Retain legacy Class 0/1 checks as defense in depth
-   through the migration.
+3. **Partly implemented — initial enforcement.** The first deterministic PEP
+   gates only profile-backed ordinary dispatch through the exact built-in mock
+   runner. It persists a fixed-policy decision before `RUNNING`, rechecks
+   freshness and the Class 0/1 ceiling immediately before invocation, and
+   requires a linked action receipt after invocation starts. Admission, local
+   artifact publication, comparison, supervisor worker dispatch, live harness,
+   approvals/resumption, and mediated commands/tools remain non-enforcing or
+   disabled. Retain legacy Class 0/1 checks as defense in depth through the
+   migration.
 4. **Partly implemented; continuous mediation planned — typed contracts.** The
    first task effect is typed independently of `PermissionClass`, and the
    supervisor has focused flow and controller-bookkeeping shadow attributes.

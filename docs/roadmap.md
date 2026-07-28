@@ -53,14 +53,21 @@ Controlled comparisons add a schema-v2 trial
 binding, schema-v3 Class 0 admission/dispatch shadows, and a separate schema-v4
 Class 1 private-publication shadow with schema-v2 pre-effect/action receipts.
 Profile-backed ordinary attempts also append a required, content-addressed
-execution-selection event before their schema-v2 task binding. It fixes the
+execution-selection event before their task binding. New exact built-in-mock
+attempts use schema v3; live and historical selected attempts use schema v2.
+It fixes the
 policy clock, task features, candidate set, fixed rejection codes, metric
 sources/scores/rank, and selected profile/version/configuration/overrides refs;
 the inspector independently recomputes those semantics and their binding and
 dispatch order. Raw model/settings/account/diagnostic values remain private.
-Runtime ABAC
-enforcement is not implemented. This phase remains a prerequisite for adding a
-worker-dispatch path or repository worker with new mediated capabilities. A
+The first authoritative PEP now gates only profile-backed ordinary attempts
+through the exact controller-owned in-memory mock implementation. It persists
+a fixed-policy decision before `RUNNING`, rechecks freshness, exact
+obligations, and the independent Class 0/1 ceiling immediately before
+invocation, and requires a linked action receipt once invocation begins.
+General runtime ABAC enforcement is not implemented. This phase remains a
+prerequisite for adding a worker-dispatch path or repository worker with new
+mediated capabilities. A
 dispatch-disabled durable supervisor control-plane tracer may be developed in
 parallel because it cannot exercise worker authority.
 
@@ -68,13 +75,15 @@ parallel because it cannot exercise worker authority.
   resources, mediated commands/tools, and controller bookkeeping actions.
 - Extend the implemented deterministic shadow evaluator from its focused Class
   0/1/adversarial fixtures to parity with every current allow and deny path.
-- Promote the implemented decision/action-receipt value types into durable
-  enforcement records only after semantics and parity stabilize.
+- Extend the first durable enforcing decision/action-receipt chain beyond the
+  narrow profile-backed built-in-mock boundary only after semantics and parity
+  stabilize.
 - Preserve the implemented distinct `permit`, `defer`, `deny`, and
   `indeterminate` effects; add durable waiting/resumption so satisfying a
   digest-bound defer condition always creates a fresh decision.
 - Convert the existing Chief-of-Staff admission, dispatch-intent, and local-
   candidate shadow observations into enforcement points only after parity;
+  the separate exact built-in-mock execute boundary is already enforced;
   the comparison trial's separate Class 1 review-artifact boundary is complete
   as non-enforcing audit evidence, while each mediated command or tool
   invocation remains to be added. Comparison admission, dispatch, publication,
@@ -97,10 +106,11 @@ parallel because it cannot exercise worker authority.
   for irreversible effects, and a permanently non-delegable root-authority
   kernel.
 
-Exit evidence: current behavior is unchanged; missing, stale, contradictory,
-or unknown required attributes fail closed; decision receipts are replayable
-for audit; no Class 2/3 or external action becomes eligible; and legacy checks
-remain as defense in depth until enforcement-point coverage is demonstrated.
+Exit evidence: the covered mock boundary executes only from a fresh exact
+permit and otherwise fails closed without invoking the runner; decision and
+action receipts are replayable for audit; no Class 2/3, live, worker, or
+external action becomes eligible; and legacy checks remain as defense in depth
+until enforcement-point coverage is demonstrated.
 
 ## Phase 2 — repository-maintenance tracer bullets (partially implemented)
 
@@ -112,8 +122,10 @@ status/audit, digest-bound reconciliation, operator control commands, and a
 foreground `ordomata supervise` loop. Flow admission, the otherwise
 library-only attempt-claim boundary, operator control transitions, and sticky
 cancellation now append typed, non-enforcing ABAC shadow observations with
-an explicit legacy-parity comparison. Worker dispatch is deliberately disabled until runtime ABAC
-enforcement exists. The read-only supervisor audit independently recomputes
+an explicit legacy-parity comparison. Worker dispatch is deliberately disabled
+until the exact worker boundary has authoritative ABAC coverage and verified
+repository containment; the narrow ordinary mock PEP does not supply either.
+The read-only supervisor audit independently recomputes
 those observations and checks coverage, order, exact schema guards, and
 migration provenance without altering reconciliation plan digests. Ordinary
 state opens now validate the exact baseline and run history plus a frozen,
@@ -146,8 +158,8 @@ project instructions and versioned source-of-truth/freshness rules.
 ## Phase 3 — bounded local loop
 
 - Extend the implemented dispatch-disabled foreground tracer into an
-  authorized worker loop only after runtime ABAC enforcement and Phase 2
-  repository containment exist.
+  authorized worker loop only after its exact dispatch/tool boundaries have
+  authoritative ABAC enforcement and Phase 2 repository containment exists.
 - Adaptive concurrency below hard global, runner, repository, flow, and
   resource caps; quiet hours, AC-power/load/disk guards, wall and idle
   timeouts, cooldowns, and crash recovery.

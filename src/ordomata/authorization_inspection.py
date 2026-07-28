@@ -1,4 +1,4 @@
-"""Read-only inspection of non-authoritative authorization shadow evidence.
+"""Read-only inspection of authorization shadow and enforcement evidence.
 
 The inspector intentionally does not use :class:`SQLiteStateStore`: opening a
 state store initialises schema and WAL state, while this module must never
@@ -27,17 +27,40 @@ from typing import Any, Iterator
 from .authorization import (
     ActionAttributes,
     ActionVerb,
+    ApprovalRequirement,
+    AttributeEvidence,
     AuthorizationEffect,
+    AuthorizationRequest,
     BlastRadius,
+    CircuitState,
     ConsequenceVector,
+    EnvironmentAttributes,
+    EvidenceRequirement,
     EvidenceSource,
     ImpactLevel,
+    IsolationState,
+    NetworkState,
     ObligationKind,
+    PolicyBundle,
     Reach,
     ReceiptOutcome,
     ResourceAttributes,
+    Role,
+    ShadowAuthorizationEvaluator,
+    SubjectAttributes,
     canonical_digest,
     derive_permission_class_from_attributes,
+)
+from .dispatch_authorization import (
+    MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE,
+    MOCK_DISPATCH_ACTION_SCOPE,
+    MOCK_DISPATCH_DECISION_EVENT_TYPE,
+    MOCK_DISPATCH_EVENT_SCHEMA_VERSION,
+    MOCK_DISPATCH_EXECUTOR_ID,
+    MOCK_DISPATCH_OPERATION,
+    MOCK_DISPATCH_POLICY_ID,
+    MOCK_DISPATCH_POLICY_VERSION,
+    MOCK_DISPATCH_RESOURCE_TYPE,
 )
 from .errors import ConfigurationError, ValidationError
 from .execution_selection import (
@@ -105,6 +128,9 @@ TASK_ATTEMPT_SHADOW_COVERAGE = (
 TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE = (
     "task_attempt_candidate_artifact_pre_effect_action_receipt"
 )
+TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE = (
+    "task_attempt_mock_dispatch_decision_action_receipt"
+)
 ADMISSION_SCOPE = "task_attempt_admission_only"
 DISPATCH_SCOPE = "runner_model_dispatch_only"
 PUBLICATION_SCOPE = "local_candidate_publication_only"
@@ -150,6 +176,7 @@ _MAX_COMPARISON_ACCOUNTING_EVENTS_PER_RUN = 2
 _MAX_COMPARISON_ARTIFACT_EVENTS_PER_TYPE_PER_RUN = 2
 _MAX_TASK_BINDING_EVENTS_PER_RUN = 2
 _MAX_TASK_EXECUTION_SELECTION_EVENTS_PER_RUN = 2
+_MAX_MOCK_DISPATCH_EVENTS_PER_TYPE_PER_RUN = 2
 _MAX_TASK_ARTIFACT_EVENTS_PER_TYPE_PER_RUN = 2
 _MAX_TASK_ARTIFACT_METADATA_PER_RUN = 32
 _MAX_RUNNER_EVENTS_PER_RUN = 4096
@@ -350,6 +377,47 @@ class ShadowDecisionInspection:
 
 
 @dataclass(frozen=True, slots=True)
+class MockDispatchEnforcementInspection:
+    """Sanitized findings for the first authoritative mock dispatch PEP."""
+
+    required: bool
+    decision_observed: bool
+    decision_sequence: int | None
+    effect: str | None
+    authorization_eligible: bool | None
+    decision_current_at_evaluation: bool | None
+    action_receipt_observed: bool
+    action_receipt_sequence: int | None
+    action_receipt_outcome: str | None
+    permit_current_at_action_start: bool | None
+    integrity_issues: tuple[str, ...]
+
+    @property
+    def attention_required(self) -> bool:
+        return bool(self.integrity_issues)
+
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            "required": self.required,
+            "decision_observed": self.decision_observed,
+            "decision_sequence": self.decision_sequence,
+            "effect": self.effect,
+            "authorization_eligible": self.authorization_eligible,
+            "decision_current_at_evaluation": (
+                self.decision_current_at_evaluation
+            ),
+            "action_receipt_observed": self.action_receipt_observed,
+            "action_receipt_sequence": self.action_receipt_sequence,
+            "action_receipt_outcome": self.action_receipt_outcome,
+            "permit_current_at_action_start": (
+                self.permit_current_at_action_start
+            ),
+            "integrity_issues": list(self.integrity_issues),
+            "attention_required": self.attention_required,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class RunAuthorizationInspection:
     """Coverage and shadow-decision findings for one immutable run."""
 
@@ -358,6 +426,7 @@ class RunAuthorizationInspection:
     run_kind: str
     authorization_shadow_coverage: str
     authorization_action_receipt_coverage: str | None
+    authorization_enforcement_coverage: str | None
     permission_class: int | None
     attempt: int | None
     latest_status: str | None
@@ -365,6 +434,7 @@ class RunAuthorizationInspection:
     observed_scopes: tuple[str, ...]
     missing_scopes: tuple[str, ...]
     events: tuple[ShadowDecisionInspection, ...]
+    mock_dispatch_enforcement: MockDispatchEnforcementInspection
     integrity_issues: tuple[str, ...]
 
     @property
@@ -373,6 +443,7 @@ class RunAuthorizationInspection:
             bool(self.missing_scopes)
             or bool(self.integrity_issues)
             or any(event.attention_required for event in self.events)
+            or self.mock_dispatch_enforcement.attention_required
         )
 
     def to_mapping(self) -> dict[str, Any]:
@@ -386,6 +457,9 @@ class RunAuthorizationInspection:
             "authorization_action_receipt_coverage": (
                 self.authorization_action_receipt_coverage
             ),
+            "authorization_enforcement_coverage": (
+                self.authorization_enforcement_coverage
+            ),
             "permission_class": self.permission_class,
             "attempt": self.attempt,
             "latest_status": self.latest_status,
@@ -393,6 +467,9 @@ class RunAuthorizationInspection:
             "observed_scopes": list(self.observed_scopes),
             "missing_scopes": list(self.missing_scopes),
             "events": [event.to_mapping() for event in self.events],
+            "mock_dispatch_enforcement": (
+                self.mock_dispatch_enforcement.to_mapping()
+            ),
             "integrity_issues": list(self.integrity_issues),
             "attention_required": self.attention_required,
         }
@@ -546,6 +623,7 @@ class _TaskAttemptBindingFacts:
     authorization_action_receipt_coverage: str = (
         TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE
     )
+    authorization_enforcement_coverage: str | None = None
     schema_version: int | None = None
 
 
@@ -558,6 +636,44 @@ class _TaskExecutionSelectionFacts:
     selection: Mapping[str, Any] | None
     selection_digest: str | None
     selected: Mapping[str, Any] | None
+    issues: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _MockDispatchDecisionFacts:
+    """Validated enforcing decision retained only inside the inspector."""
+
+    observed: bool
+    sequence: int | None
+    occurred_at: float | None
+    payload: Mapping[str, Any] | None
+    request: Mapping[str, Any] | None
+    policy: Mapping[str, Any] | None
+    decision: Mapping[str, Any] | None
+    request_digest: str | None
+    policy_digest: str | None
+    decision_digest: str | None
+    effect: str | None
+    authorization_eligible: bool | None
+    decision_current_at_evaluation: bool | None
+    issued_at: float | None
+    expires_at: float | None
+    issues: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _MockDispatchReceiptFacts:
+    """Validated enforcing action receipt retained only internally."""
+
+    observed: bool
+    sequence: int | None
+    occurred_at: float | None
+    payload: Mapping[str, Any] | None
+    receipt: Mapping[str, Any] | None
+    outcome: str | None
+    started_at: float | None
+    completed_at: float | None
+    permit_current_at_action_start: bool | None
     issues: tuple[str, ...]
 
 
@@ -709,6 +825,22 @@ def inspect_authorization_shadows(
                             facts,
                         )
                     )
+                    mock_dispatch_decision_rows = (
+                        _read_mock_dispatch_events(
+                            connection,
+                            facts,
+                            event_type=MOCK_DISPATCH_DECISION_EVENT_TYPE,
+                        )
+                    )
+                    mock_dispatch_receipt_rows = (
+                        _read_mock_dispatch_events(
+                            connection,
+                            facts,
+                            event_type=(
+                                MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE
+                            ),
+                        )
+                    )
                     task_artifact_rows = _read_task_artifact_receipt_events(
                         connection,
                         facts,
@@ -734,6 +866,8 @@ def inspect_authorization_shadows(
                     comparison_artifact_rows = ()
                     task_binding_rows = ()
                     task_execution_selection_rows = ()
+                    mock_dispatch_decision_rows = ()
+                    mock_dispatch_receipt_rows = ()
                     task_artifact_rows = ()
                     task_artifact_metadata_rows = ()
                     runner_event_rows = ()
@@ -829,6 +963,28 @@ def inspect_authorization_shadows(
                 row
             )
 
+    mock_dispatch_decision_rows_by_run: dict[
+        str, list[sqlite3.Row]
+    ] = {fact.raw_run_id: [] for fact in facts}
+    for row in mock_dispatch_decision_rows:
+        raw_event_run_id = row["run_id"]
+        if (
+            isinstance(raw_event_run_id, str)
+            and raw_event_run_id in mock_dispatch_decision_rows_by_run
+        ):
+            mock_dispatch_decision_rows_by_run[raw_event_run_id].append(row)
+
+    mock_dispatch_receipt_rows_by_run: dict[
+        str, list[sqlite3.Row]
+    ] = {fact.raw_run_id: [] for fact in facts}
+    for row in mock_dispatch_receipt_rows:
+        raw_event_run_id = row["run_id"]
+        if (
+            isinstance(raw_event_run_id, str)
+            and raw_event_run_id in mock_dispatch_receipt_rows_by_run
+        ):
+            mock_dispatch_receipt_rows_by_run[raw_event_run_id].append(row)
+
     task_artifact_rows_by_run: dict[str, list[sqlite3.Row]] = {
         fact.raw_run_id: [] for fact in facts
     }
@@ -906,6 +1062,14 @@ def inspect_authorization_shadows(
             task_binding,
             billing_rows_by_run[fact.raw_run_id],
         )
+        mock_dispatch_decision = _inspect_mock_dispatch_decision(
+            fact,
+            task_binding,
+            task_execution_selection,
+            task_billing,
+            event_rows_for_run,
+            mock_dispatch_decision_rows_by_run[fact.raw_run_id],
+        )
         if valid_comparison_binding:
             comparison_billing = _inspect_comparison_billing(
                 fact,
@@ -940,6 +1104,20 @@ def inspect_authorization_shadows(
                 or fact.task_artifact_intent_event_count > 0
                 or fact.task_artifact_action_receipt_event_count > 0
             ),
+        )
+        mock_dispatch_receipt = _inspect_mock_dispatch_receipt(
+            fact,
+            task_binding,
+            task_execution_selection,
+            mock_dispatch_decision,
+            task_accounting,
+            mock_dispatch_receipt_rows_by_run[fact.raw_run_id],
+            terminal_event_rows_by_run[fact.raw_run_id],
+        )
+        mock_dispatch_enforcement = _project_mock_dispatch_enforcement(
+            task_binding,
+            mock_dispatch_decision,
+            mock_dispatch_receipt,
         )
         task_artifact_receipts = _inspect_task_artifact_receipts(
             fact,
@@ -1016,6 +1194,8 @@ def inspect_authorization_shadows(
             *task_binding.issues,
             *task_execution_selection.issues,
             *task_billing.issues,
+            *mock_dispatch_decision.issues,
+            *mock_dispatch_receipt.issues,
             *comparison_binding.issues,
             *comparison_billing.issues,
             *comparison_accounting.issues,
@@ -1106,6 +1286,29 @@ def inspect_authorization_shadows(
             if event.action_scope is not None
         }
         admission_sequence = sequences_by_scope.get(ADMISSION_SCOPE)
+        if mock_dispatch_decision.sequence is not None:
+            if (
+                admission_sequence is None
+                or mock_dispatch_decision.sequence <= admission_sequence
+                or (
+                    fact.billing_sequence is not None
+                    and mock_dispatch_decision.sequence
+                    <= fact.billing_sequence
+                )
+                or (
+                    fact.running_sequence is not None
+                    and mock_dispatch_decision.sequence
+                    >= fact.running_sequence
+                )
+                or (
+                    fact.terminal_sequence is not None
+                    and mock_dispatch_decision.sequence
+                    >= fact.terminal_sequence
+                )
+            ):
+                run_issues.append(
+                    "mock_dispatch_decision_order_invalid"
+                )
         if (
             task_execution_selection.observed
             and task_execution_selection.sequence is not None
@@ -1214,6 +1417,18 @@ def inspect_authorization_shadows(
         ):
             run_issues.append("task_billing_order_invalid")
         dispatch_sequence = sequences_by_scope.get(DISPATCH_SCOPE)
+        if (
+            mock_dispatch_decision.sequence is not None
+            and dispatch_sequence is not None
+            and mock_dispatch_decision.sequence >= dispatch_sequence
+        ):
+            run_issues.append("mock_dispatch_decision_order_invalid")
+        if (
+            mock_dispatch_receipt.sequence is not None
+            and dispatch_sequence is not None
+            and mock_dispatch_receipt.sequence <= dispatch_sequence
+        ):
+            run_issues.append("mock_dispatch_receipt_order_invalid")
         if dispatch_sequence is not None:
             if (
                 fact.running_sequence is None
@@ -1376,6 +1591,11 @@ def inspect_authorization_shadows(
                     if valid_task_binding
                     else None
                 ),
+                authorization_enforcement_coverage=(
+                    task_binding.authorization_enforcement_coverage
+                    if valid_task_binding
+                    else None
+                ),
                 permission_class=fact.permission_class,
                 attempt=fact.attempt,
                 latest_status=fact.latest_status,
@@ -1383,11 +1603,16 @@ def inspect_authorization_shadows(
                 observed_scopes=observed,
                 missing_scopes=missing,
                 events=events,
+                mock_dispatch_enforcement=mock_dispatch_enforcement,
                 integrity_issues=tuple(sorted(set(run_issues))),
             )
         )
 
-    inspected_event_count = sum(len(run.events) for run in all_runs)
+    inspected_event_count = (
+        len(event_rows)
+        + len(mock_dispatch_decision_rows)
+        + len(mock_dispatch_receipt_rows)
+    )
     parity_mismatch_count = sum(
         event.recomputed_execution_parity is False
         for run in all_runs
@@ -1941,6 +2166,52 @@ def _read_shadow_events(
     return tuple(rows)
 
 
+def _read_mock_dispatch_events(
+    connection: sqlite3.Connection,
+    facts: tuple[_RunFacts, ...],
+    *,
+    event_type: str,
+) -> tuple[sqlite3.Row, ...]:
+    """Read at most two enforcing events per type so duplicates are visible."""
+
+    if not facts:
+        return ()
+    if event_type not in {
+        MOCK_DISPATCH_DECISION_EVENT_TYPE,
+        MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE,
+    }:
+        raise ValueError("unsupported mock dispatch event type")
+    placeholders = ",".join("?" for _ in facts)
+    parameters: tuple[Any, ...] = (
+        event_type,
+        *(fact.raw_run_id for fact in facts),
+        _MAX_MOCK_DISPATCH_EVENTS_PER_TYPE_PER_RUN,
+    )
+    rows = connection.execute(
+        f"""
+        WITH ranked_mock_dispatch_events AS (
+            SELECT
+                event_id,
+                run_id,
+                sequence,
+                occurred_at,
+                payload_json,
+                ROW_NUMBER() OVER (
+                    PARTITION BY run_id ORDER BY sequence
+                ) AS event_rank
+            FROM run_events
+            WHERE event_type = ? AND run_id IN ({placeholders})
+        )
+        SELECT event_id, run_id, sequence, occurred_at, payload_json
+        FROM ranked_mock_dispatch_events
+        WHERE event_rank <= ?
+        ORDER BY run_id, sequence
+        """,
+        parameters,
+    ).fetchall()
+    return tuple(rows)
+
+
 def _read_comparison_binding_events(
     connection: sqlite3.Connection,
     facts: tuple[_RunFacts, ...],
@@ -2439,30 +2710,40 @@ def _inspect_task_attempt_binding(
     row = rows[0]
     sequence = _optional_sequence(row["sequence"])
     payload = _bounded_json_mapping(row["payload_json"])
-    if payload is None or set(payload) != {
+    schema_version = payload.get("schema_version") if payload is not None else None
+    expected_outer_keys = {
         "authorization_action_receipt_coverage",
         "authorization_shadow_coverage",
         "binding",
         "binding_digest",
         "schema_version",
-    }:
+    }
+    if schema_version == 3:
+        expected_outer_keys.add("authorization_enforcement_coverage")
+    if payload is None or set(payload) != expected_outer_keys:
         return _invalid_task_binding(
             sequence,
             "task_binding_payload_invalid",
+            schema_version=(schema_version if schema_version == 3 else None),
         )
-    schema_version = payload.get("schema_version")
     if (
         isinstance(schema_version, bool)
         or not isinstance(schema_version, int)
-        or schema_version not in {1, 2}
+        or schema_version not in {1, 2, 3}
         or payload.get("authorization_shadow_coverage")
         != TASK_ATTEMPT_SHADOW_COVERAGE
         or payload.get("authorization_action_receipt_coverage")
         != TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE
+        or (
+            schema_version == 3
+            and payload.get("authorization_enforcement_coverage")
+            != TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE
+        )
     ):
         return _invalid_task_binding(
             sequence,
             "task_binding_payload_invalid",
+            schema_version=(schema_version if schema_version == 3 else None),
         )
     binding = payload.get("binding")
     if not _is_task_attempt_binding_shape(
@@ -2472,6 +2753,7 @@ def _inspect_task_attempt_binding(
         return _invalid_task_binding(
             sequence,
             "task_binding_payload_invalid",
+            schema_version=(schema_version if schema_version == 3 else None),
         )
     assert isinstance(binding, Mapping)
     binding_digest = payload.get("binding_digest")
@@ -2482,6 +2764,12 @@ def _inspect_task_attempt_binding(
             None,
             None,
             ("task_binding_digest_mismatch",),
+            authorization_enforcement_coverage=(
+                TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE
+                if schema_version == 3
+                else None
+            ),
+            schema_version=schema_version,
         )
 
     issues: list[str] = []
@@ -2507,6 +2795,11 @@ def _inspect_task_attempt_binding(
         binding,
         binding_digest,
         tuple(issues),
+        authorization_enforcement_coverage=(
+            TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE
+            if schema_version == 3
+            else None
+        ),
         schema_version=schema_version,
     )
 
@@ -2514,8 +2807,22 @@ def _inspect_task_attempt_binding(
 def _invalid_task_binding(
     sequence: int | None,
     issue: str,
+    *,
+    schema_version: int | None = None,
 ) -> _TaskAttemptBindingFacts:
-    return _TaskAttemptBindingFacts(True, sequence, None, None, (issue,))
+    return _TaskAttemptBindingFacts(
+        True,
+        sequence,
+        None,
+        None,
+        (issue,),
+        authorization_enforcement_coverage=(
+            TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE
+            if schema_version == 3
+            else None
+        ),
+        schema_version=schema_version,
+    )
 
 
 def _inspect_task_execution_selection(
@@ -2525,7 +2832,7 @@ def _inspect_task_execution_selection(
 ) -> _TaskExecutionSelectionFacts:
     """Validate one bounded, controller-authored profile-selection record."""
 
-    required = task_binding.schema_version == 2
+    required = task_binding.schema_version in {2, 3}
     if fact.task_execution_selection_event_count == 0:
         return _TaskExecutionSelectionFacts(
             False,
@@ -2603,7 +2910,7 @@ def _inspect_task_execution_selection(
         issues.append("execution_selection_payload_invalid")
         selected = None
     binding = task_binding.binding
-    if task_binding.schema_version != 2:
+    if task_binding.schema_version not in {2, 3}:
         issues.append("execution_selection_unbound")
     elif not isinstance(binding, Mapping) or task_binding.issues:
         issues.append("execution_selection_binding_mismatch")
@@ -2959,7 +3266,7 @@ def _recompute_execution_selection_rejection_codes(
             and task["context_bytes"] > max_context_bytes
         ):
             codes.append("context_exceeds_profile_limit")
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, OverflowError, TypeError, ValueError):
         return None
     return tuple(codes)
 
@@ -3405,6 +3712,1346 @@ def _task_billing_policy_consistent(payload: Mapping[str, Any]) -> bool:
     return bool(
         protection
         == PaidContinuationProtection.PROVIDER_ENFORCED_DISABLED.value
+    )
+
+
+def _inspect_mock_dispatch_decision(
+    fact: _RunFacts,
+    task_binding: _TaskAttemptBindingFacts,
+    task_execution_selection: _TaskExecutionSelectionFacts,
+    task_billing: _TaskBillingFacts,
+    shadow_rows: list[sqlite3.Row],
+    rows: list[sqlite3.Row],
+) -> _MockDispatchDecisionFacts:
+    """Validate and independently re-evaluate the enforcing mock decision."""
+
+    required = task_binding.schema_version == 3
+    if not required:
+        if rows:
+            return _empty_mock_dispatch_decision(
+                observed=True,
+                issue="mock_dispatch_decision_unexpected",
+            )
+        return _empty_mock_dispatch_decision()
+    if len(rows) != 1:
+        return _empty_mock_dispatch_decision(
+            observed=bool(rows),
+            issue=(
+                "mock_dispatch_decision_missing"
+                if not rows
+                else "mock_dispatch_decision_duplicate"
+            ),
+        )
+
+    row = rows[0]
+    sequence = _optional_sequence(row["sequence"])
+    occurred_at = _optional_timestamp(row["occurred_at"])
+    payload = _bounded_json_mapping(row["payload_json"])
+    issues: list[str] = []
+    if sequence is None:
+        issues.append("mock_dispatch_decision_sequence_invalid")
+    if occurred_at is None:
+        issues.append("mock_dispatch_decision_timestamp_invalid")
+    if not isinstance(payload, Mapping):
+        return _empty_mock_dispatch_decision(
+            observed=True,
+            sequence=sequence,
+            occurred_at=occurred_at,
+            issue="mock_dispatch_decision_payload_invalid",
+            additional_issues=issues,
+        )
+
+    failure = payload.get("failure_stage") is not None
+    expected_keys = {
+        "action_scope",
+        "authorization_eligible",
+        "authority_ceiling_satisfied",
+        "billing_assessment_digest",
+        "block_reason_codes",
+        "decision",
+        "decision_current_at_evaluation",
+        "decision_digest",
+        "derived_permission_class",
+        "effect",
+        "enforcement_coverage",
+        "evaluated_at",
+        "execution_selection_digest",
+        "legacy_executable",
+        "mode",
+        "obligations_supported",
+        "policy",
+        "policy_digest",
+        "request",
+        "request_digest",
+        "requested_permission_class",
+        "schema_version",
+        "task_attempt_binding_digest",
+        "task_authorization_intent_digest",
+    }
+    if failure:
+        expected_keys.add("failure_stage")
+    if set(payload) != expected_keys:
+        issues.append("mock_dispatch_decision_payload_invalid")
+    if (
+        payload.get("schema_version") != MOCK_DISPATCH_EVENT_SCHEMA_VERSION
+        or payload.get("mode") != "enforcing"
+        or payload.get("action_scope") != MOCK_DISPATCH_ACTION_SCOPE
+        or payload.get("enforcement_coverage")
+        != TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE
+    ):
+        issues.append("mock_dispatch_decision_payload_invalid")
+    if not _event_identifier_matches(
+        row,
+        event_type=MOCK_DISPATCH_DECISION_EVENT_TYPE,
+        payload=payload,
+        run_id=fact.raw_run_id,
+    ):
+        issues.append("mock_dispatch_decision_event_identifier_mismatch")
+
+    binding = task_binding.binding
+    expected_permission_class = fact.permission_class
+    if (
+        not isinstance(binding, Mapping)
+        or task_binding.binding_digest is None
+        or payload.get("task_attempt_binding_digest")
+        != task_binding.binding_digest
+        or payload.get("execution_selection_digest")
+        != task_execution_selection.selection_digest
+        or payload.get("billing_assessment_digest")
+        != task_billing.assessment_digest
+        or payload.get("task_authorization_intent_digest")
+        != binding.get("authorization_intent_digest")
+        or payload.get("requested_permission_class")
+        != expected_permission_class
+        or payload.get("legacy_executable")
+        != (
+            expected_permission_class
+            in {
+                int(PermissionClass.READ_ONLY),
+                int(PermissionClass.LOCAL_DRAFT),
+            }
+        )
+    ):
+        issues.append("mock_dispatch_decision_binding_mismatch")
+
+    evaluated_at = _optional_timestamp(payload.get("evaluated_at"))
+    if evaluated_at is None:
+        issues.append("mock_dispatch_decision_timestamp_invalid")
+    elif occurred_at is not None and occurred_at < evaluated_at:
+        issues.append("mock_dispatch_decision_timestamp_invalid")
+
+    effect = _known_string(payload.get("effect"), _KNOWN_EFFECTS)
+    eligible = _optional_boolean(payload.get("authorization_eligible"))
+    current = _optional_boolean(
+        payload.get("decision_current_at_evaluation")
+    )
+    if effect is None or eligible is None or current is None:
+        issues.append("mock_dispatch_decision_projection_invalid")
+
+    if failure:
+        if not _is_exact_mock_dispatch_failure(payload):
+            issues.append("mock_dispatch_decision_failure_invalid")
+        return _MockDispatchDecisionFacts(
+            True,
+            sequence,
+            occurred_at,
+            payload,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            effect,
+            eligible,
+            current,
+            None,
+            None,
+            tuple(sorted(set(issues))),
+        )
+
+    request_mapping = payload.get("request")
+    policy_mapping = payload.get("policy")
+    decision_mapping = payload.get("decision")
+    request_digest = payload.get("request_digest")
+    policy_digest = payload.get("policy_digest")
+    decision_digest = payload.get("decision_digest")
+    if not _digest_matches(request_digest, request_mapping):
+        issues.append("mock_dispatch_request_digest_mismatch")
+        request_digest = None
+    if not _digest_matches(policy_digest, policy_mapping):
+        issues.append("mock_dispatch_policy_digest_mismatch")
+        policy_digest = None
+    if not _digest_matches(decision_digest, decision_mapping):
+        issues.append("mock_dispatch_decision_digest_mismatch")
+        decision_digest = None
+
+    request = _mock_dispatch_request_from_mapping(request_mapping)
+    policy = _mock_dispatch_policy_from_mapping(policy_mapping)
+    if request is None:
+        issues.append("mock_dispatch_request_invalid")
+    if policy is None:
+        issues.append("mock_dispatch_policy_invalid")
+    if not _is_decision_shape(decision_mapping):
+        issues.append("mock_dispatch_authorization_decision_invalid")
+
+    if request is not None:
+        task_intent = _mock_dispatch_task_intent_from_shadow(
+            task_binding,
+            shadow_rows,
+        )
+        issues.extend(
+            _inspect_mock_dispatch_request_projection(
+                fact,
+                task_binding,
+                task_execution_selection,
+                task_billing,
+                request,
+                task_intent,
+            )
+        )
+    if policy is not None:
+        issues.extend(
+            _inspect_mock_dispatch_policy_projection(
+                fact,
+                task_binding,
+                policy,
+            )
+        )
+
+    expected_decision: Mapping[str, Any] | None = None
+    if request is not None and policy is not None:
+        try:
+            expected_decision = ShadowAuthorizationEvaluator().evaluate(
+                request,
+                policy,
+            ).to_canonical()
+        except (TypeError, ValueError, ValidationError):
+            issues.append("mock_dispatch_authorization_reevaluation_failed")
+    if (
+        expected_decision is not None
+        and decision_mapping != expected_decision
+    ):
+        issues.append("mock_dispatch_authorization_reevaluation_mismatch")
+
+    issued_at = (
+        _optional_timestamp(decision_mapping.get("issued_at"))
+        if isinstance(decision_mapping, Mapping)
+        else None
+    )
+    expires_at = (
+        _optional_timestamp(decision_mapping.get("expires_at"))
+        if isinstance(decision_mapping, Mapping)
+        else None
+    )
+    recomputed_current = bool(
+        evaluated_at is not None
+        and issued_at is not None
+        and expires_at is not None
+        and issued_at <= evaluated_at < expires_at
+    )
+    derived = (
+        _permission_class(decision_mapping.get("derived_permission_class"))
+        if isinstance(decision_mapping, Mapping)
+        else None
+    )
+    recomputed_ceiling = bool(
+        derived is not None
+        and expected_permission_class is not None
+        and derived <= expected_permission_class
+        and derived <= int(PermissionClass.LOCAL_DRAFT)
+    )
+    obligations = (
+        decision_mapping.get("obligations")
+        if isinstance(decision_mapping, Mapping)
+        else None
+    )
+    supported_obligations = _mock_dispatch_obligations_supported(
+        effect,
+        obligations,
+    )
+    policy_matches = bool(
+        isinstance(decision_mapping, Mapping)
+        and request is not None
+        and policy is not None
+        and decision_mapping.get("request_id") == request.request_id
+        and decision_mapping.get("request_digest") == request.digest
+        and decision_mapping.get("policy_bundle_id") == policy.bundle_id
+        and decision_mapping.get("policy_version") == policy.version
+        and decision_mapping.get("policy_digest") == policy.digest
+        and issued_at == evaluated_at
+    )
+    legacy_executable = payload.get("legacy_executable") is True
+    recomputed_blocks: list[str] = []
+    if not legacy_executable:
+        recomputed_blocks.append("legacy_gate_not_executable")
+    if not policy_matches:
+        recomputed_blocks.append("authorization_policy_mismatch")
+    if effect != AuthorizationEffect.PERMIT.value:
+        recomputed_blocks.append("authorization_effect_not_permit")
+    if not recomputed_current:
+        recomputed_blocks.append("authorization_decision_not_current")
+    if not recomputed_ceiling:
+        recomputed_blocks.append("authorization_class_ceiling_exceeded")
+    if not supported_obligations:
+        recomputed_blocks.append("authorization_obligation_unsupported")
+    recomputed_eligible = not recomputed_blocks
+    if (
+        payload.get("effect")
+        != (
+            decision_mapping.get("effect")
+            if isinstance(decision_mapping, Mapping)
+            else None
+        )
+        or payload.get("derived_permission_class") != derived
+        or payload.get("decision_current_at_evaluation")
+        is not recomputed_current
+        or payload.get("authority_ceiling_satisfied")
+        is not recomputed_ceiling
+        or payload.get("obligations_supported")
+        is not supported_obligations
+        or payload.get("authorization_eligible")
+        is not recomputed_eligible
+        or payload.get("block_reason_codes") != recomputed_blocks
+        or payload.get("evaluated_at") != issued_at
+    ):
+        issues.append("mock_dispatch_decision_projection_mismatch")
+
+    return _MockDispatchDecisionFacts(
+        True,
+        sequence,
+        occurred_at,
+        payload,
+        request_mapping if isinstance(request_mapping, Mapping) else None,
+        policy_mapping if isinstance(policy_mapping, Mapping) else None,
+        decision_mapping if isinstance(decision_mapping, Mapping) else None,
+        request_digest if isinstance(request_digest, str) else None,
+        policy_digest if isinstance(policy_digest, str) else None,
+        decision_digest if isinstance(decision_digest, str) else None,
+        effect,
+        eligible,
+        current,
+        issued_at,
+        expires_at,
+        tuple(sorted(set(issues))),
+    )
+
+
+def _empty_mock_dispatch_decision(
+    *,
+    observed: bool = False,
+    sequence: int | None = None,
+    occurred_at: float | None = None,
+    issue: str | None = None,
+    additional_issues: list[str] | None = None,
+) -> _MockDispatchDecisionFacts:
+    issues = list(additional_issues or ())
+    if issue is not None:
+        issues.append(issue)
+    return _MockDispatchDecisionFacts(
+        observed,
+        sequence,
+        occurred_at,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        tuple(sorted(set(issues))),
+    )
+
+
+def _is_exact_mock_dispatch_failure(payload: Mapping[str, Any]) -> bool:
+    return bool(
+        payload.get("failure_stage") == "request_or_evaluation"
+        and payload.get("request") is None
+        and payload.get("request_digest") is None
+        and payload.get("policy") is None
+        and payload.get("policy_digest") is None
+        and payload.get("decision") is None
+        and payload.get("decision_digest") is None
+        and payload.get("effect") == AuthorizationEffect.INDETERMINATE.value
+        and payload.get("derived_permission_class") is None
+        and payload.get("decision_current_at_evaluation") is False
+        and payload.get("authority_ceiling_satisfied") is False
+        and payload.get("obligations_supported") is False
+        and payload.get("authorization_eligible") is False
+        and payload.get("block_reason_codes")
+        == ["authorization_evaluation_failed"]
+    )
+
+
+def _mock_dispatch_request_from_mapping(
+    value: Any,
+) -> AuthorizationRequest | None:
+    """Reconstruct a typed request without exposing its descriptive fields."""
+
+    if not _is_request_shape(value):
+        return None
+    assert isinstance(value, Mapping)
+    subject = value["subject"]
+    action = value["action"]
+    resource = value["resource"]
+    environment = value["environment"]
+    consequences = value["consequences"]
+    evidence = value["evidence"]
+    assert isinstance(subject, Mapping)
+    assert isinstance(action, Mapping)
+    assert isinstance(resource, Mapping)
+    assert isinstance(environment, Mapping)
+    assert isinstance(consequences, Mapping)
+    if (
+        action.get("descriptive_claims") != []
+        or environment.get("approval_grants") != []
+        or not isinstance(evidence, list)
+        or len(evidence) > _MAX_EVIDENCE_RECORDS
+    ):
+        return None
+    try:
+        evidence_values: list[AttributeEvidence] = []
+        for item in evidence:
+            if not isinstance(item, Mapping) or set(item) != {
+                "attribute",
+                "authenticated",
+                "evidence_id",
+                "expires_at",
+                "observed_at",
+                "source",
+                "source_id",
+                "value_digest",
+            }:
+                return None
+            observed_at = _optional_timestamp(item.get("observed_at"))
+            expires_at = _optional_timestamp(item.get("expires_at"))
+            if observed_at is None or expires_at is None:
+                return None
+            evidence_values.append(
+                AttributeEvidence(
+                    evidence_id=item["evidence_id"],
+                    attribute=item["attribute"],
+                    value_digest=item["value_digest"],
+                    source=EvidenceSource(item["source"]),
+                    source_id=item["source_id"],
+                    observed_at=observed_at,
+                    expires_at=expires_at,
+                    authenticated=item["authenticated"],
+                )
+            )
+        evaluated_at = _optional_timestamp(environment.get("evaluated_at"))
+        if evaluated_at is None:
+            return None
+        request = AuthorizationRequest(
+            request_id=value["request_id"],
+            subject=SubjectAttributes(
+                principal_id=subject["principal_id"],
+                controller_id=subject["controller_id"],
+                role=Role(subject["role"]),
+                role_version=subject["role_version"],
+                profile_id=subject["profile_id"],
+                runner_id=subject["runner_id"],
+                session_id=subject["session_id"],
+            ),
+            action=ActionAttributes(
+                verb=ActionVerb(action["verb"]),
+                operation=action["operation"],
+                parameters_digest=action["parameters_digest"],
+                intended_effect=action["intended_effect"],
+                tool_id=action["tool_id"],
+                descriptive_claims=(),
+            ),
+            resource=ResourceAttributes(
+                resource_type=resource["resource_type"],
+                identifier=resource["identifier"],
+                version=resource["version"],
+                owner=resource["owner"],
+                trust_boundary=resource["trust_boundary"],
+                protected=resource["protected"],
+                sensitivity=ImpactLevel(resource["sensitivity"]),
+                repository_id=resource["repository_id"],
+                content_digest=resource["content_digest"],
+            ),
+            environment=EnvironmentAttributes(
+                evaluated_at=evaluated_at,
+                isolation_state=IsolationState(
+                    environment["isolation_state"]
+                ),
+                network_state=NetworkState(environment["network_state"]),
+                billing_route=BillingRoute(environment["billing_route"]),
+                capacity_state=CapacityState(environment["capacity_state"]),
+                paid_continuation_protection=PaidContinuationProtection(
+                    environment["paid_continuation_protection"]
+                ),
+                circuit_state=CircuitState(environment["circuit_state"]),
+                flow_state=environment["flow_state"],
+                approval_grants=(),
+            ),
+            consequences=ConsequenceVector(
+                confidentiality=ImpactLevel(consequences["confidentiality"]),
+                integrity=ImpactLevel(consequences["integrity"]),
+                availability=ImpactLevel(consequences["availability"]),
+                reach=Reach(consequences["reach"]),
+                destructive=consequences["destructive"],
+                reversible=consequences["reversible"],
+                sensitivity=ImpactLevel(consequences["sensitivity"]),
+                blast_radius=BlastRadius(consequences["blast_radius"]),
+            ),
+            evidence=tuple(evidence_values),
+        )
+    except (KeyError, OverflowError, TypeError, ValueError):
+        return None
+    return request if request.to_canonical() == value else None
+
+
+def _mock_dispatch_policy_from_mapping(value: Any) -> PolicyBundle | None:
+    """Reconstruct the strict policy bundle used at the dispatch boundary."""
+
+    if not isinstance(value, Mapping) or set(value) != {
+        "allowed_billing_routes",
+        "allowed_flow_states",
+        "allowed_network_states",
+        "allowed_operations",
+        "allowed_resource_types",
+        "allowed_roles",
+        "allowed_trust_boundaries",
+        "allowed_verbs",
+        "approval_requirements",
+        "bundle_id",
+        "decision_ttl_seconds",
+        "enabled_classes",
+        "evidence_requirements",
+        "issued_at",
+        "schema_version",
+        "version",
+    }:
+        return None
+    list_keys = {
+        "allowed_billing_routes",
+        "allowed_flow_states",
+        "allowed_network_states",
+        "allowed_operations",
+        "allowed_resource_types",
+        "allowed_roles",
+        "allowed_trust_boundaries",
+        "allowed_verbs",
+        "approval_requirements",
+        "enabled_classes",
+        "evidence_requirements",
+    }
+    if any(not isinstance(value.get(key), list) for key in list_keys):
+        return None
+    try:
+        evidence_requirements: list[EvidenceRequirement] = []
+        for item in value["evidence_requirements"]:
+            if not isinstance(item, Mapping) or set(item) != {
+                "attribute",
+                "max_age_seconds",
+                "trusted_sources",
+            } or not isinstance(item.get("trusted_sources"), list):
+                return None
+            evidence_requirements.append(
+                EvidenceRequirement(
+                    attribute=item["attribute"],
+                    trusted_sources=tuple(
+                        EvidenceSource(source)
+                        for source in item["trusted_sources"]
+                    ),
+                    max_age_seconds=float(item["max_age_seconds"]),
+                )
+            )
+        approval_requirements: list[ApprovalRequirement] = []
+        for item in value["approval_requirements"]:
+            if not isinstance(item, Mapping) or set(item) != {
+                "allowed_approver_ids",
+                "allowed_approver_roles",
+                "permission_classes",
+                "require_distinct_principal",
+                "requirement_id",
+                "resource_types",
+                "verbs",
+            }:
+                return None
+            if any(
+                not isinstance(item.get(key), list)
+                for key in (
+                    "allowed_approver_ids",
+                    "allowed_approver_roles",
+                    "permission_classes",
+                    "resource_types",
+                    "verbs",
+                )
+            ):
+                return None
+            approval_requirements.append(
+                ApprovalRequirement(
+                    requirement_id=item["requirement_id"],
+                    verbs=tuple(ActionVerb(verb) for verb in item["verbs"]),
+                    resource_types=tuple(item["resource_types"]),
+                    permission_classes=tuple(
+                        PermissionClass(permission_class)
+                        for permission_class in item["permission_classes"]
+                    ),
+                    allowed_approver_ids=tuple(
+                        item["allowed_approver_ids"]
+                    ),
+                    allowed_approver_roles=tuple(
+                        Role(role) for role in item["allowed_approver_roles"]
+                    ),
+                    require_distinct_principal=item[
+                        "require_distinct_principal"
+                    ],
+                )
+            )
+        issued_at = _optional_timestamp(value.get("issued_at"))
+        if issued_at is None:
+            return None
+        policy = PolicyBundle(
+            bundle_id=value["bundle_id"],
+            version=value["version"],
+            issued_at=issued_at,
+            evidence_requirements=tuple(evidence_requirements),
+            enabled_classes=tuple(
+                PermissionClass(item) for item in value["enabled_classes"]
+            ),
+            allowed_verbs=tuple(
+                ActionVerb(item) for item in value["allowed_verbs"]
+            ),
+            allowed_roles=tuple(
+                Role(item) for item in value["allowed_roles"]
+            ),
+            allowed_operations=tuple(value["allowed_operations"]),
+            allowed_resource_types=tuple(value["allowed_resource_types"]),
+            allowed_trust_boundaries=tuple(
+                value["allowed_trust_boundaries"]
+            ),
+            allowed_flow_states=tuple(value["allowed_flow_states"]),
+            allowed_network_states=tuple(
+                NetworkState(item) for item in value["allowed_network_states"]
+            ),
+            allowed_billing_routes=tuple(
+                BillingRoute(item) for item in value["allowed_billing_routes"]
+            ),
+            approval_requirements=tuple(approval_requirements),
+            decision_ttl_seconds=float(value["decision_ttl_seconds"]),
+            schema_version=value["schema_version"],
+        )
+    except (KeyError, OverflowError, TypeError, ValueError):
+        return None
+    return policy if policy.to_canonical() == value else None
+
+
+def _inspect_mock_dispatch_request_projection(
+    fact: _RunFacts,
+    task_binding: _TaskAttemptBindingFacts,
+    task_execution_selection: _TaskExecutionSelectionFacts,
+    task_billing: _TaskBillingFacts,
+    request: AuthorizationRequest,
+    task_intent: Mapping[str, Any] | None,
+) -> tuple[str, ...]:
+    binding = task_binding.binding
+    selected = task_execution_selection.selected
+    billing = task_billing.payload
+    if not isinstance(binding, Mapping):
+        return ("mock_dispatch_request_binding_mismatch",)
+    expected_parameters_digest = canonical_digest(
+        {
+            "attempt": binding.get("attempt"),
+            "billing_assessment_digest": task_billing.assessment_digest,
+            "context_digest": binding.get("context_digest"),
+            "execution_selection_digest": binding.get(
+                "execution_selection_digest"
+            ),
+            "output_schema_digest": binding.get("output_schema_digest"),
+            "profile_ref": binding.get("profile_ref"),
+            "prompt_digest": binding.get("prompt_digest"),
+            "run_ref": binding.get("run_ref"),
+            "runner_overrides_digest": binding.get(
+                "runner_overrides_digest"
+            ),
+            "task_attempt_binding_digest": task_binding.binding_digest,
+            "task_authorization_intent_digest": binding.get(
+                "authorization_intent_digest"
+            ),
+            "task_definition_digest": binding.get(
+                "task_definition_digest"
+            ),
+            "timeout_seconds": binding.get("timeout_seconds"),
+            "workspace_ref": binding.get("workspace_ref"),
+        }
+    )
+    expected_resource_identifier = canonical_digest(
+        {
+            "resource_type": MOCK_DISPATCH_RESOURCE_TYPE,
+            "run_ref": binding.get("run_ref"),
+            "workspace_ref": binding.get("workspace_ref"),
+        }
+    )
+    expected_profile_ref = (
+        selected.get("profile_id")
+        if isinstance(selected, Mapping)
+        else None
+    )
+    expected_profile_ref = (
+        canonical_digest({"profile_id": expected_profile_ref})
+        if isinstance(expected_profile_ref, str)
+        else binding.get("profile_ref")
+    )
+    expected = bool(
+        request.request_id
+        == f"{MOCK_DISPATCH_ACTION_SCOPE}:{fact.raw_run_id}"
+        and request.subject.principal_id == "agent:task-attempt"
+        and request.subject.controller_id == "ordomata:local-controller"
+        and request.subject.role is Role.IMPLEMENTER
+        and request.subject.role_version == "1"
+        and request.subject.profile_id == binding.get("profile_ref")
+        and request.subject.profile_id == expected_profile_ref
+        and request.subject.runner_id == "mock"
+        and request.subject.session_id == f"attempt:{fact.raw_run_id}"
+        and request.action.verb is ActionVerb.EXECUTE
+        and request.action.operation == MOCK_DISPATCH_OPERATION
+        and request.action.parameters_digest == expected_parameters_digest
+        and request.action.intended_effect
+        == "execute_deterministic_in_memory_mock_attempt"
+        and request.action.tool_id is None
+        and not request.action.descriptive_claims
+        and request.resource.resource_type == MOCK_DISPATCH_RESOURCE_TYPE
+        and request.resource.identifier == expected_resource_identifier
+        and request.resource.version == binding.get("task_definition_digest")
+        and request.resource.owner == "operator:local"
+        and request.resource.trust_boundary == "isolated_run_workspace"
+        and request.resource.repository_id == binding.get("repository_ref")
+        and request.resource.content_digest == binding.get("prompt_digest")
+        and request.environment.isolation_state is IsolationState.VERIFIED
+        and request.environment.network_state is NetworkState.DISABLED
+        and request.environment.billing_route is BillingRoute.MOCK
+        and isinstance(billing, Mapping)
+        and request.environment.capacity_state.value
+        == billing.get("capacity_state")
+        and request.environment.paid_continuation_protection.value
+        == billing.get("paid_continuation_protection")
+        and request.environment.circuit_state is CircuitState.CLOSED
+        and request.environment.flow_state == "runner_dispatch_proposed"
+        and not request.environment.approval_grants
+        and billing.get("runner_id") == "mock"
+        and billing.get("route") == BillingRoute.MOCK.value
+        and billing.get("confidence") == AssessmentConfidence.HIGH.value
+    )
+    issues: list[str] = []
+    if not expected:
+        issues.append("mock_dispatch_request_binding_mismatch")
+    if not isinstance(task_intent, Mapping):
+        issues.append("mock_dispatch_request_intent_mismatch")
+    else:
+        intent_resource = task_intent.get("resource")
+        intent_consequences = task_intent.get("consequences")
+        if (
+            not isinstance(intent_resource, Mapping)
+            or not isinstance(intent_consequences, Mapping)
+            or request.resource.protected
+            != intent_resource.get("protected")
+            or request.resource.sensitivity.value
+            != intent_resource.get("sensitivity")
+            or request.consequences.to_canonical() != intent_consequences
+        ):
+            issues.append("mock_dispatch_request_intent_mismatch")
+    expected_evidence = {
+        "subject": EvidenceSource.CONTROLLER,
+        "action": EvidenceSource.LOCAL_REGISTRY,
+        "resource": EvidenceSource.LOCAL_REGISTRY,
+        "environment": EvidenceSource.CONTROLLER,
+        "consequences": EvidenceSource.LOCAL_REGISTRY,
+    }
+    evidence_by_attribute = {
+        item.attribute: item for item in request.evidence
+    }
+    evaluated_at = request.environment.evaluated_at
+    if (
+        len(request.evidence) != len(expected_evidence)
+        or len(evidence_by_attribute) != len(request.evidence)
+        or set(evidence_by_attribute) != set(expected_evidence)
+    ):
+        issues.append("mock_dispatch_evidence_invalid")
+    else:
+        for attribute, expected_source in expected_evidence.items():
+            item = evidence_by_attribute[attribute]
+            if (
+                item.evidence_id
+                != f"{MOCK_DISPATCH_ACTION_SCOPE}:{attribute}"
+                or item.source is not expected_source
+                or item.source_id != f"ordomata:{expected_source.value}"
+                or item.observed_at != evaluated_at
+                or item.expires_at
+                != evaluated_at + _SHADOW_EVIDENCE_LIFETIME_SECONDS
+                or item.authenticated is not True
+                or item.value_digest
+                != canonical_digest(request.attribute_value(attribute))
+            ):
+                issues.append("mock_dispatch_evidence_invalid")
+                break
+    return tuple(sorted(set(issues)))
+
+
+def _mock_dispatch_task_intent_from_shadow(
+    task_binding: _TaskAttemptBindingFacts,
+    rows: list[sqlite3.Row],
+) -> Mapping[str, Any] | None:
+    """Recover the validated task intent without treating shadow as policy."""
+
+    binding = task_binding.binding
+    if not isinstance(binding, Mapping):
+        return None
+    candidates: list[Mapping[str, Any]] = []
+    for row in rows:
+        payload = _bounded_json_mapping(row["payload_json"])
+        if (
+            not isinstance(payload, Mapping)
+            or payload.get("schema_version") != 2
+            or payload.get("mode") != "shadow"
+            or payload.get("action_scope") != ADMISSION_SCOPE
+            or payload.get("task_attempt_binding_digest")
+            != task_binding.binding_digest
+        ):
+            continue
+        intent = payload.get("task_authorization_intent")
+        intent_digest = payload.get("intent_digest")
+        if (
+            not _is_task_intent_shape(intent)
+            or not isinstance(intent, Mapping)
+            or not _digest_matches(intent_digest, intent)
+            or intent_digest != binding.get("authorization_intent_digest")
+        ):
+            continue
+        candidates.append(intent)
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _inspect_mock_dispatch_policy_projection(
+    fact: _RunFacts,
+    task_binding: _TaskAttemptBindingFacts,
+    policy: PolicyBundle,
+) -> tuple[str, ...]:
+    binding = task_binding.binding
+    expected_classes = tuple(
+        permission_class
+        for permission_class in (
+            PermissionClass.READ_ONLY,
+            PermissionClass.LOCAL_DRAFT,
+        )
+        if fact.permission_class is not None
+        and int(permission_class) <= fact.permission_class
+    )
+    expected_evidence = tuple(
+        sorted(
+            PolicyBundle.current_stage().evidence_requirements,
+            key=lambda item: item.attribute,
+        )
+    )
+    expected_approvals_digest: str | None = None
+    approvals_valid = False
+    if not policy.approval_requirements:
+        expected_approvals_digest = canonical_digest(
+            {"approver": "operator", "required_before_run": False}
+        )
+        approvals_valid = True
+    elif len(policy.approval_requirements) == 1:
+        requirement = policy.approval_requirements[0]
+        approvals_valid = bool(
+            requirement.requirement_id
+            == "task_contract_pre_run_operator_approval"
+            and requirement.verbs == (ActionVerb.EXECUTE,)
+            and requirement.resource_types
+            == (MOCK_DISPATCH_RESOURCE_TYPE,)
+            and not requirement.permission_classes
+            and len(requirement.allowed_approver_ids) == 1
+            and _is_digest(requirement.allowed_approver_ids[0])
+            and requirement.allowed_approver_roles == (Role.OPERATOR,)
+            and requirement.require_distinct_principal is True
+        )
+        if approvals_valid:
+            # The binding intentionally retains only a digest of the private
+            # contract approver, while the policy retains a different scoped
+            # digest.  Their preimages cannot be linked by this read-only
+            # projection, so both are shape-checked but not falsely equated.
+            expected_approvals_digest = (
+                binding.get("pre_run_approval_requirements_digest")
+                if isinstance(binding, Mapping)
+                else None
+            )
+    projection_valid = bool(
+        policy.bundle_id == MOCK_DISPATCH_POLICY_ID
+        and policy.version == MOCK_DISPATCH_POLICY_VERSION
+        and policy.issued_at == 0.0
+        and policy.schema_version == MOCK_DISPATCH_EVENT_SCHEMA_VERSION
+        and policy.evidence_requirements == expected_evidence
+        and policy.enabled_classes == expected_classes
+        and policy.allowed_verbs == (ActionVerb.EXECUTE,)
+        and policy.allowed_roles == (Role.IMPLEMENTER,)
+        and policy.allowed_operations == (MOCK_DISPATCH_OPERATION,)
+        and policy.allowed_resource_types == (MOCK_DISPATCH_RESOURCE_TYPE,)
+        and policy.allowed_trust_boundaries
+        == ("isolated_run_workspace",)
+        and policy.allowed_flow_states == ("runner_dispatch_proposed",)
+        and policy.allowed_network_states == (NetworkState.DISABLED,)
+        and policy.allowed_billing_routes == (BillingRoute.MOCK,)
+        and policy.decision_ttl_seconds == 60.0
+        and approvals_valid
+        and isinstance(binding, Mapping)
+        and expected_approvals_digest
+        == binding.get("pre_run_approval_requirements_digest")
+    )
+    return () if projection_valid else ("mock_dispatch_policy_binding_mismatch",)
+
+
+def _mock_dispatch_obligations_supported(
+    effect: str | None,
+    obligations: Any,
+) -> bool:
+    if effect != AuthorizationEffect.PERMIT.value:
+        return True
+    if not isinstance(obligations, list):
+        return False
+    values: list[tuple[Any, Any]] = []
+    for item in obligations:
+        if not isinstance(item, Mapping) or set(item) != {"kind", "value"}:
+            return False
+        kind = item.get("kind")
+        obligation_value = item.get("value")
+        if not isinstance(kind, str) or not isinstance(
+            obligation_value,
+            str,
+        ):
+            return False
+        values.append((kind, obligation_value))
+    return frozenset(values) == frozenset(
+        {
+            (ObligationKind.AUDIT_RECEIPT.value, "append_after_action"),
+            (ObligationKind.ISOLATED_LOCAL_ONLY.value, "required"),
+        }
+    ) and len(values) == 2
+
+
+def _inspect_mock_dispatch_receipt(
+    fact: _RunFacts,
+    task_binding: _TaskAttemptBindingFacts,
+    task_execution_selection: _TaskExecutionSelectionFacts,
+    decision: _MockDispatchDecisionFacts,
+    task_accounting: _TaskAccountingFacts,
+    rows: list[sqlite3.Row],
+    terminal_rows: list[sqlite3.Row],
+) -> _MockDispatchReceiptFacts:
+    """Validate the exact post-invocation receipt and its temporal links."""
+
+    enforcing = task_binding.schema_version == 3
+    if not enforcing:
+        if rows:
+            return _empty_mock_dispatch_receipt(
+                observed=True,
+                issue="mock_dispatch_receipt_unexpected",
+            )
+        return _empty_mock_dispatch_receipt()
+
+    freshness_stop = _is_mock_dispatch_freshness_stop(
+        fact,
+        decision,
+        terminal_rows,
+    )
+    invocation_began = bool(
+        rows or (fact.running_observed and not freshness_stop)
+    )
+    if len(rows) != 1:
+        if not rows and not invocation_began:
+            return _empty_mock_dispatch_receipt()
+        return _empty_mock_dispatch_receipt(
+            observed=bool(rows),
+            issue=(
+                "mock_dispatch_receipt_missing"
+                if not rows
+                else "mock_dispatch_receipt_duplicate"
+            ),
+        )
+
+    row = rows[0]
+    sequence = _optional_sequence(row["sequence"])
+    occurred_at = _optional_timestamp(row["occurred_at"])
+    payload = _bounded_json_mapping(row["payload_json"])
+    issues: list[str] = []
+    if sequence is None:
+        issues.append("mock_dispatch_receipt_sequence_invalid")
+    if occurred_at is None:
+        issues.append("mock_dispatch_receipt_timestamp_invalid")
+    if not isinstance(payload, Mapping) or set(payload) != {
+        "action_scope",
+        "decision_digest",
+        "enforcement_coverage",
+        "execution_selection_digest",
+        "mode",
+        "receipt",
+        "receipt_digest",
+        "request_digest",
+        "schema_version",
+        "task_attempt_binding_digest",
+    }:
+        return _empty_mock_dispatch_receipt(
+            observed=True,
+            sequence=sequence,
+            occurred_at=occurred_at,
+            issue="mock_dispatch_receipt_payload_invalid",
+            additional_issues=issues,
+        )
+    if (
+        payload.get("schema_version") != MOCK_DISPATCH_EVENT_SCHEMA_VERSION
+        or payload.get("mode") != "enforcing"
+        or payload.get("action_scope") != MOCK_DISPATCH_ACTION_SCOPE
+        or payload.get("enforcement_coverage")
+        != TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE
+    ):
+        issues.append("mock_dispatch_receipt_payload_invalid")
+
+    receipt = payload.get("receipt")
+    if not isinstance(receipt, Mapping) or set(receipt) != {
+        "completed_at",
+        "decision_digest",
+        "enforced_action_digest",
+        "executor_id",
+        "obligation_results",
+        "outcome",
+        "receipt_id",
+        "request_digest",
+        "result_digest",
+        "started_at",
+    }:
+        return _empty_mock_dispatch_receipt(
+            observed=True,
+            sequence=sequence,
+            occurred_at=occurred_at,
+            payload=payload,
+            issue="mock_dispatch_receipt_body_invalid",
+            additional_issues=issues,
+        )
+
+    request_digest = decision.request_digest
+    decision_digest = decision.decision_digest
+    binding_digest = task_binding.binding_digest
+    if (
+        payload.get("task_attempt_binding_digest") != binding_digest
+        or payload.get("execution_selection_digest")
+        != task_execution_selection.selection_digest
+        or payload.get("request_digest") != request_digest
+        or payload.get("decision_digest") != decision_digest
+        or receipt.get("request_digest") != request_digest
+        or receipt.get("decision_digest") != decision_digest
+    ):
+        issues.append("mock_dispatch_receipt_binding_mismatch")
+    if not _digest_matches(payload.get("receipt_digest"), receipt):
+        issues.append("mock_dispatch_receipt_digest_mismatch")
+    expected_receipt_id = (
+        canonical_digest(
+            {
+                "decision_digest": decision_digest,
+                "request_digest": request_digest,
+                "task_attempt_binding_digest": binding_digest,
+                "receipt_kind": "mock_dispatch_action",
+            }
+        )
+        if all(
+            isinstance(value, str)
+            for value in (decision_digest, request_digest, binding_digest)
+        )
+        else None
+    )
+    if (
+        receipt.get("receipt_id") != expected_receipt_id
+        or row["event_id"] != receipt.get("receipt_id")
+    ):
+        issues.append("mock_dispatch_receipt_event_identifier_mismatch")
+    if receipt.get("executor_id") != MOCK_DISPATCH_EXECUTOR_ID:
+        issues.append("mock_dispatch_receipt_executor_mismatch")
+
+    request_mapping = decision.request
+    expected_action_digest = (
+        canonical_digest(
+            {
+                "action": request_mapping.get("action"),
+                "resource": request_mapping.get("resource"),
+            }
+        )
+        if isinstance(request_mapping, Mapping)
+        and isinstance(request_mapping.get("action"), Mapping)
+        and isinstance(request_mapping.get("resource"), Mapping)
+        else None
+    )
+    if receipt.get("enforced_action_digest") != expected_action_digest:
+        issues.append("mock_dispatch_receipt_action_mismatch")
+
+    decision_obligations = (
+        decision.decision.get("obligations")
+        if isinstance(decision.decision, Mapping)
+        else None
+    )
+    obligation_results = receipt.get("obligation_results")
+    if not _mock_dispatch_receipt_obligations_match(
+        decision_obligations,
+        obligation_results,
+    ):
+        issues.append("mock_dispatch_receipt_obligation_mismatch")
+
+    outcome = _known_string(
+        receipt.get("outcome"),
+        frozenset(item.value for item in ReceiptOutcome),
+    )
+    started_at = _optional_timestamp(receipt.get("started_at"))
+    completed_at = _optional_timestamp(receipt.get("completed_at"))
+    permit_current = bool(
+        decision.effect == AuthorizationEffect.PERMIT.value
+        and decision.authorization_eligible is True
+        and started_at is not None
+        and decision.issued_at is not None
+        and decision.expires_at is not None
+        and decision.issued_at <= started_at < decision.expires_at
+    )
+    if outcome is None:
+        issues.append("mock_dispatch_receipt_outcome_invalid")
+    if (
+        started_at is None
+        or completed_at is None
+        or completed_at < started_at
+        or occurred_at is None
+        or occurred_at < completed_at
+    ):
+        issues.append("mock_dispatch_receipt_timestamp_invalid")
+    if not permit_current:
+        issues.append("mock_dispatch_receipt_permit_not_current")
+
+    if (
+        sequence is not None
+        and (
+            decision.sequence is None
+            or sequence <= decision.sequence
+            or fact.running_sequence is None
+            or sequence <= fact.running_sequence
+            or (
+                fact.runner_event_last_sequence is not None
+                and sequence <= fact.runner_event_last_sequence
+            )
+            or (
+                fact.accounting_sequence is not None
+                and sequence >= fact.accounting_sequence
+            )
+            or (
+                fact.terminal_sequence is not None
+                and sequence >= fact.terminal_sequence
+            )
+        )
+    ):
+        issues.append("mock_dispatch_receipt_order_invalid")
+
+    accounting = task_accounting.payload
+    result_digest = receipt.get("result_digest")
+    if isinstance(accounting, Mapping):
+        expected_result_digest = canonical_digest(
+            {
+                "harness_process_started": accounting.get(
+                    "harness_process_started"
+                ),
+                "live_model_execution_occurred": accounting.get(
+                    "live_model_execution_occurred"
+                ),
+                "run_ref": fact.run_ref,
+                "runner_event_count": accounting.get("runner_event_count"),
+                "runner_id": fact.raw_runner_id,
+                "status": accounting.get("result_status"),
+            }
+        )
+        expected_outcome = _mock_dispatch_outcome_for_status(
+            accounting.get("result_status")
+        )
+        if (
+            result_digest != expected_result_digest
+            or outcome != expected_outcome
+        ):
+            issues.append("mock_dispatch_receipt_result_mismatch")
+    elif result_digest is not None or outcome == ReceiptOutcome.SUCCEEDED.value:
+        issues.append("mock_dispatch_receipt_result_mismatch")
+    if not _is_optional_digest(result_digest):
+        issues.append("mock_dispatch_receipt_body_invalid")
+
+    return _MockDispatchReceiptFacts(
+        True,
+        sequence,
+        occurred_at,
+        payload,
+        receipt,
+        outcome,
+        started_at,
+        completed_at,
+        permit_current,
+        tuple(sorted(set(issues))),
+    )
+
+
+def _empty_mock_dispatch_receipt(
+    *,
+    observed: bool = False,
+    sequence: int | None = None,
+    occurred_at: float | None = None,
+    payload: Mapping[str, Any] | None = None,
+    issue: str | None = None,
+    additional_issues: list[str] | None = None,
+) -> _MockDispatchReceiptFacts:
+    issues = list(additional_issues or ())
+    if issue is not None:
+        issues.append(issue)
+    return _MockDispatchReceiptFacts(
+        observed,
+        sequence,
+        occurred_at,
+        payload,
+        None,
+        None,
+        None,
+        None,
+        None,
+        tuple(sorted(set(issues))),
+    )
+
+
+def _is_mock_dispatch_freshness_stop(
+    fact: _RunFacts,
+    decision: _MockDispatchDecisionFacts,
+    rows: list[sqlite3.Row],
+) -> bool:
+    """Recognize only the controller's exact pre-invocation freshness stop."""
+
+    if len(rows) != 1:
+        return False
+    row = rows[0]
+    payload = _bounded_json_mapping(row["payload_json"])
+    terminal_sequence = _optional_sequence(row["sequence"])
+    return bool(
+        row["event_type"] == "status"
+        and row["status"] == RunStatus.BLOCKED.value
+        and fact.latest_status == RunStatus.BLOCKED.value
+        and terminal_sequence == fact.terminal_sequence
+        and terminal_sequence is not None
+        and fact.running_sequence is not None
+        and terminal_sequence > fact.running_sequence
+        and decision.sequence is not None
+        and terminal_sequence > decision.sequence
+        and decision.effect == AuthorizationEffect.PERMIT.value
+        and decision.authorization_eligible is True
+        and _optional_timestamp(row["occurred_at"]) is not None
+        and isinstance(payload, Mapping)
+        and payload == {"phase": "mock_dispatch_authorization_freshness"}
+        and _event_identifier_matches_status(row, payload, fact.raw_run_id)
+    )
+
+
+def _event_identifier_matches_status(
+    row: sqlite3.Row,
+    payload: Mapping[str, Any],
+    run_id: str,
+) -> bool:
+    event_id = row["event_id"]
+    if not _is_digest(event_id):
+        return False
+    try:
+        return event_id == canonical_digest(
+            {
+                "event_type": "status",
+                "payload": payload,
+                "run_id": run_id,
+                "status": row["status"],
+            }
+        )
+    except (TypeError, ValueError, RecursionError):
+        return False
+
+
+def _mock_dispatch_receipt_obligations_match(
+    decision_obligations: Any,
+    obligation_results: Any,
+) -> bool:
+    if not isinstance(decision_obligations, list) or not isinstance(
+        obligation_results,
+        list,
+    ):
+        return False
+    expected: list[tuple[Any, Any]] = []
+    for item in decision_obligations:
+        if not isinstance(item, Mapping) or set(item) != {"kind", "value"}:
+            return False
+        kind = item.get("kind")
+        obligation_value = item.get("value")
+        if not isinstance(kind, str) or not isinstance(
+            obligation_value,
+            str,
+        ):
+            return False
+        expected.append((kind, obligation_value))
+    observed: list[tuple[Any, Any]] = []
+    for item in obligation_results:
+        if not isinstance(item, Mapping) or set(item) != {
+            "kind",
+            "satisfied",
+            "value",
+        } or item.get("satisfied") is not True:
+            return False
+        kind = item.get("kind")
+        obligation_value = item.get("value")
+        if not isinstance(kind, str) or not isinstance(
+            obligation_value,
+            str,
+        ):
+            return False
+        observed.append((kind, obligation_value))
+    return bool(
+        len(observed) == len(set(observed))
+        and sorted(observed) == sorted(expected)
+    )
+
+
+def _mock_dispatch_outcome_for_status(status: Any) -> str | None:
+    if status == RunStatus.SUCCEEDED.value:
+        return ReceiptOutcome.SUCCEEDED.value
+    if status == RunStatus.CANCELLED.value:
+        return ReceiptOutcome.CANCELLED.value
+    if status in {
+        RunStatus.FAILED.value,
+        RunStatus.BLOCKED.value,
+        RunStatus.QUARANTINED.value,
+    }:
+        return ReceiptOutcome.FAILED.value
+    return None
+
+
+def _project_mock_dispatch_enforcement(
+    task_binding: _TaskAttemptBindingFacts,
+    decision: _MockDispatchDecisionFacts,
+    receipt: _MockDispatchReceiptFacts,
+) -> MockDispatchEnforcementInspection:
+    issues = tuple(sorted(set((*decision.issues, *receipt.issues))))
+    return MockDispatchEnforcementInspection(
+        required=task_binding.schema_version == 3,
+        decision_observed=decision.observed,
+        decision_sequence=decision.sequence,
+        effect=decision.effect,
+        authorization_eligible=decision.authorization_eligible,
+        decision_current_at_evaluation=(
+            decision.decision_current_at_evaluation
+        ),
+        action_receipt_observed=receipt.observed,
+        action_receipt_sequence=receipt.sequence,
+        action_receipt_outcome=receipt.outcome,
+        permit_current_at_action_start=(
+            receipt.permit_current_at_action_start
+        ),
+        integrity_issues=issues,
     )
 
 
@@ -5916,7 +7563,7 @@ def _inspect_task_boundary_shadow_binding(
         "authorization_intent_digest"
     ]:
         issues.append("task_boundary_intent_binding_mismatch")
-    if task_binding.schema_version == 2:
+    if task_binding.schema_version in {2, 3}:
         selection_digest = binding.get("execution_selection_digest")
         if (
             task_execution_selection.issues
@@ -6005,7 +7652,7 @@ def _inspect_task_boundary_shadow_binding(
             != ("closed" if mock_runner else "unknown")
         ):
             issues.append("task_dispatch_billing_binding_mismatch")
-    if task_binding.schema_version == 2:
+    if task_binding.schema_version in {2, 3}:
         parameters["execution_selection_digest"] = binding[
             "execution_selection_digest"
         ]
@@ -6873,7 +8520,7 @@ def _is_task_attempt_binding_shape(
         "runner_overrides_digest",
         "task_definition_digest",
     }
-    if schema_version == 2:
+    if schema_version in {2, 3}:
         expected_keys.update(
             {
                 "execution_selection_digest",
@@ -6888,6 +8535,19 @@ def _is_task_attempt_binding_shape(
                 "profile_version_ref",
             }
         )
+        if schema_version == 3:
+            expected_keys.update(
+                {
+                    "pre_run_approval_requirements_digest",
+                    "workspace_ref",
+                }
+            )
+            digest_fields.update(
+                {
+                    "pre_run_approval_requirements_digest",
+                    "workspace_ref",
+                }
+            )
     elif schema_version != 1:
         return False
     if not isinstance(value, Mapping) or set(value) != expected_keys:
@@ -7248,7 +8908,10 @@ def _optional_boolean(value: Any) -> bool | None:
 def _optional_timestamp(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    numeric = float(value)
+    try:
+        numeric = float(value)
+    except (OverflowError, ValueError):
+        return None
     return numeric if math.isfinite(numeric) and numeric >= 0 else None
 
 
@@ -7288,6 +8951,7 @@ __all__ = [
     "DISPATCH_SCOPE",
     "EvidenceFreshnessInspection",
     "KNOWN_ACTION_SCOPES",
+    "MockDispatchEnforcementInspection",
     "PUBLICATION_SCOPE",
     "RunAuthorizationInspection",
     "ShadowDecisionInspection",
@@ -7295,6 +8959,7 @@ __all__ = [
     "TASK_ATTEMPT_RUN_KIND",
     "TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE",
     "TASK_ATTEMPT_BINDING_EVENT_TYPE",
+    "TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE",
     "TASK_ATTEMPT_SHADOW_COVERAGE",
     "TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE",
     "TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE",

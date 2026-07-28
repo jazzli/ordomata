@@ -78,9 +78,21 @@ records.
 - optional typed task-effect authorization intent, independent of the legacy
   numeric class, plus three non-enforcing Chief-of-Staff shadow decisions at
   admission, runner/model dispatch intent, and local-candidate publication;
+- the first authoritative ABAC enforcement point: new profile-backed ordinary
+  attempts using the exact controller-owned in-memory `MockRunner`
+  implementation require a fixed-policy permit for the exact mock
+  `runner.execute` action before `RUNNING`, a freshness recheck immediately at
+  invocation, and a content-addressed terminal action receipt; every non-permit,
+  stale permit, authority-ceiling mismatch, or uncertain decision write blocks
+  before invocation, and only a validated identity-matched no-process result
+  can receive a succeeded receipt, while live, comparison, supervisor, and
+  publication paths remain non-enforcing;
 - digest-only ordinary task-attempt bindings that cover the typed authorization
   intent and, for profile-backed attempts, the immutable execution selection,
-  profile version, and configuration; schema-v2 execution accounting,
+  profile version, and configuration; new enforced mock attempts declare that
+  coverage with a schema-v3 binding while unprofiled schema-v1 and live or
+  historical schema-v2 histories retain their shadow-only meaning; schema-v2
+  execution accounting,
   billing-bound dispatch, and schema-v2 pre-effect/action receipts around
   schema-v5 local-candidate publication, with exact metadata, filesystem, and
   receipt reconciliation;
@@ -202,7 +214,9 @@ PYTHONPATH=src python3 -m ordomata supervisor stop --json
 not install or launch a background service. `supervise` runs only in the
 foreground. It currently claims no work and starts no runner, model,
 subprocess, network action, repository worker, or Class 2/3 action because
-runtime ABAC enforcement remains a prerequisite. `reconcile` is a read-only
+its exact claim/worker/tool boundaries lack authoritative ABAC coverage and
+verified repository containment; the narrow ordinary mock PEP grants neither.
+`reconcile` is a read-only
 preview unless `--apply` is supplied with the exact digest from a current
 preview.
 Sticky cancellation remains an operator safety path, but its truthful shadow
@@ -296,12 +310,15 @@ git diff --check
 
 See [architecture](docs/architecture.md), [runtime authorization model](docs/authorization-model.md), [billing policy](docs/subscription-only-policy.md), [routing](docs/routing.md), [roadmap](docs/roadmap.md), [implementation plan](docs/ordomata-implementation-plan.md), and [implementation status](docs/implementation-status.md).
 
-## Adopted target design—not active runtime
+## Adopted target design and narrow active slice
 
-The v1 design interview is decision-complete. The Phase 1C shadow ABAC
-evaluator has distinct `permit`, `defer`, `deny`, and `indeterminate` outcomes.
+The v1 design interview is decision-complete. The pure Phase 1C ABAC evaluator
+has distinct `permit`, `defer`, `deny`, and `indeterminate` outcomes, and its
+first narrow authoritative consumer now gates only profile-backed ordinary
+in-memory mock dispatch.
 The current task contract now carries explicit action, resource, and
-consequence intent, while `PermissionClass` remains the only runtime authority.
+consequence intent, while `PermissionClass` remains an independent runtime
+ceiling and defense-in-depth gate.
 Class 0-3 is only a derived impact summary: future Class 3 work may run through exact,
 revocable standing envelopes and fresh per-action permits, including narrowly
 defined irreversible effects, while a root-authority kernel remains
@@ -323,12 +340,12 @@ claims about commands available today.
 - no Cursor Agent adapter yet (the desktop launcher alone is insufficient);
 - no repository worktree maintenance workflow yet;
 - no automatic outcome-to-router learning or retry/failover controller yet;
-- no enforcing general runtime ABAC or action receipts yet; non-authoritative
-  Chief-of-Staff observations cover admission, dispatch intent, and local-
-  candidate publication, with durable but non-authorizing candidate receipts,
-  and separate supervisor shadows cover admission, claim, control-transition,
-  and cancellation bookkeeping, while current Class 0/1 and deterministic
-  eligibility gates remain authoritative;
+- no general runtime ABAC coverage yet: only profile-backed, controller-owned
+  in-memory mock dispatch has an authoritative decision and action receipt;
+  Chief-of-Staff admission and publication, all live/comparison paths, mediated
+  tools, and supervisor admission/claim/control/cancellation remain shadow-only
+  or disabled, while current Class 0/1 and deterministic eligibility gates stay
+  authoritative defense in depth;
 - no standing-envelope evaluator, worker-cell shell/egress backend,
   consequential-action outbox/executor, trusted-memory promotion, or adaptive
   unattended scheduler yet;

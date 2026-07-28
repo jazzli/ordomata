@@ -1,9 +1,10 @@
-"""Pure shadow authorization types and evaluator for the Phase 1C migration.
+"""Pure authorization types and evaluator for the Phase 1C migration.
 
-This module deliberately has no enforcement integration.  It can describe and
-evaluate an exact request, but it cannot execute an action or widen the current
-Class 0/1 runtime ceiling.  The legacy permission checks remain authoritative
-until a later, separately reviewed migration phase.
+This module has no effectful integration: it only describes and evaluates an
+exact request.  A controller-owned enforcement point may consume a typed
+decision, but it must separately enforce freshness, obligations, the persisted
+authority ceiling, and the legacy Class 0/1 gate.  The evaluator can never
+execute an action or widen authority by itself.
 """
 
 from __future__ import annotations
@@ -1297,7 +1298,12 @@ class _EvidenceValidation:
 
 
 class ShadowAuthorizationEvaluator:
-    """Deterministic deny-by-default Phase 1C policy decision point."""
+    """Deterministic deny-by-default Phase 1C policy decision point.
+
+    The historical class name is retained for compatibility.  Most current
+    boundaries remain shadow-only; the first narrow mock-dispatch PEP consumes
+    this pure evaluator through the ``AuthorizationEvaluator`` alias.
+    """
 
     def evaluate(
         self,
