@@ -83,11 +83,19 @@ def build_task_admission_shadow_event(
     prompt_digest: str,
     project_root: Path,
     task_attempt_binding_digest: str,
+    execution_selection_digest: str | None = None,
     evaluated_at: float,
     legacy_executable: bool,
 ) -> dict[str, Any]:
     """Observe whether the exact task effect is eligible at admission."""
 
+    parameters = {
+        "context_digest": context_digest,
+        "prompt_digest": prompt_digest,
+        "task_attempt_binding_digest": task_attempt_binding_digest,
+    }
+    if execution_selection_digest is not None:
+        parameters["execution_selection_digest"] = execution_selection_digest
     return _build_shadow_event(
         action_scope=ADMISSION_ACTION_SCOPE,
         contract=contract,
@@ -102,11 +110,7 @@ def build_task_admission_shadow_event(
         billing_assessment=None,
         local_only_environment=False,
         apply_pre_run_approval=True,
-        parameters={
-            "context_digest": context_digest,
-            "prompt_digest": prompt_digest,
-            "task_attempt_binding_digest": task_attempt_binding_digest,
-        },
+        parameters=parameters,
         task_attempt_binding_digest=task_attempt_binding_digest,
     )
 
@@ -121,6 +125,7 @@ def build_runner_model_dispatch_shadow_event(
     prompt_digest: str,
     project_root: Path,
     task_attempt_binding_digest: str,
+    execution_selection_digest: str | None = None,
     runner_overrides: Mapping[str, Any],
     timeout_seconds: int,
     attempt: int,
@@ -135,6 +140,17 @@ def build_runner_model_dispatch_shadow_event(
     Those facts remain in the later execution-accounting event.
     """
 
+    parameters = {
+        "attempt": attempt,
+        "billing_assessment_digest": billing_assessment_digest,
+        "context_digest": context_digest,
+        "prompt_digest": prompt_digest,
+        "runner_overrides_digest": canonical_digest(dict(runner_overrides)),
+        "task_attempt_binding_digest": task_attempt_binding_digest,
+        "timeout_seconds": timeout_seconds,
+    }
+    if execution_selection_digest is not None:
+        parameters["execution_selection_digest"] = execution_selection_digest
     return _build_shadow_event(
         action_scope=DISPATCH_ACTION_SCOPE,
         contract=contract,
@@ -149,17 +165,7 @@ def build_runner_model_dispatch_shadow_event(
         billing_assessment=billing_assessment,
         local_only_environment=False,
         apply_pre_run_approval=True,
-        parameters={
-            "attempt": attempt,
-            "billing_assessment_digest": billing_assessment_digest,
-            "context_digest": context_digest,
-            "prompt_digest": prompt_digest,
-            "runner_overrides_digest": canonical_digest(
-                dict(runner_overrides)
-            ),
-            "task_attempt_binding_digest": task_attempt_binding_digest,
-            "timeout_seconds": timeout_seconds,
-        },
+        parameters=parameters,
         task_attempt_binding_digest=task_attempt_binding_digest,
     )
 

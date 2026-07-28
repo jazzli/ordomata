@@ -186,6 +186,26 @@ It then ranks eligible profiles lexicographically by three non-interchangeable t
 
 Profile outcomes are evidence, not self-modifying policy. A routing or profile revision must be versioned, benchmarked, reviewed, and promoted by the operator.
 
+For a started profile-backed Chief-of-Staff attempt, the controller now
+content-addresses and appends a `task_execution_selection` record immediately
+after the run's `created` marker and before the task binding. The record fixes
+the routing-policy version and clock, immutable task/context/authorization
+refs, canonical candidate set, safe billing projections, observed/prior/
+unavailable metric markers, fixed rejection codes, ranking, selected profile
+version/configuration, and translated-overrides digest. The bounded profile ID
+is retained to replay the governed lexical tie-break; raw model names,
+settings, account/subscription values, diagnostics, prompts, paths, and
+environment values are represented only by digests or omitted. Every source
+candidate must still match the controller-loaded catalog, and the selected
+source assessment must match fresh horizon-valid runner preflight evidence. A
+schema-v2 task binding and both admission/dispatch observations link the selection
+digest. Exact persistence is required before execution; the read-only
+inspector independently recomputes shape, digests, filters, scores, rank,
+cardinality, cross-links, and order. This record is descriptive evidence, not
+an authorization decision, and cannot replace fresh billing, environment,
+isolation, circuit, or legacy Class 0/1 checks. A rejected pre-run profile and
+the read-only `route` preview create no run or routing ledger entry.
+
 The target router may continuously update outcome estimates and shift bounded
 traffic among already promoted, eligible profiles. A small explicit
 exploration budget may sample under-observed promoted profiles, beginning with

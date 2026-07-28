@@ -24,10 +24,11 @@ from .comparison import (
     comparison_snapshot_from_prepared,
     run_controlled_comparison,
 )
-from .billing import FileBillingAttestationLoader
+from .billing import FileBillingAttestationLoader, LIVE_RUN_EVIDENCE_MARGIN_SECONDS
 from .contracts import load_task_contract
 from .doctor import DoctorReport, RunnerDiagnostic, collect_doctor_report
 from .errors import OrdomataError, BillingRouteBlocked, ConfigurationError
+from .execution_selection import build_execution_selection
 from .models import (
     AssessmentConfidence,
     BillingRoute,
@@ -38,6 +39,7 @@ from .models import (
 )
 from .orchestrator import (
     PreparedTask,
+    chief_of_staff_routing_features,
     load_mock_chief_of_staff_output,
     prepare_chief_of_staff,
     run_chief_of_staff,
@@ -53,6 +55,7 @@ from .routing import (
 )
 from .runners import ClaudeRunner, CodexRunner, MockRunner
 from .scheduler import IntervalSchedule, RunOnceScheduler
+from .shadow_authorization import task_authorization_intent_digest
 from .state import SQLiteBillingCircuitGuard, SQLiteStateStore
 from .supervisor import (
     FlowSpec,
@@ -401,13 +404,18 @@ async def _dispatch(arguments: argparse.Namespace) -> int:
         return 0 if payload["selected_profile"] is not None else 1
 
     if arguments.command == "demo":
-        report = await run_chief_of_staff(root, run_id=arguments.run_id)
-        _emit(
-            report.to_mapping(),
-            json_output=arguments.json,
-            human=_run_text(report.to_mapping()),
+        report = await _run_profile(
+            root,
+            profile_id="mock.deterministic.local-draft",
+            run_id=arguments.run_id,
+            operator_instructions=(),
         )
-        return 0 if report.status.value == "succeeded" else 1
+        _emit(
+            report,
+            json_output=arguments.json,
+            human=_run_text(report),
+        )
+        return 0 if report["status"] == "succeeded" else 1
 
     if arguments.command == "run":
         report = await _run_profile(
@@ -931,6 +939,7 @@ async def _run_profile(
     run_id: str | None,
     operator_instructions: Sequence[str],
 ) -> dict[str, Any]:
+    selected_run_id = run_id or f"cos-{uuid4().hex}"
     profiles = _load_profiles(root)
     matches = [profile for profile in profiles if profile.profile_id == profile_id]
     if len(matches) != 1:
@@ -961,6 +970,10 @@ async def _run_profile(
     prepared = prepare_chief_of_staff(
         root, operator_instructions=operator_instructions
     )
+    if profile.runner_id == "mock":
+        runner = MockRunner(
+            output=load_mock_chief_of_staff_output(root, prepared)
+        )
     doctor = await collect_doctor_report(
         (runner,),
         workspace=root,
@@ -980,9 +993,18 @@ async def _run_profile(
         billing_assessment=assessment,
         available=diagnostic.ready_now and durable_blocker is None,
     )
+    routing_features = _chief_of_staff_routing_features(prepared, lane=lane)
+    evaluated_at = time.time()
+    required_valid_until = (
+        evaluated_at
+        + prepared.contract.timeout_seconds
+        + LIVE_RUN_EVIDENCE_MARGIN_SECONDS
+    )
     decision = ProfileRouter().route(
-        _chief_of_staff_routing_features(prepared, lane=lane),
+        routing_features,
         (state,),
+        evaluated_at=evaluated_at,
+        required_valid_until=required_valid_until,
     )
     if decision.blocked:
         reasons = list(decision.rejected[0].reasons)
@@ -994,11 +1016,29 @@ async def _run_profile(
             f"profile {profile.profile_id} is ineligible: " + "; ".join(reasons)
         )
 
+    execution_selection = build_execution_selection(
+        run_id=selected_run_id,
+        selection_mode="operator_explicit",
+        task=routing_features,
+        candidates=(state,),
+        task_definition_digest=prepared.contract.definition_hash,
+        context_digest=prepared.context_pack.snapshot_hash,
+        authorization_intent_digest=task_authorization_intent_digest(
+            prepared.contract
+        ),
+        evaluated_at=evaluated_at,
+        required_valid_until=required_valid_until,
+    )
+
     if profile.runner_id == "mock":
         report = await run_chief_of_staff(
             root,
-            run_id=run_id,
-            operator_instructions=operator_instructions,
+            runner=runner,
+            runner_overrides=runner_overrides,
+            run_id=selected_run_id,
+            profile_id=profile.profile_id,
+            prepared_task=prepared,
+            execution_selection=execution_selection,
         )
         return report.to_mapping()
 
@@ -1023,9 +1063,10 @@ async def _run_profile(
             root,
             runner=runner,
             runner_overrides=runner_overrides,
-            operator_instructions=operator_instructions,
-            run_id=run_id,
+            run_id=selected_run_id,
             profile_id=profile.profile_id,
+            prepared_task=prepared,
+            execution_selection=execution_selection,
         )
     return report.to_mapping()
 
@@ -1035,25 +1076,7 @@ def _chief_of_staff_routing_features(
     *,
     lane: str,
 ) -> TaskRoutingFeatures:
-    if lane == "mock":
-        allowed_routes = frozenset({BillingRoute.MOCK})
-        roles = frozenset({"test"})
-    elif lane == "subscription":
-        allowed_routes = frozenset({BillingRoute.SUBSCRIPTION_INCLUDED})
-        roles = frozenset({"synthesis"})
-    else:
-        raise ConfigurationError(f"unsupported routing lane: {lane}")
-    return TaskRoutingFeatures(
-        task_kind="chief_of_staff",
-        permission_class=prepared.contract.permission_class,
-        required_capabilities=frozenset(
-            {"structured_output", "local_draft", "isolated_workspace"}
-        ),
-        allowed_roles=roles,
-        allowed_billing_routes=allowed_routes,
-        context_bytes=prepared.context_pack.raw_bytes,
-        risk=1,
-    )
+    return chief_of_staff_routing_features(prepared, lane=lane)
 
 
 def _assessment_from_diagnostic(

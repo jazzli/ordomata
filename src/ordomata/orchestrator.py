@@ -8,7 +8,7 @@ its own to publish an artifact.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 import hashlib
 import json
@@ -32,7 +32,11 @@ from .artifact_filesystem import (
     stage_artifact,
 )
 from .authorization import canonical_digest
-from .billing import BillingPolicy, BillingPostRunDisposition
+from .billing import (
+    BillingPolicy,
+    BillingPostRunDisposition,
+    LIVE_RUN_EVIDENCE_MARGIN_SECONDS,
+)
 from .context import (
     ContextPack,
     LocalContextIndex,
@@ -52,8 +56,17 @@ from .evaluation import (
     evaluate_chief_of_staff,
     load_evaluation_expectations,
 )
+from .execution_selection import (
+    ExecutionSelection,
+    TASK_EXECUTION_SELECTION_EVENT_TYPE,
+    build_execution_selection,
+    execution_profile_configuration_digest,
+    task_routing_features_digest,
+    validate_execution_selection_payload,
+)
 from .models import (
     AgentEvent,
+    AssessmentConfidence,
     BillingRoute,
     BillingRouteAssessment,
     CapacityState,
@@ -70,6 +83,13 @@ from .paths import resolve_state_root
 from .runners.base import AgentRunner
 from .runners.mock import MockRunner
 from .redaction import contains_credential_material
+from .routing import (
+    ExecutionProfile,
+    RuntimeProfileState,
+    TaskRoutingFeatures,
+    load_execution_profiles,
+    runner_overrides_for_profile,
+)
 from .schema import parse_json_document
 from .shadow_authorization import (
     build_local_candidate_publication_shadow_event,
@@ -97,6 +117,8 @@ from .task_evidence import (
 DEFAULT_TASK = Path("tasks/chief-of-staff-lite.json")
 DEFAULT_EXPECTATIONS = Path("fixtures/chief_of_staff/expectations.json")
 DEFAULT_MOCK_OUTPUT = Path("fixtures/chief_of_staff/valid-output.json")
+DEFAULT_PROFILE_PATH = Path("profiles/default.json")
+DEFAULT_MOCK_PROFILE_ID = "mock.deterministic.local-draft"
 
 
 class _CandidateArtifactPublicationUncertain(ConfigurationError):
@@ -267,6 +289,184 @@ def load_mock_chief_of_staff_output(
     return output
 
 
+def chief_of_staff_routing_features(
+    prepared: PreparedTask,
+    *,
+    lane: str,
+) -> TaskRoutingFeatures:
+    """Return the controller-owned feature snapshot for this workflow lane."""
+
+    if not isinstance(prepared, PreparedTask):
+        raise ValidationError("prepared must be a PreparedTask")
+    if lane == "mock":
+        allowed_routes = frozenset({BillingRoute.MOCK})
+        roles = frozenset({"test"})
+    elif lane == "subscription":
+        allowed_routes = frozenset({BillingRoute.SUBSCRIPTION_INCLUDED})
+        roles = frozenset({"synthesis"})
+    else:
+        raise ConfigurationError(f"unsupported routing lane: {lane}")
+    return TaskRoutingFeatures(
+        task_kind="chief_of_staff",
+        permission_class=prepared.contract.permission_class,
+        required_capabilities=frozenset(
+            {"structured_output", "local_draft", "isolated_workspace"}
+        ),
+        allowed_roles=roles,
+        allowed_billing_routes=allowed_routes,
+        context_bytes=prepared.context_pack.raw_bytes,
+        risk=1,
+    )
+
+
+def _default_mock_execution_selection(
+    root: Path,
+    *,
+    prepared: PreparedTask,
+    run_id: str,
+) -> tuple[ExecutionSelection, str, dict[str, Any]] | None:
+    """Resolve the checked-in default profile when the project provides it.
+
+    Projects created before versioned profiles remain compatible: absence of
+    the profile document keeps their historical schema-v1 task binding.  A
+    present but invalid profile document always fails closed.
+    """
+
+    profile_path = root / DEFAULT_PROFILE_PATH
+    if not profile_path.exists():
+        return None
+    profiles = load_execution_profiles(profile_path)
+    matches = [
+        profile
+        for profile in profiles
+        if profile.profile_id == DEFAULT_MOCK_PROFILE_ID
+    ]
+    if len(matches) != 1 or matches[0].runner_id != "mock":
+        raise ConfigurationError("default mock execution profile is unavailable")
+    profile = matches[0]
+    overrides = runner_overrides_for_profile(profile)
+    evaluated_at = time.time()
+    selection = build_execution_selection(
+        run_id=run_id,
+        selection_mode="controller_default",
+        task=chief_of_staff_routing_features(prepared, lane="mock"),
+        candidates=(
+            RuntimeProfileState(
+                profile=profile,
+                billing_assessment=BillingRouteAssessment(
+                    runner_id="mock",
+                    route=BillingRoute.MOCK,
+                    confidence=AssessmentConfidence.HIGH,
+                ),
+                available=True,
+            ),
+        ),
+        task_definition_digest=prepared.contract.definition_hash,
+        context_digest=prepared.context_pack.snapshot_hash,
+        authorization_intent_digest=task_authorization_intent_digest(
+            prepared.contract
+        ),
+        evaluated_at=evaluated_at,
+    )
+    return selection, profile.profile_id, overrides
+
+
+def _assert_execution_selection_matches(
+    selection: ExecutionSelection,
+    *,
+    prepared: PreparedTask,
+    run_id: str,
+    runner_id: str,
+    profile_id: str,
+    runner_overrides: Mapping[str, Any],
+    project_root: Path,
+    source_profiles: tuple[ExecutionProfile, ...],
+) -> None:
+    """Fail before state creation when selected and executable inputs drift."""
+
+    lane = "mock" if runner_id == "mock" else "subscription"
+    expected_task_features = task_routing_features_digest(
+        chief_of_staff_routing_features(prepared, lane=lane)
+    )
+    expected_profile_ref = canonical_digest({"profile_id": profile_id})
+    expected_overrides_digest = canonical_digest(dict(runner_overrides))
+    if not source_profiles or any(
+        not isinstance(profile, ExecutionProfile) for profile in source_profiles
+    ):
+        raise ValidationError("execution selection source profiles are invalid")
+    selected_sources = [
+        profile for profile in source_profiles if profile.profile_id == profile_id
+    ]
+    if len(selected_sources) != 1:
+        raise ValidationError("execution selection source profile is invalid")
+    source_profile = selected_sources[0]
+    expected_profile_version_ref = canonical_digest(
+        {"profile_version": source_profile.version}
+    )
+    expected_profile_configuration_digest = (
+        execution_profile_configuration_digest(source_profile)
+    )
+    configured_profiles = load_execution_profiles(
+        project_root / DEFAULT_PROFILE_PATH
+    )
+    configured_by_id = {
+        profile.profile_id: profile for profile in configured_profiles
+    }
+    configured_matches = [configured_by_id.get(profile_id)]
+    if (
+        configured_matches[0] is None
+        or any(
+            configured_by_id.get(profile.profile_id) is None
+            or execution_profile_configuration_digest(
+                configured_by_id[profile.profile_id]
+            )
+            != execution_profile_configuration_digest(profile)
+            for profile in source_profiles
+        )
+        or execution_profile_configuration_digest(configured_matches[0])
+        != expected_profile_configuration_digest
+        or runner_overrides_for_profile(source_profile)
+        != dict(runner_overrides)
+    ):
+        raise ValidationError(
+            "execution selection does not match the configured profile"
+        )
+    expected_definition_digest = prepared.contract.definition_hash
+    if not expected_definition_digest.startswith("sha256:"):
+        expected_definition_digest = f"sha256:{expected_definition_digest}"
+    if (
+        selection.run_ref != canonical_digest({"run_id": run_id})
+        or selection.task_features_digest != expected_task_features
+        or selection.task_definition_digest != expected_definition_digest
+        or selection.context_digest != prepared.context_pack.snapshot_hash
+        or selection.authorization_intent_digest
+        != task_authorization_intent_digest(prepared.contract)
+        or selection.permission_class != int(prepared.contract.permission_class)
+        or selection.selected_profile_ref != expected_profile_ref
+        or selection.selected_profile_id != profile_id
+        or selection.selected_profile_version_ref
+        != expected_profile_version_ref
+        or selection.selected_profile_configuration_digest
+        != expected_profile_configuration_digest
+        or selection.selected_runner_id != runner_id
+        or selection.selected_runner_overrides_digest
+        != expected_overrides_digest
+    ):
+        raise ValidationError(
+            "execution selection does not match the immutable attempt inputs"
+        )
+    if (
+        runner_id != "mock"
+        and selection.required_valid_until
+        < selection.evaluated_at
+        + prepared.contract.timeout_seconds
+        + LIVE_RUN_EVIDENCE_MARGIN_SECONDS
+    ):
+        raise ValidationError(
+            "execution selection billing evidence horizon is insufficient"
+        )
+
+
 async def run_chief_of_staff(
     project_root: str | Path,
     *,
@@ -277,6 +477,8 @@ async def run_chief_of_staff(
     state_path: str | Path | None = None,
     run_root: str | Path | None = None,
     profile_id: str | None = None,
+    prepared_task: PreparedTask | None = None,
+    execution_selection: ExecutionSelection | None = None,
 ) -> TaskRunReport:
     """Execute one bounded Chief of Staff Lite attempt.
 
@@ -288,9 +490,16 @@ async def run_chief_of_staff(
     root = Path(project_root).resolve()
     if not root.is_dir():
         raise ConfigurationError(f"project root is not a directory: {root}")
-    prepared = prepare_chief_of_staff(
-        root, operator_instructions=operator_instructions
-    )
+    if prepared_task is None:
+        prepared = prepare_chief_of_staff(
+            root, operator_instructions=operator_instructions
+        )
+    else:
+        if not isinstance(prepared_task, PreparedTask):
+            raise ValidationError("prepared_task must be a PreparedTask")
+        prepared = prepared_task
+        if not prepared.context_pack.verify_snapshot_hash():
+            raise ValidationError("prepared task context snapshot is invalid")
     approval_policy = ApprovalPolicy()
     approval_policy.assert_executable(prepared.contract.permission_class)
     legacy_executable = approval_policy.classify(
@@ -299,8 +508,69 @@ async def run_chief_of_staff(
 
     selected_run_id = run_id or f"cos-{uuid4().hex}"
     _validate_run_identifier(selected_run_id)
-    if profile_id is not None:
-        _validate_profile_identifier(profile_id)
+    selected_profile_id = profile_id
+    if selected_profile_id is not None:
+        _validate_profile_identifier(selected_profile_id)
+
+    active_runner: AgentRunner
+    default_runner_selected = runner is None
+    if runner is None:
+        active_runner = MockRunner(
+            output=load_mock_chief_of_staff_output(root, prepared)
+        )
+    else:
+        active_runner = runner
+
+    selected_runner_overrides = dict(runner_overrides or {})
+    selected_execution = execution_selection
+    selected_source_billing_assessment: BillingRouteAssessment | None = None
+    if selected_execution is None and default_runner_selected:
+        default_selection = _default_mock_execution_selection(
+            root,
+            prepared=prepared,
+            run_id=selected_run_id,
+        )
+        if default_selection is not None:
+            (
+                selected_execution,
+                selected_profile_id,
+                selected_runner_overrides,
+            ) = default_selection
+    profile_catalog_present = (root / DEFAULT_PROFILE_PATH).exists()
+    if selected_execution is None and profile_catalog_present:
+        raise ValidationError(
+            "configured profile execution requires selection evidence"
+        )
+    if selected_execution is not None:
+        validated_execution = validate_execution_selection_payload(
+            selected_execution.to_event_payload()
+        )
+        rebuilt_execution = selected_execution.rebuild_from_controller_sources()
+        if (
+            rebuilt_execution.to_event_payload()
+            != validated_execution.to_event_payload()
+        ):
+            raise ValidationError(
+                "execution selection does not match controller-owned sources"
+            )
+        selected_execution = validated_execution
+        if selected_profile_id is None:
+            raise ValidationError(
+                "execution selection requires an explicit profile identity"
+            )
+        _assert_execution_selection_matches(
+            selected_execution,
+            prepared=prepared,
+            run_id=selected_run_id,
+            runner_id=active_runner.runner_id,
+            profile_id=selected_profile_id,
+            runner_overrides=selected_runner_overrides,
+            project_root=root,
+            source_profiles=rebuilt_execution.controller_source_profiles,
+        )
+        selected_source_billing_assessment = (
+            rebuilt_execution.selected_source_billing_assessment
+        )
     ordomata_root = _contained_path(root, resolve_state_root(root))
     selected_run_root = _contained_path(
         root, Path(run_root).resolve() if run_root is not None else ordomata_root / "runs"
@@ -318,14 +588,6 @@ async def run_chief_of_staff(
     isolated_workspace.mkdir(mode=0o700, exist_ok=False)
     selected_state_path.parent.mkdir(parents=True, exist_ok=True)
 
-    active_runner: AgentRunner
-    if runner is None:
-        active_runner = MockRunner(
-            output=load_mock_chief_of_staff_output(root, prepared)
-        )
-    else:
-        active_runner = runner
-
     request = RunRequest(
         run_id=selected_run_id,
         task_id=prepared.contract.task_id,
@@ -337,7 +599,7 @@ async def run_chief_of_staff(
         permission_class=prepared.contract.permission_class,
         timeout_seconds=prepared.contract.timeout_seconds,
         attempt=1,
-        runner_overrides=dict(runner_overrides or {}),
+        runner_overrides=selected_runner_overrides,
     )
     prompt_digest = (
         "sha256:" + hashlib.sha256(prepared.prompt.encode("utf-8")).hexdigest()
@@ -349,6 +611,30 @@ async def run_chief_of_staff(
             runner_id=active_runner.runner_id,
             context_digest=prepared.context_pack.snapshot_hash,
         )
+        execution_selection_digest: str | None = None
+        if selected_execution is not None:
+            execution_selection_payload = selected_execution.to_event_payload()
+            execution_selection_digest = selected_execution.selection_digest
+            try:
+                _append_required_event(
+                    state,
+                    selected_run_id,
+                    TASK_EXECUTION_SELECTION_EVENT_TYPE,
+                    execution_selection_payload,
+                    event_id=execution_selection_digest,
+                )
+            except BaseException as selection_error:
+                _best_effort_terminal_status(
+                    state,
+                    selected_run_id,
+                    status=(
+                        RunStatus.CANCELLED
+                        if not isinstance(selection_error, Exception)
+                        else RunStatus.FAILED
+                    ),
+                    phase="execution_selection",
+                )
+                raise
         task_binding = build_task_attempt_binding_event(
             contract=prepared.contract,
             request=request,
@@ -356,9 +642,20 @@ async def run_chief_of_staff(
             context_digest=prepared.context_pack.snapshot_hash,
             prompt_digest=prompt_digest,
             project_root=str(root),
-            profile_id=profile_id,
+            profile_id=selected_profile_id,
             authorization_intent_digest=(
                 task_authorization_intent_digest(prepared.contract)
+            ),
+            execution_selection_digest=execution_selection_digest,
+            profile_version_ref=(
+                None
+                if selected_execution is None
+                else selected_execution.selected_profile_version_ref
+            ),
+            profile_configuration_digest=(
+                None
+                if selected_execution is None
+                else selected_execution.selected_profile_configuration_digest
             ),
         )
         task_binding_digest = task_binding["binding_digest"]
@@ -390,18 +687,48 @@ async def run_chief_of_staff(
                 contract=prepared.contract,
                 run_id=selected_run_id,
                 runner_id=active_runner.runner_id,
-                profile_id=profile_id,
+                profile_id=selected_profile_id,
                 context_digest=prepared.context_pack.snapshot_hash,
                 prompt_digest=prompt_digest,
                 project_root=root,
                 task_attempt_binding_digest=task_binding_digest,
+                execution_selection_digest=execution_selection_digest,
                 evaluated_at=time.time(),
                 legacy_executable=legacy_executable,
             ),
         )
         try:
             preflight_assessment = await active_runner.inspect_billing_route()
-            _assert_runner_billing_route(active_runner.runner_id, preflight_assessment)
+            preflight_checked_at = time.time()
+            if (
+                selected_execution is not None
+                and active_runner.runner_id != "mock"
+                and selected_execution.required_valid_until
+                < preflight_checked_at + request.timeout_seconds
+            ):
+                raise BillingRouteBlocked(
+                    "execution selection billing horizon elapsed before dispatch"
+                )
+            _assert_runner_billing_route(
+                active_runner.runner_id,
+                preflight_assessment,
+                now=preflight_checked_at,
+                required_valid_until=(
+                    None
+                    if selected_execution is None
+                    else selected_execution.required_valid_until
+                ),
+            )
+            if (
+                selected_source_billing_assessment is not None
+                and not _billing_assessments_match(
+                    selected_source_billing_assessment,
+                    preflight_assessment,
+                )
+            ):
+                raise BillingRouteBlocked(
+                    "fresh billing evidence does not match execution selection"
+                )
         except OrdomataError:
             _append_terminal_event(
                 state,
@@ -477,11 +804,12 @@ async def run_chief_of_staff(
                 contract=prepared.contract,
                 run_id=selected_run_id,
                 runner_id=active_runner.runner_id,
-                profile_id=profile_id,
+                profile_id=selected_profile_id,
                 context_digest=prepared.context_pack.snapshot_hash,
                 prompt_digest=prompt_digest,
                 project_root=root,
                 task_attempt_binding_digest=task_binding_digest,
+                execution_selection_digest=execution_selection_digest,
                 runner_overrides=request.runner_overrides,
                 timeout_seconds=request.timeout_seconds,
                 attempt=request.attempt,
@@ -523,7 +851,7 @@ async def run_chief_of_staff(
                 _record_billing_outcome(
                     state,
                     run_id=selected_run_id,
-                    profile_id=profile_id,
+                    profile_id=selected_profile_id,
                     preflight_assessment=preflight_assessment,
                     postflight_assessment=None,
                     disposition=_unknown_billing_disposition(
@@ -548,7 +876,7 @@ async def run_chief_of_staff(
                 _record_billing_outcome(
                     state,
                     run_id=selected_run_id,
-                    profile_id=profile_id,
+                    profile_id=selected_profile_id,
                     preflight_assessment=preflight_assessment,
                     postflight_assessment=None,
                     disposition=_unknown_billing_disposition(
@@ -574,7 +902,7 @@ async def run_chief_of_staff(
                 event_count=event_count,
                 preflight_assessment=preflight_assessment,
                 expected_runner_id=active_runner.runner_id,
-                profile_id=profile_id,
+                profile_id=selected_profile_id,
                 legacy_executable=legacy_executable,
                 task_attempt_binding_digest=task_binding_digest,
             )
@@ -861,6 +1189,9 @@ def _finalize_result(
 def _assert_runner_billing_route(
     runner_id: str,
     assessment: BillingRouteAssessment,
+    *,
+    now: float | None = None,
+    required_valid_until: float | None = None,
 ) -> None:
     if assessment.runner_id != runner_id:
         raise BillingRouteBlocked("billing assessment runner identity mismatch")
@@ -873,7 +1204,11 @@ def _assert_runner_billing_route(
         raise BillingRouteBlocked(
             f"runner {runner_id!r} requires billing route {expected.value!r}"
         )
-    BillingPolicy.assert_route_allowed(assessment)
+    BillingPolicy.assert_route_allowed(
+        assessment,
+        now=now,
+        required_valid_until=required_valid_until,
+    )
 
 
 def _billing_assessments_match(

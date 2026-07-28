@@ -39,7 +39,15 @@ from .authorization import (
     canonical_digest,
     derive_permission_class_from_attributes,
 )
-from .errors import ConfigurationError
+from .errors import ConfigurationError, ValidationError
+from .execution_selection import (
+    EXECUTION_SELECTION_KIND,
+    EXECUTION_SELECTION_MODES,
+    MAX_EXECUTION_SELECTION_CANDIDATES,
+    TASK_EXECUTION_SELECTION_EVENT_TYPE,
+    routing_policy_digest,
+    validate_execution_selection_payload,
+)
 from .models import (
     AssessmentConfidence,
     BillingRoute,
@@ -51,6 +59,11 @@ from .models import (
     PermissionClass,
     RunStatus,
     UsageObservation,
+)
+from .routing import (
+    ROUTING_POLICY_ID,
+    ROUTING_POLICY_VERSION,
+    ROUTING_REJECTION_CODES,
 )
 from .state import (
     RecordNotFoundError,
@@ -136,6 +149,7 @@ _MAX_COMPARISON_BILLING_EVENTS_PER_RUN = 2
 _MAX_COMPARISON_ACCOUNTING_EVENTS_PER_RUN = 2
 _MAX_COMPARISON_ARTIFACT_EVENTS_PER_TYPE_PER_RUN = 2
 _MAX_TASK_BINDING_EVENTS_PER_RUN = 2
+_MAX_TASK_EXECUTION_SELECTION_EVENTS_PER_RUN = 2
 _MAX_TASK_ARTIFACT_EVENTS_PER_TYPE_PER_RUN = 2
 _MAX_TASK_ARTIFACT_METADATA_PER_RUN = 32
 _MAX_RUNNER_EVENTS_PER_RUN = 4096
@@ -195,6 +209,61 @@ _TASK_SUCCESS_TERMINAL_KEYS = frozenset(
         "billing_quarantine_required",
         "runner_status",
     }
+)
+_EXECUTION_SELECTION_TASK_KEYS = frozenset(
+    {
+        "allowed_billing_routes",
+        "allowed_roles",
+        "context_bytes",
+        "permission_class",
+        "required_capabilities",
+        "risk",
+        "task_kind",
+    }
+)
+_EXECUTION_SELECTION_CANDIDATE_KEYS = frozenset(
+    {
+        "allowed_billing_routes",
+        "billing",
+        "billing_projection_digest",
+        "candidate_order",
+        "capabilities",
+        "disposition",
+        "latency_prior_seconds",
+        "max_context_bytes",
+        "max_permission_class",
+        "model_ref",
+        "profile_id",
+        "profile_configuration_digest",
+        "profile_ref",
+        "profile_version_ref",
+        "quality_prior",
+        "rank",
+        "rejection_codes",
+        "role",
+        "runner_id",
+        "runner_overrides_digest",
+        "runtime",
+        "score_vector",
+        "settings_digest",
+        "task_kinds",
+    }
+)
+_EXECUTION_SELECTION_SELECTED_KEYS = frozenset(
+    {
+        "model_ref",
+        "profile_id",
+        "profile_configuration_digest",
+        "profile_ref",
+        "profile_version_ref",
+        "rank",
+        "runner_id",
+        "runner_overrides_digest",
+        "settings_digest",
+    }
+)
+_EXECUTION_SELECTION_SELECTED_CANDIDATE_KEYS = (
+    _EXECUTION_SELECTION_SELECTED_KEYS.difference({"rank"})
 )
 
 
@@ -402,6 +471,7 @@ class _RunFacts:
     comparison_artifact_observed_event_count: int
     comparison_artifact_action_receipt_event_count: int
     task_binding_event_count: int
+    task_execution_selection_event_count: int
     task_artifact_intent_event_count: int
     task_artifact_action_receipt_event_count: int
     task_artifact_metadata_count: int
@@ -476,6 +546,19 @@ class _TaskAttemptBindingFacts:
     authorization_action_receipt_coverage: str = (
         TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE
     )
+    schema_version: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _TaskExecutionSelectionFacts:
+    """Validated profile-selection evidence retained only for inspection."""
+
+    observed: bool
+    sequence: int | None
+    selection: Mapping[str, Any] | None
+    selection_digest: str | None
+    selected: Mapping[str, Any] | None
+    issues: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -620,6 +703,12 @@ def inspect_authorization_shadows(
                         connection,
                         facts,
                     )
+                    task_execution_selection_rows = (
+                        _read_task_execution_selection_events(
+                            connection,
+                            facts,
+                        )
+                    )
                     task_artifact_rows = _read_task_artifact_receipt_events(
                         connection,
                         facts,
@@ -644,6 +733,7 @@ def inspect_authorization_shadows(
                     comparison_accounting_rows = ()
                     comparison_artifact_rows = ()
                     task_binding_rows = ()
+                    task_execution_selection_rows = ()
                     task_artifact_rows = ()
                     task_artifact_metadata_rows = ()
                     runner_event_rows = ()
@@ -725,6 +815,20 @@ def inspect_authorization_shadows(
         ):
             task_binding_rows_by_run[raw_event_run_id].append(row)
 
+    task_execution_selection_rows_by_run: dict[
+        str, list[sqlite3.Row]
+    ] = {fact.raw_run_id: [] for fact in facts}
+    for row in task_execution_selection_rows:
+        raw_event_run_id = row["run_id"]
+        if (
+            isinstance(raw_event_run_id, str)
+            and raw_event_run_id
+            in task_execution_selection_rows_by_run
+        ):
+            task_execution_selection_rows_by_run[raw_event_run_id].append(
+                row
+            )
+
     task_artifact_rows_by_run: dict[str, list[sqlite3.Row]] = {
         fact.raw_run_id: [] for fact in facts
     }
@@ -780,6 +884,11 @@ def inspect_authorization_shadows(
         task_binding = _inspect_task_attempt_binding(
             fact,
             task_binding_rows_by_run[fact.raw_run_id],
+        )
+        task_execution_selection = _inspect_task_execution_selection(
+            fact,
+            task_binding,
+            task_execution_selection_rows_by_run[fact.raw_run_id],
         )
         valid_task_binding = (
             task_binding.binding is not None and not task_binding.issues
@@ -865,6 +974,7 @@ def inspect_authorization_shadows(
                 comparison_accounting=comparison_accounting,
                 comparison_artifact_receipts=comparison_artifact_receipts,
                 task_binding=task_binding,
+                task_execution_selection=task_execution_selection,
                 task_billing=task_billing,
                 task_accounting=task_accounting,
                 task_artifact_receipts=task_artifact_receipts,
@@ -904,6 +1014,7 @@ def inspect_authorization_shadows(
         run_issues = [
             *fact.issues,
             *task_binding.issues,
+            *task_execution_selection.issues,
             *task_billing.issues,
             *comparison_binding.issues,
             *comparison_billing.issues,
@@ -995,6 +1106,38 @@ def inspect_authorization_shadows(
             if event.action_scope is not None
         }
         admission_sequence = sequences_by_scope.get(ADMISSION_SCOPE)
+        if (
+            task_execution_selection.observed
+            and task_execution_selection.sequence is not None
+        ):
+            selection_sequence = task_execution_selection.sequence
+            if (
+                (
+                    fact.created_sequence is not None
+                    and selection_sequence <= fact.created_sequence
+                )
+                or (
+                    task_binding.sequence is not None
+                    and selection_sequence >= task_binding.sequence
+                )
+                or (
+                    admission_sequence is not None
+                    and selection_sequence >= admission_sequence
+                )
+                or (
+                    fact.billing_sequence is not None
+                    and selection_sequence >= fact.billing_sequence
+                )
+                or (
+                    fact.running_sequence is not None
+                    and selection_sequence >= fact.running_sequence
+                )
+                or (
+                    fact.terminal_sequence is not None
+                    and selection_sequence >= fact.terminal_sequence
+                )
+            ):
+                run_issues.append("execution_selection_order_invalid")
         if task_binding.observed and task_binding.sequence is not None:
             if (
                 (
@@ -1497,6 +1640,11 @@ def _read_run_facts(
                   AND task_binding.event_type = ?
             ) AS task_binding_event_count
             ,(
+                SELECT COUNT(*) FROM run_events execution_selection
+                WHERE execution_selection.run_id = r.run_id
+                  AND execution_selection.event_type = ?
+            ) AS task_execution_selection_event_count
+            ,(
                 SELECT COUNT(*) FROM run_events task_artifact_intent
                 WHERE task_artifact_intent.run_id = r.run_id
                   AND task_artifact_intent.event_type = ?
@@ -1567,6 +1715,7 @@ def _read_run_facts(
             COMPARISON_REVIEW_ARTIFACT_OBSERVED_EVENT_TYPE,
             COMPARISON_REVIEW_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
             TASK_ATTEMPT_BINDING_EVENT_TYPE,
+            TASK_EXECUTION_SELECTION_EVENT_TYPE,
             TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
             TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
             *parameters,
@@ -1662,6 +1811,9 @@ def _read_run_facts(
                     "invalid comparison artifact event count"
                 )
         task_binding_event_count = row["task_binding_event_count"]
+        task_execution_selection_event_count = row[
+            "task_execution_selection_event_count"
+        ]
         task_artifact_intent_event_count = row[
             "task_artifact_intent_event_count"
         ]
@@ -1671,6 +1823,7 @@ def _read_run_facts(
         task_artifact_metadata_count = row["task_artifact_metadata_count"]
         for value in (
             task_binding_event_count,
+            task_execution_selection_event_count,
             task_artifact_intent_event_count,
             task_artifact_action_receipt_event_count,
             task_artifact_metadata_count,
@@ -1727,6 +1880,9 @@ def _read_run_facts(
                     comparison_artifact_action_receipt_event_count
                 ),
                 task_binding_event_count=task_binding_event_count,
+                task_execution_selection_event_count=(
+                    task_execution_selection_event_count
+                ),
                 task_artifact_intent_event_count=(
                     task_artifact_intent_event_count
                 ),
@@ -1977,6 +2133,45 @@ def _read_task_binding_events(
         SELECT event_id, run_id, sequence, occurred_at, payload_json
         FROM ranked_task_bindings
         WHERE binding_rank <= ?
+        ORDER BY run_id, sequence
+        """,
+        parameters,
+    ).fetchall()
+    return tuple(rows)
+
+
+def _read_task_execution_selection_events(
+    connection: sqlite3.Connection,
+    facts: tuple[_RunFacts, ...],
+) -> tuple[sqlite3.Row, ...]:
+    """Read at most two selections so duplicate evidence remains detectable."""
+
+    if not facts:
+        return ()
+    placeholders = ",".join("?" for _ in facts)
+    parameters: tuple[Any, ...] = (
+        TASK_EXECUTION_SELECTION_EVENT_TYPE,
+        *(fact.raw_run_id for fact in facts),
+        _MAX_TASK_EXECUTION_SELECTION_EVENTS_PER_RUN,
+    )
+    rows = connection.execute(
+        f"""
+        WITH ranked_task_execution_selections AS (
+            SELECT
+                event_id,
+                run_id,
+                sequence,
+                occurred_at,
+                payload_json,
+                ROW_NUMBER() OVER (
+                    PARTITION BY run_id ORDER BY sequence
+                ) AS selection_rank
+            FROM run_events
+            WHERE event_type = ? AND run_id IN ({placeholders})
+        )
+        SELECT event_id, run_id, sequence, occurred_at, payload_json
+        FROM ranked_task_execution_selections
+        WHERE selection_rank <= ?
         ORDER BY run_id, sequence
         """,
         parameters,
@@ -2259,7 +2454,7 @@ def _inspect_task_attempt_binding(
     if (
         isinstance(schema_version, bool)
         or not isinstance(schema_version, int)
-        or schema_version != 1
+        or schema_version not in {1, 2}
         or payload.get("authorization_shadow_coverage")
         != TASK_ATTEMPT_SHADOW_COVERAGE
         or payload.get("authorization_action_receipt_coverage")
@@ -2270,7 +2465,10 @@ def _inspect_task_attempt_binding(
             "task_binding_payload_invalid",
         )
     binding = payload.get("binding")
-    if not _is_task_attempt_binding_shape(binding):
+    if not _is_task_attempt_binding_shape(
+        binding,
+        schema_version=schema_version,
+    ):
         return _invalid_task_binding(
             sequence,
             "task_binding_payload_invalid",
@@ -2309,6 +2507,7 @@ def _inspect_task_attempt_binding(
         binding,
         binding_digest,
         tuple(issues),
+        schema_version=schema_version,
     )
 
 
@@ -2317,6 +2516,571 @@ def _invalid_task_binding(
     issue: str,
 ) -> _TaskAttemptBindingFacts:
     return _TaskAttemptBindingFacts(True, sequence, None, None, (issue,))
+
+
+def _inspect_task_execution_selection(
+    fact: _RunFacts,
+    task_binding: _TaskAttemptBindingFacts,
+    rows: list[sqlite3.Row],
+) -> _TaskExecutionSelectionFacts:
+    """Validate one bounded, controller-authored profile-selection record."""
+
+    required = task_binding.schema_version == 2
+    if fact.task_execution_selection_event_count == 0:
+        return _TaskExecutionSelectionFacts(
+            False,
+            None,
+            None,
+            None,
+            None,
+            ("execution_selection_missing",) if required else (),
+        )
+    if (
+        fact.task_execution_selection_event_count != 1
+        or len(rows) != 1
+    ):
+        return _TaskExecutionSelectionFacts(
+            True,
+            None,
+            None,
+            None,
+            None,
+            ("execution_selection_duplicate",),
+        )
+
+    row = rows[0]
+    sequence = _optional_sequence(row["sequence"])
+    payload = _bounded_json_mapping(row["payload_json"])
+    if (
+        payload is None
+        or set(payload) != {"schema_version", "selection", "selection_digest"}
+        or payload.get("schema_version") != 1
+    ):
+        return _invalid_task_execution_selection(
+            sequence,
+            "execution_selection_payload_invalid",
+        )
+    selection = payload.get("selection")
+    if not isinstance(selection, Mapping) or set(selection) != {
+        "authorization_intent_digest",
+        "candidate_set_digest",
+        "candidates",
+        "context_digest",
+        "evaluated_at",
+        "kind",
+        "routing_policy_digest",
+        "routing_policy_id",
+        "routing_policy_version",
+        "required_valid_until",
+        "run_ref",
+        "selected",
+        "selection_mode",
+        "task",
+        "task_definition_digest",
+        "task_features_digest",
+    }:
+        return _invalid_task_execution_selection(
+            sequence,
+            "execution_selection_payload_invalid",
+        )
+    selection_digest = payload.get("selection_digest")
+    issues: list[str] = []
+    if not _digest_matches(selection_digest, selection):
+        issues.append("execution_selection_digest_mismatch")
+        selection_digest = None
+    if _optional_timestamp(row["occurred_at"]) is None:
+        issues.append("execution_selection_timestamp_invalid")
+    if row["event_id"] != payload.get("selection_digest"):
+        issues.append("execution_selection_event_identifier_mismatch")
+    issues.extend(_inspect_execution_selection_projection(selection))
+    try:
+        validate_execution_selection_payload(payload)
+    except (ValidationError, TypeError, ValueError, RecursionError):
+        issues.append("execution_selection_payload_invalid")
+
+    selected = selection.get("selected")
+    if selected is not None and not isinstance(selected, Mapping):
+        issues.append("execution_selection_payload_invalid")
+        selected = None
+    binding = task_binding.binding
+    if task_binding.schema_version != 2:
+        issues.append("execution_selection_unbound")
+    elif not isinstance(binding, Mapping) or task_binding.issues:
+        issues.append("execution_selection_binding_mismatch")
+    elif (
+        selection_digest is None
+        or binding.get("execution_selection_digest") != selection_digest
+        or selection.get("run_ref") != fact.run_ref
+        or selection.get("task_definition_digest")
+        != binding.get("task_definition_digest")
+        or _normalize_sha256_digest(selection.get("context_digest"))
+        != _normalize_sha256_digest(binding.get("context_digest"))
+        or selection.get("authorization_intent_digest")
+        != binding.get("authorization_intent_digest")
+        or not isinstance(selected, Mapping)
+        or selected.get("profile_ref") != binding.get("profile_ref")
+        or selected.get("profile_version_ref")
+        != binding.get("profile_version_ref")
+        or selected.get("profile_configuration_digest")
+        != binding.get("profile_configuration_digest")
+        or selected.get("runner_id") != binding.get("runner_id")
+        or selected.get("runner_overrides_digest")
+        != binding.get("runner_overrides_digest")
+    ):
+        issues.append("execution_selection_binding_mismatch")
+
+    task = selection.get("task")
+    if (
+        not isinstance(task, Mapping)
+        or selection.get("run_ref") != fact.run_ref
+        or selection.get("task_definition_digest")
+        != (
+            binding.get("task_definition_digest")
+            if isinstance(binding, Mapping)
+            else None
+        )
+        or _normalize_sha256_digest(selection.get("context_digest"))
+        != _normalize_sha256_digest(fact.raw_context_digest)
+        or task.get("permission_class") != fact.permission_class
+        or (
+            isinstance(selected, Mapping)
+            and selected.get("runner_id") != fact.raw_runner_id
+        )
+    ):
+        issues.append("execution_selection_record_mismatch")
+
+    return _TaskExecutionSelectionFacts(
+        True,
+        sequence,
+        selection,
+        selection_digest,
+        selected if isinstance(selected, Mapping) else None,
+        tuple(sorted(set(issues))),
+    )
+
+
+def _invalid_task_execution_selection(
+    sequence: int | None,
+    issue: str,
+) -> _TaskExecutionSelectionFacts:
+    return _TaskExecutionSelectionFacts(
+        True,
+        sequence,
+        None,
+        None,
+        None,
+        (issue,),
+    )
+
+
+def _inspect_execution_selection_projection(
+    selection: Mapping[str, Any],
+) -> tuple[str, ...]:
+    """Recompute safe internal links without projecting candidate details."""
+
+    issues: list[str] = []
+    task = selection.get("task")
+    if not isinstance(task, Mapping) or set(task) != _EXECUTION_SELECTION_TASK_KEYS:
+        issues.append("execution_selection_payload_invalid")
+    elif not _digest_matches(selection.get("task_features_digest"), task):
+        issues.append("execution_selection_task_features_digest_mismatch")
+
+    if (
+        selection.get("routing_policy_id") != ROUTING_POLICY_ID
+        or selection.get("routing_policy_version") != ROUTING_POLICY_VERSION
+        or selection.get("routing_policy_digest") != routing_policy_digest()
+    ):
+        issues.append("execution_selection_policy_digest_mismatch")
+    evaluated_at = _optional_timestamp(selection.get("evaluated_at"))
+    required_valid_until = _optional_timestamp(
+        selection.get("required_valid_until")
+    )
+    if (
+        selection.get("kind") != EXECUTION_SELECTION_KIND
+        or selection.get("selection_mode") not in EXECUTION_SELECTION_MODES
+        or not _is_digest(selection.get("run_ref"))
+        or not _is_digest(selection.get("task_definition_digest"))
+        or not _is_digest(selection.get("context_digest"))
+        or not _is_digest(selection.get("authorization_intent_digest"))
+        or evaluated_at is None
+        or required_valid_until is None
+        or required_valid_until < evaluated_at
+    ):
+        issues.append("execution_selection_payload_invalid")
+
+    candidates = selection.get("candidates")
+    if not isinstance(candidates, list):
+        issues.append("execution_selection_payload_invalid")
+        return tuple(sorted(set(issues)))
+    if (
+        len(candidates) == 0
+        or len(candidates) > MAX_EXECUTION_SELECTION_CANDIDATES
+    ):
+        issues.append("execution_selection_candidate_limit_exceeded")
+    if not _digest_matches_sequence(
+        selection.get("candidate_set_digest"),
+        candidates,
+    ):
+        issues.append("execution_selection_candidate_set_digest_mismatch")
+
+    candidate_mappings: list[Mapping[str, Any]] = []
+    candidate_profile_ids: set[str] = set()
+    ordered_candidate_profile_ids: list[str] = []
+    candidate_refs: set[str] = set()
+    eligible_ranks: list[int] = []
+    for expected_order, candidate in enumerate(candidates):
+        if (
+            not isinstance(candidate, Mapping)
+            or set(candidate) != _EXECUTION_SELECTION_CANDIDATE_KEYS
+        ):
+            issues.append("execution_selection_payload_invalid")
+            continue
+        candidate_mappings.append(candidate)
+        profile_id = candidate.get("profile_id")
+        profile_ref = candidate.get("profile_ref")
+        if not _is_execution_selection_profile_id(profile_id):
+            issues.append("execution_selection_payload_invalid")
+        else:
+            assert isinstance(profile_id, str)
+            ordered_candidate_profile_ids.append(profile_id)
+            if profile_id in candidate_profile_ids:
+                issues.append("execution_selection_candidate_order_invalid")
+            candidate_profile_ids.add(profile_id)
+            if profile_ref != canonical_digest({"profile_id": profile_id}):
+                issues.append("execution_selection_profile_reference_mismatch")
+        if (
+            candidate.get("candidate_order") != expected_order
+            or not _is_digest(profile_ref)
+            or profile_ref in candidate_refs
+        ):
+            issues.append("execution_selection_candidate_order_invalid")
+        elif isinstance(profile_ref, str):
+            candidate_refs.add(profile_ref)
+        if not _digest_matches(
+            candidate.get("billing_projection_digest"),
+            candidate.get("billing"),
+        ):
+            issues.append("execution_selection_billing_digest_mismatch")
+        billing = candidate.get("billing")
+        if isinstance(billing, Mapping):
+            policy_allowed = billing.get("policy_allowed")
+            policy_blockers = billing.get("policy_blocker_codes")
+            if (
+                not isinstance(policy_allowed, bool)
+                or not isinstance(policy_blockers, list)
+                or policy_allowed != (len(policy_blockers) == 0)
+            ):
+                issues.append("execution_selection_policy_evidence_mismatch")
+        rejection_codes = candidate.get("rejection_codes")
+        if (
+            not isinstance(rejection_codes, list)
+            or any(code not in ROUTING_REJECTION_CODES for code in rejection_codes)
+            or len(rejection_codes) != len(set(rejection_codes))
+            or rejection_codes
+            != sorted(
+                rejection_codes,
+                key=ROUTING_REJECTION_CODES.index,
+            )
+        ):
+            issues.append("execution_selection_rejection_codes_mismatch")
+        recomputed_rejection_codes = (
+            _recompute_execution_selection_rejection_codes(task, candidate)
+            if isinstance(task, Mapping)
+            else None
+        )
+        if (
+            recomputed_rejection_codes is None
+            or rejection_codes != list(recomputed_rejection_codes)
+        ):
+            issues.append("execution_selection_rejection_codes_mismatch")
+        disposition = candidate.get("disposition")
+        rank = candidate.get("rank")
+        score_vector = candidate.get("score_vector")
+        if disposition == "eligible":
+            if rejection_codes != [] or not _is_execution_selection_score_vector(
+                score_vector
+            ) or isinstance(rank, bool) or not isinstance(rank, int) or rank < 0:
+                issues.append("execution_selection_ranking_mismatch")
+            else:
+                eligible_ranks.append(rank)
+                recomputed_score = _recompute_execution_selection_score(
+                    task,
+                    candidate,
+                )
+                if (
+                    recomputed_score is None
+                    or score_vector != list(recomputed_score)
+                ):
+                    issues.append("execution_selection_score_vector_mismatch")
+        elif disposition == "rejected":
+            if not rejection_codes or score_vector is not None or rank is not None:
+                issues.append("execution_selection_ranking_mismatch")
+        else:
+            issues.append("execution_selection_payload_invalid")
+
+    if ordered_candidate_profile_ids != sorted(ordered_candidate_profile_ids):
+        issues.append("execution_selection_candidate_order_invalid")
+
+    if eligible_ranks and tuple(sorted(eligible_ranks)) != tuple(
+        range(len(eligible_ranks))
+    ):
+        issues.append("execution_selection_ranking_mismatch")
+    try:
+        recomputed_ranking = _recompute_execution_selection_ranking(
+            task,
+            candidate_mappings,
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        recomputed_ranking = None
+    if recomputed_ranking is None:
+        issues.append("execution_selection_ranking_mismatch")
+    else:
+        eligible_candidates = tuple(
+            item
+            for item in candidate_mappings
+            if item.get("disposition") == "eligible"
+        )
+        if any(
+            isinstance(item.get("rank"), bool)
+            or not isinstance(item.get("rank"), int)
+            for item in eligible_candidates
+        ):
+            observed_ranking = ()
+        else:
+            observed_ranking = tuple(
+                candidate.get("profile_ref")
+                for candidate in sorted(
+                    eligible_candidates,
+                    key=lambda item: item["rank"],
+                )
+            )
+        if observed_ranking != recomputed_ranking:
+            issues.append("execution_selection_ranking_mismatch")
+    selected = selection.get("selected")
+    if not isinstance(selected, Mapping) or set(selected) != _EXECUTION_SELECTION_SELECTED_KEYS:
+        issues.append("execution_selection_selected_candidate_mismatch")
+    else:
+        selected_profile_id = selected.get("profile_id")
+        if not _is_execution_selection_profile_id(selected_profile_id):
+            issues.append("execution_selection_payload_invalid")
+        elif selected.get("profile_ref") != canonical_digest(
+            {"profile_id": selected_profile_id}
+        ):
+            issues.append("execution_selection_profile_reference_mismatch")
+        if not any(
+            candidate.get("disposition") == "eligible"
+            and all(
+                candidate.get(key) == selected.get(key)
+                for key in _EXECUTION_SELECTION_SELECTED_CANDIDATE_KEYS
+            )
+            and candidate.get("rank") == selected.get("rank")
+            for candidate in candidate_mappings
+        ):
+            issues.append("execution_selection_selected_candidate_mismatch")
+    return tuple(sorted(set(issues)))
+
+
+def _digest_matches_sequence(reported: Any, value: list[Any]) -> bool:
+    if not _is_digest(reported):
+        return False
+    try:
+        return reported == canonical_digest(value)
+    except (TypeError, ValueError, RecursionError):
+        return False
+
+
+def _is_execution_selection_profile_id(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and _SAFE_IDENTIFIER_PATTERN.fullmatch(value) is not None
+    )
+
+
+def _is_execution_selection_score_vector(value: Any) -> bool:
+    if not isinstance(value, list) or len(value) != 6:
+        return False
+    return all(
+        item is None
+        or (
+            not isinstance(item, bool)
+            and isinstance(item, (int, float))
+            and math.isfinite(float(item))
+        )
+        for item in value
+    )
+
+
+def _recompute_execution_selection_rejection_codes(
+    task: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+) -> tuple[str, ...] | None:
+    billing = candidate.get("billing")
+    runtime = candidate.get("runtime")
+    if not isinstance(billing, Mapping) or not isinstance(runtime, Mapping):
+        return None
+    try:
+        codes: list[str] = []
+        route = billing["route"]
+        if billing["runner_id"] != candidate["runner_id"]:
+            codes.append("billing_runner_identity_mismatch")
+        if billing["confidence"] != AssessmentConfidence.HIGH.value:
+            codes.append("billing_confidence_not_high")
+        if billing["policy_allowed"] is not True:
+            codes.append("billing_route_prohibited")
+        profile_routes = candidate["allowed_billing_routes"]
+        if not profile_routes:
+            codes.append("profile_billing_route_allowlist_missing")
+        elif route not in profile_routes:
+            codes.append("profile_billing_route_not_allowed")
+        if runtime["available"] is not True:
+            codes.append("profile_unavailable")
+        if runtime["cooldown_active"] is True:
+            codes.append("profile_cooldown_active")
+        if runtime["subscription_capacity_available"] is not True:
+            codes.append("subscription_capacity_unavailable")
+        if task["permission_class"] > candidate["max_permission_class"]:
+            codes.append("permission_class_exceeds_profile_limit")
+        task_kinds = candidate["task_kinds"]
+        if task_kinds and task["task_kind"] not in task_kinds:
+            codes.append("task_kind_unsupported")
+        allowed_roles = task["allowed_roles"]
+        if allowed_roles and candidate["role"] not in allowed_roles:
+            codes.append("profile_role_not_enabled")
+        lane_routes = task["allowed_billing_routes"]
+        if lane_routes and route not in lane_routes:
+            codes.append("lane_billing_route_not_enabled")
+        if set(task["required_capabilities"]).difference(
+            candidate["capabilities"]
+        ):
+            codes.append("required_capability_missing")
+        max_context_bytes = candidate["max_context_bytes"]
+        if (
+            max_context_bytes is not None
+            and task["context_bytes"] > max_context_bytes
+        ):
+            codes.append("context_exceeds_profile_limit")
+    except (KeyError, TypeError, ValueError):
+        return None
+    return tuple(codes)
+
+
+def _recompute_execution_selection_score(
+    task: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+) -> tuple[float | None, ...] | None:
+    runtime = candidate.get("runtime")
+    if not isinstance(runtime, Mapping):
+        return None
+    try:
+        success = float(runtime["verified_success_rate"]["value"])
+        accepted = float(runtime["accepted_result_rate"]["value"])
+        recent_failure_rate = float(runtime["recent_failure_rate"])
+        evidence_count = int(runtime["evidence_count"])
+        permission_headroom = float(
+            candidate["max_permission_class"] - task["permission_class"]
+        )
+        risk = float(task["risk"])
+        latency = float(runtime["median_latency_seconds"]["value"])
+        efficiency_projection = runtime["subscription_efficiency"]
+        efficiency = (
+            None
+            if efficiency_projection["source"] == "unavailable"
+            else round(float(efficiency_projection["value"]), 6)
+        )
+        values: tuple[float | None, ...] = (
+            round(success * (1.0 - recent_failure_rate), 6),
+            round(accepted, 6),
+            round(min(evidence_count / 20.0, 1.0), 6),
+            -risk - permission_headroom,
+            efficiency,
+            -round(latency, 6),
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    if any(
+        value is not None and not math.isfinite(float(value))
+        for value in values
+    ):
+        return None
+    return values
+
+
+def _recompute_execution_selection_ranking(
+    task: Any,
+    candidates: list[Mapping[str, Any]],
+) -> tuple[str, ...] | None:
+    if not isinstance(task, Mapping):
+        return None
+    scored: list[tuple[Mapping[str, Any], tuple[float | None, ...]]] = []
+    for candidate in candidates:
+        if not _is_execution_selection_profile_id(candidate.get("profile_id")):
+            return None
+        if candidate.get("disposition") != "eligible":
+            continue
+        score = _recompute_execution_selection_score(task, candidate)
+        if score is None:
+            return None
+        scored.append((candidate, score))
+
+    quality_groups: dict[
+        tuple[float | None, ...],
+        list[tuple[Mapping[str, Any], tuple[float | None, ...]]],
+    ] = {}
+    for item in scored:
+        quality_groups.setdefault(item[1][:4], []).append(item)
+
+    ranked: list[str] = []
+    for quality_key in sorted(quality_groups, reverse=True):
+        buckets: dict[
+            tuple[Any, ...],
+            list[tuple[Mapping[str, Any], tuple[float | None, ...]]],
+        ] = {}
+        for item in sorted(
+            quality_groups[quality_key],
+            key=lambda item: item[0].get("profile_id"),
+        ):
+            candidate, score = item
+            runtime = candidate.get("runtime")
+            if not isinstance(runtime, Mapping):
+                return None
+            efficiency = runtime.get("subscription_efficiency")
+            if not isinstance(efficiency, Mapping):
+                return None
+            if efficiency.get("source") == "unavailable":
+                key = ("unavailable", candidate.get("profile_id"))
+            else:
+                key = (
+                    "comparable",
+                    candidate.get("runner_id"),
+                    efficiency.get("pool_ref"),
+                    efficiency.get("unit_ref"),
+                )
+            buckets.setdefault(key, []).append(item)
+        for key, bucket in buckets.items():
+            if key[0] == "comparable":
+                bucket.sort(
+                    key=lambda item: (
+                        -float(item[1][4]),
+                        -float(item[1][5]),
+                        item[0].get("profile_id"),
+                    )
+                )
+        while buckets:
+            selected_key = min(
+                buckets,
+                key=lambda key: (
+                    -float(buckets[key][0][1][5]),
+                    buckets[key][0][0].get("profile_id"),
+                ),
+            )
+            selected = buckets[selected_key].pop(0)
+            profile_ref = selected[0].get("profile_ref")
+            if not isinstance(profile_ref, str):
+                return None
+            ranked.append(profile_ref)
+            if not buckets[selected_key]:
+                del buckets[selected_key]
+    return tuple(ranked)
 
 
 def _inspect_comparison_binding(
@@ -4355,6 +5119,7 @@ def _inspect_event(
     comparison_accounting: _ComparisonAccountingFacts,
     comparison_artifact_receipts: _ComparisonArtifactReceiptFacts,
     task_binding: _TaskAttemptBindingFacts,
+    task_execution_selection: _TaskExecutionSelectionFacts,
     task_billing: _TaskBillingFacts,
     task_accounting: _TaskAccountingFacts,
     task_artifact_receipts: _TaskArtifactReceiptFacts,
@@ -4610,6 +5375,7 @@ def _inspect_event(
                 expected_task_version=expected_task_version,
                 expected_permission_class=expected_permission_class,
                 task_binding=task_binding,
+                task_execution_selection=task_execution_selection,
                 task_billing=task_billing,
             )
         )
@@ -5127,6 +5893,7 @@ def _inspect_task_boundary_shadow_binding(
     expected_task_version: Any,
     expected_permission_class: int | None,
     task_binding: _TaskAttemptBindingFacts,
+    task_execution_selection: _TaskExecutionSelectionFacts,
     task_billing: _TaskBillingFacts,
 ) -> tuple[str, ...]:
     """Bind ordinary admission and dispatch shadows to immutable inputs."""
@@ -5149,6 +5916,14 @@ def _inspect_task_boundary_shadow_binding(
         "authorization_intent_digest"
     ]:
         issues.append("task_boundary_intent_binding_mismatch")
+    if task_binding.schema_version == 2:
+        selection_digest = binding.get("execution_selection_digest")
+        if (
+            task_execution_selection.issues
+            or task_execution_selection.selection_digest
+            != selection_digest
+        ):
+            issues.append("execution_selection_boundary_binding_mismatch")
     if payload.get("failure_stage") == "request_construction":
         return tuple(issues)
     if not isinstance(request, Mapping):
@@ -5230,6 +6005,10 @@ def _inspect_task_boundary_shadow_binding(
             != ("closed" if mock_runner else "unknown")
         ):
             issues.append("task_dispatch_billing_binding_mismatch")
+    if task_binding.schema_version == 2:
+        parameters["execution_selection_digest"] = binding[
+            "execution_selection_digest"
+        ]
     if resource.get("content_digest") != expected_content_digest:
         issues.append("task_boundary_request_binding_mismatch")
 
@@ -6058,10 +6837,14 @@ def _is_comparison_binding_shape(value: Any) -> bool:
     )
 
 
-def _is_task_attempt_binding_shape(value: Any) -> bool:
+def _is_task_attempt_binding_shape(
+    value: Any,
+    *,
+    schema_version: int,
+) -> bool:
     """Accept only the fixed digest-only ordinary task binding schema."""
 
-    if not isinstance(value, Mapping) or set(value) != {
+    expected_keys = {
         "attempt",
         "authorization_intent_digest",
         "context_digest",
@@ -6078,8 +6861,7 @@ def _is_task_attempt_binding_shape(value: Any) -> bool:
         "task_id",
         "task_version",
         "timeout_seconds",
-    }:
-        return False
+    }
     digest_fields = {
         "authorization_intent_digest",
         "context_digest",
@@ -6091,6 +6873,25 @@ def _is_task_attempt_binding_shape(value: Any) -> bool:
         "runner_overrides_digest",
         "task_definition_digest",
     }
+    if schema_version == 2:
+        expected_keys.update(
+            {
+                "execution_selection_digest",
+                "profile_configuration_digest",
+                "profile_version_ref",
+            }
+        )
+        digest_fields.update(
+            {
+                "execution_selection_digest",
+                "profile_configuration_digest",
+                "profile_version_ref",
+            }
+        )
+    elif schema_version != 1:
+        return False
+    if not isinstance(value, Mapping) or set(value) != expected_keys:
+        return False
     if any(not _is_digest(value.get(field)) for field in digest_fields):
         return False
     timeout_seconds = value.get("timeout_seconds")

@@ -52,6 +52,12 @@ pre-effect/action receipts; unresolved local publication state is quarantined.
 Controlled comparisons add a schema-v2 trial
 binding, schema-v3 Class 0 admission/dispatch shadows, and a separate schema-v4
 Class 1 private-publication shadow with schema-v2 pre-effect/action receipts.
+Profile-backed ordinary attempts also append a required, content-addressed
+execution-selection event before their schema-v2 task binding. It fixes the
+policy clock, task features, candidate set, fixed rejection codes, metric
+sources/scores/rank, and selected profile/version/configuration/overrides refs;
+the inspector independently recomputes those semantics and their binding and
+dispatch order. Raw model/settings/account/diagnostic values remain private.
 Runtime ABAC
 enforcement is not implemented. This phase remains a prerequisite for adding a
 worker-dispatch path or repository worker with new mediated capabilities. A

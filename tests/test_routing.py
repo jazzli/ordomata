@@ -310,6 +310,31 @@ class RoutingTests(unittest.TestCase):
             [item.state.profile.profile_id for item in reverse.ranked],
         )
 
+    def test_duplicate_candidate_identity_is_rejected_as_ambiguous(self) -> None:
+        duplicate = candidate("codex-duplicate")
+
+        with self.assertRaises(ValidationError):
+            ProfileRouter().route(self.task, [duplicate, duplicate])
+
+    def test_routing_records_fixed_rejection_codes_and_policy_time(self) -> None:
+        evaluated_at = time.time()
+        decision = ProfileRouter().route(
+            self.task,
+            [candidate("api-route", route=BillingRoute.SEPARATELY_BILLED_API)],
+            evaluated_at=evaluated_at,
+        )
+
+        self.assertEqual(decision.evaluated_at, evaluated_at)
+        self.assertIn(
+            "billing_route_prohibited",
+            decision.rejected[0].reason_codes,
+        )
+        self.assertTrue(
+            set(decision.rejected[0].reason_codes).issubset(
+                ProfileRouter.rejection_codes()
+            )
+        )
+
     def test_unknown_routes_fail_closed(self) -> None:
         decision = ProfileRouter().route(
             self.task, [candidate("unknown", route=BillingRoute.UNKNOWN)]
@@ -369,6 +394,40 @@ class RoutingTests(unittest.TestCase):
             translated["claude"], {"effort": "high", "max_turns": 3}
         )
         self.assertEqual(translated["mock"], {})
+
+    def test_profile_settings_are_snapshotted_and_value_domains_are_bounded(self) -> None:
+        source = {"reasoning_effort": "high"}
+        profile = ExecutionProfile(
+            profile_id="codex.snapshot",
+            version="1",
+            runner_id="codex",
+            model_id=None,
+            role="implementer",
+            settings=source,
+        )
+        source["reasoning_effort"] = "low"
+        self.assertEqual(
+            runner_overrides_for_profile(profile),
+            {"reasoning_effort": "high"},
+        )
+        with self.assertRaises(TypeError):
+            profile.settings["reasoning_effort"] = "low"
+
+        for runner_id, settings in (
+            ("codex", {"reasoning_effort": "unbounded"}),
+            ("claude", {"effort": "extreme"}),
+            ("claude", {"max_turns": 0}),
+            ("mock", {"fixture": "private.fixture"}),
+        ):
+            with self.subTest(runner_id=runner_id, settings=settings):
+                invalid = replace(
+                    profile,
+                    profile_id=f"{runner_id}.invalid",
+                    runner_id=runner_id,
+                    settings=settings,
+                )
+                with self.assertRaises(ConfigurationError):
+                    runner_overrides_for_profile(invalid)
 
     def test_routing_lane_prevents_mock_subscription_fallback(self) -> None:
         subscription_task = TaskRoutingFeatures(

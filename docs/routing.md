@@ -46,6 +46,43 @@ The ordering is lexicographic across tiers: neither efficiency nor speed can com
 
 The dimensions remain visible; comparison reports do not collapse quality, latency, regressions, human intervention, changes, or usage into one winner score. The comparison schema has explicit nullable fields for schema validity, correctness, grounding, completeness, prioritization, actionability, safety, uncertainty handling, context size, turns, tool activity, human setup/review time, corrections, billing route, included-capacity state, paid-capacity consumption, incremental AI charge, subscription limits, and local compute. Until sufficient quality or latency observations exist, profiles use reviewed priors; efficiency remains unavailable until a compatible observation exists. Persisted outcome learning and confidence intervals are a later phase.
 
+## Durable execution-selection evidence
+
+Every started profile-backed Chief-of-Staff attempt persists one immutable
+`task_execution_selection` event before task binding or billing preflight. The
+content-addressed record includes the routing-policy identity/version,
+captured evaluation time, required billing-validity horizon, exact task-feature
+projection, immutable task/context/authorization refs, every canonical candidate, fixed rejection
+codes, raw score dimensions, explicit observed/profile-prior/unavailable
+markers, compatible-efficiency pool/unit refs, selected profile version and
+configuration, and the translated runner-overrides digest.
+
+Profile IDs are bounded controller-owned routing identifiers and are retained
+so the governed stable-ID tie-break can be independently replayed. Sensitive
+or mutable values are not copied into the event. Model identifiers,
+profile settings, account/subscription identity, assessment evidence and
+warnings, capacity pool names, environment names, and local paths are omitted
+or represented by canonical digest refs. The event is linked by a schema-v2
+ordinary task binding and by admission/dispatch parameter digests. Its required
+append uses exact readback reconciliation: an unproven write blocks before the
+runner executes, while a commit-then-raise write may continue only after exact
+payload and event-ID readback.
+
+Before execution, every source candidate must match the controller-loaded
+profile catalog. The selected source assessment must also match a fresh runner
+preflight on billing security semantics, and that fresh evidence must remain
+valid through the recorded attempt horizon. A mismatch blocks before `RUNNING`
+or runner execution.
+
+The read-only authorization inspector validates one-and-only-one coverage for
+schema-v2 attempts and independently recomputes the candidate-set and policy
+digests, eligibility codes, six score dimensions, rank, selected-candidate
+links, and `created < selection < binding < admission < billing < running <
+dispatch` order. Historical schema-v1 bindings remain readable. Selection
+evidence never grants authority and never makes stale or unsafe billing
+evidence eligible. The `route` command remains a read-only preview, and an
+explicit profile rejected before run creation intentionally leaves no event.
+
 ## Adaptive promoted-profile routing (target)
 
 Later outcome learning may update success, intervention, capacity-efficiency,
