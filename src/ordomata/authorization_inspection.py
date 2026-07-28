@@ -83,6 +83,17 @@ from .models import (
     RunStatus,
     UsageObservation,
 )
+from .publication_authorization import (
+    LOCAL_CANDIDATE_PUBLICATION_ACTION_SCOPE,
+    LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+    LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
+    LOCAL_CANDIDATE_PUBLICATION_EVENT_SCHEMA_VERSION,
+    LOCAL_CANDIDATE_PUBLICATION_EXECUTOR_ID,
+    LOCAL_CANDIDATE_PUBLICATION_OPERATION,
+    LOCAL_CANDIDATE_PUBLICATION_POLICY_ID,
+    LOCAL_CANDIDATE_PUBLICATION_POLICY_VERSION,
+    LOCAL_CANDIDATE_PUBLICATION_RESOURCE_TYPE,
+)
 from .routing import (
     ROUTING_POLICY_ID,
     ROUTING_POLICY_VERSION,
@@ -131,6 +142,9 @@ TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE = (
 TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE = (
     "task_attempt_mock_dispatch_decision_action_receipt"
 )
+TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE = (
+    LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
+)
 ADMISSION_SCOPE = "task_attempt_admission_only"
 DISPATCH_SCOPE = "runner_model_dispatch_only"
 PUBLICATION_SCOPE = "local_candidate_publication_only"
@@ -177,6 +191,7 @@ _MAX_COMPARISON_ARTIFACT_EVENTS_PER_TYPE_PER_RUN = 2
 _MAX_TASK_BINDING_EVENTS_PER_RUN = 2
 _MAX_TASK_EXECUTION_SELECTION_EVENTS_PER_RUN = 2
 _MAX_MOCK_DISPATCH_EVENTS_PER_TYPE_PER_RUN = 2
+_MAX_LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENTS_PER_RUN = 2
 _MAX_TASK_ARTIFACT_EVENTS_PER_TYPE_PER_RUN = 2
 _MAX_TASK_ARTIFACT_METADATA_PER_RUN = 32
 _MAX_RUNNER_EVENTS_PER_RUN = 4096
@@ -418,6 +433,53 @@ class MockDispatchEnforcementInspection:
 
 
 @dataclass(frozen=True, slots=True)
+class LocalCandidatePublicationEnforcementInspection:
+    """Sanitized findings for exact local-candidate publication enforcement."""
+
+    required: bool
+    boundary_observed: bool
+    decision_observed: bool
+    decision_sequence: int | None
+    effect: str | None
+    authorization_eligible: bool | None
+    decision_current_at_evaluation: bool | None
+    pre_effect_observed: bool
+    pre_effect_sequence: int | None
+    action_receipt_observed: bool
+    action_receipt_sequence: int | None
+    action_receipt_outcome: str | None
+    permit_current_at_effect_start: bool | None
+    integrity_issues: tuple[str, ...]
+
+    @property
+    def attention_required(self) -> bool:
+        return bool(self.integrity_issues)
+
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            "required": self.required,
+            "boundary_observed": self.boundary_observed,
+            "decision_observed": self.decision_observed,
+            "decision_sequence": self.decision_sequence,
+            "effect": self.effect,
+            "authorization_eligible": self.authorization_eligible,
+            "decision_current_at_evaluation": (
+                self.decision_current_at_evaluation
+            ),
+            "pre_effect_observed": self.pre_effect_observed,
+            "pre_effect_sequence": self.pre_effect_sequence,
+            "action_receipt_observed": self.action_receipt_observed,
+            "action_receipt_sequence": self.action_receipt_sequence,
+            "action_receipt_outcome": self.action_receipt_outcome,
+            "permit_current_at_effect_start": (
+                self.permit_current_at_effect_start
+            ),
+            "integrity_issues": list(self.integrity_issues),
+            "attention_required": self.attention_required,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class RunAuthorizationInspection:
     """Coverage and shadow-decision findings for one immutable run."""
 
@@ -427,6 +489,7 @@ class RunAuthorizationInspection:
     authorization_shadow_coverage: str
     authorization_action_receipt_coverage: str | None
     authorization_enforcement_coverage: str | None
+    publication_authorization_enforcement_coverage: str | None
     permission_class: int | None
     attempt: int | None
     latest_status: str | None
@@ -435,6 +498,9 @@ class RunAuthorizationInspection:
     missing_scopes: tuple[str, ...]
     events: tuple[ShadowDecisionInspection, ...]
     mock_dispatch_enforcement: MockDispatchEnforcementInspection
+    local_candidate_publication_enforcement: (
+        LocalCandidatePublicationEnforcementInspection
+    )
     integrity_issues: tuple[str, ...]
 
     @property
@@ -444,6 +510,7 @@ class RunAuthorizationInspection:
             or bool(self.integrity_issues)
             or any(event.attention_required for event in self.events)
             or self.mock_dispatch_enforcement.attention_required
+            or self.local_candidate_publication_enforcement.attention_required
         )
 
     def to_mapping(self) -> dict[str, Any]:
@@ -460,6 +527,9 @@ class RunAuthorizationInspection:
             "authorization_enforcement_coverage": (
                 self.authorization_enforcement_coverage
             ),
+            "publication_authorization_enforcement_coverage": (
+                self.publication_authorization_enforcement_coverage
+            ),
             "permission_class": self.permission_class,
             "attempt": self.attempt,
             "latest_status": self.latest_status,
@@ -469,6 +539,9 @@ class RunAuthorizationInspection:
             "events": [event.to_mapping() for event in self.events],
             "mock_dispatch_enforcement": (
                 self.mock_dispatch_enforcement.to_mapping()
+            ),
+            "local_candidate_publication_enforcement": (
+                self.local_candidate_publication_enforcement.to_mapping()
             ),
             "integrity_issues": list(self.integrity_issues),
             "attention_required": self.attention_required,
@@ -624,6 +697,7 @@ class _TaskAttemptBindingFacts:
         TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE
     )
     authorization_enforcement_coverage: str | None = None
+    publication_authorization_enforcement_coverage: str | None = None
     schema_version: int | None = None
 
 
@@ -674,6 +748,29 @@ class _MockDispatchReceiptFacts:
     started_at: float | None
     completed_at: float | None
     permit_current_at_action_start: bool | None
+    issues: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _LocalCandidatePublicationDecisionFacts:
+    """Validated publication decision retained only inside the inspector."""
+
+    observed: bool
+    sequence: int | None
+    occurred_at: float | None
+    event_id: str | None
+    payload: Mapping[str, Any] | None
+    request: Mapping[str, Any] | None
+    policy: Mapping[str, Any] | None
+    decision: Mapping[str, Any] | None
+    request_digest: str | None
+    policy_digest: str | None
+    decision_digest: str | None
+    effect: str | None
+    authorization_eligible: bool | None
+    decision_current_at_evaluation: bool | None
+    issued_at: float | None
+    expires_at: float | None
     issues: tuple[str, ...]
 
 
@@ -841,6 +938,12 @@ def inspect_authorization_shadows(
                             ),
                         )
                     )
+                    local_candidate_publication_decision_rows = (
+                        _read_local_candidate_publication_decision_events(
+                            connection,
+                            facts,
+                        )
+                    )
                     task_artifact_rows = _read_task_artifact_receipt_events(
                         connection,
                         facts,
@@ -868,6 +971,7 @@ def inspect_authorization_shadows(
                     task_execution_selection_rows = ()
                     mock_dispatch_decision_rows = ()
                     mock_dispatch_receipt_rows = ()
+                    local_candidate_publication_decision_rows = ()
                     task_artifact_rows = ()
                     task_artifact_metadata_rows = ()
                     runner_event_rows = ()
@@ -984,6 +1088,20 @@ def inspect_authorization_shadows(
             and raw_event_run_id in mock_dispatch_receipt_rows_by_run
         ):
             mock_dispatch_receipt_rows_by_run[raw_event_run_id].append(row)
+
+    local_candidate_publication_decision_rows_by_run: dict[
+        str, list[sqlite3.Row]
+    ] = {fact.raw_run_id: [] for fact in facts}
+    for row in local_candidate_publication_decision_rows:
+        raw_event_run_id = row["run_id"]
+        if (
+            isinstance(raw_event_run_id, str)
+            and raw_event_run_id
+            in local_candidate_publication_decision_rows_by_run
+        ):
+            local_candidate_publication_decision_rows_by_run[
+                raw_event_run_id
+            ].append(row)
 
     task_artifact_rows_by_run: dict[str, list[sqlite3.Row]] = {
         fact.raw_run_id: [] for fact in facts
@@ -1119,6 +1237,21 @@ def inspect_authorization_shadows(
             mock_dispatch_decision,
             mock_dispatch_receipt,
         )
+        local_candidate_publication_decision = (
+            _inspect_local_candidate_publication_decision(
+                fact,
+                task_binding,
+                task_execution_selection,
+                mock_dispatch_decision,
+                mock_dispatch_receipt,
+                task_accounting,
+                event_rows_for_run,
+                task_artifact_rows_by_run[fact.raw_run_id],
+                local_candidate_publication_decision_rows_by_run[
+                    fact.raw_run_id
+                ],
+            )
+        )
         task_artifact_receipts = _inspect_task_artifact_receipts(
             fact,
             task_binding,
@@ -1127,6 +1260,15 @@ def inspect_authorization_shadows(
             task_artifact_rows_by_run[fact.raw_run_id],
             task_artifact_metadata_rows_by_run[fact.raw_run_id],
             publication_shadow_observed=task_publication_requires_receipts,
+            publication_decision=local_candidate_publication_decision,
+            terminal_rows=terminal_event_rows_by_run[fact.raw_run_id],
+        )
+        local_candidate_publication_enforcement = (
+            _project_local_candidate_publication_enforcement(
+                task_binding,
+                local_candidate_publication_decision,
+                task_artifact_receipts,
+            )
         )
         runner_event_issues = _inspect_runner_events(
             fact,
@@ -1171,15 +1313,23 @@ def inspect_authorization_shadows(
             or fact.task_artifact_intent_event_count > 0
             or fact.task_artifact_action_receipt_event_count > 0
         )
+        publication_shadow_observed = any(
+            event.action_scope == PUBLICATION_SCOPE
+            for event in events
+        )
         if (
-            fact.succeeded_observed
-            or (
-                fact.artifact_observed
-                and not valid_task_binding
-            )
-            or (
-                valid_task_binding
-                and task_publication_evidence_observed
+            valid_task_binding
+            and task_binding.schema_version == 4
+            and publication_shadow_observed
+        ) or (
+            task_binding.schema_version != 4
+            and (
+                fact.succeeded_observed
+                or (fact.artifact_observed and not valid_task_binding)
+                or (
+                    valid_task_binding
+                    and task_publication_evidence_observed
+                )
             )
         ):
             expected.add(PUBLICATION_SCOPE)
@@ -1196,6 +1346,8 @@ def inspect_authorization_shadows(
             *task_billing.issues,
             *mock_dispatch_decision.issues,
             *mock_dispatch_receipt.issues,
+            *local_candidate_publication_decision.issues,
+            *local_candidate_publication_enforcement.integrity_issues,
             *comparison_binding.issues,
             *comparison_billing.issues,
             *comparison_accounting.issues,
@@ -1468,6 +1620,14 @@ def inspect_authorization_shadows(
             ):
                 run_issues.append("runner_event_order_invalid")
         publication_sequence = sequences_by_scope.get(PUBLICATION_SCOPE)
+        publication_receipts_expected = (
+            task_binding.schema_version != 4
+            or _local_candidate_publication_receipts_expected(
+                fact,
+                local_candidate_publication_decision,
+                terminal_event_rows_by_run[fact.raw_run_id],
+            )
+        )
         if publication_sequence is not None:
             if (
                 comparison_binding.schema_version == 2
@@ -1492,7 +1652,7 @@ def inspect_authorization_shadows(
                 )
             ):
                 run_issues.append("publication_boundary_order_invalid")
-            if valid_task_binding:
+            if valid_task_binding and publication_receipts_expected:
                 if task_artifact_receipts.pre_effect is None:
                     run_issues.append(
                         "task_publication_pre_effect_receipt_missing"
@@ -1531,12 +1691,55 @@ def inspect_authorization_shadows(
                 )
         task_pre_effect_sequence = task_artifact_receipts.pre_effect_sequence
         task_action_receipt_sequence = task_artifact_receipts.action_sequence
+        publication_decision_sequence = (
+            local_candidate_publication_decision.sequence
+        )
+        if publication_decision_sequence is not None:
+            if (
+                fact.accounting_sequence is None
+                or publication_decision_sequence <= fact.accounting_sequence
+                or mock_dispatch_receipt.sequence is None
+                or publication_decision_sequence
+                <= mock_dispatch_receipt.sequence
+                or (
+                    publication_sequence is not None
+                    and publication_decision_sequence
+                    <= publication_sequence
+                )
+                or (
+                    task_pre_effect_sequence is not None
+                    and publication_decision_sequence
+                    >= task_pre_effect_sequence
+                )
+                or (
+                    fact.terminal_sequence is not None
+                    and publication_decision_sequence
+                    >= fact.terminal_sequence
+                )
+            ):
+                run_issues.append(
+                    "local_candidate_publication_decision_order_invalid"
+                )
         if task_pre_effect_sequence is not None:
             if (
                 fact.accounting_sequence is None
                 or task_pre_effect_sequence <= fact.accounting_sequence
-                or publication_sequence is None
-                or task_pre_effect_sequence <= publication_sequence
+                or (
+                    task_binding.schema_version != 4
+                    and publication_sequence is None
+                )
+                or (
+                    publication_sequence is not None
+                    and task_pre_effect_sequence <= publication_sequence
+                )
+                or (
+                    task_binding.schema_version == 4
+                    and (
+                        publication_decision_sequence is None
+                        or task_pre_effect_sequence
+                        <= publication_decision_sequence
+                    )
+                )
                 or (
                     fact.terminal_sequence is not None
                     and task_pre_effect_sequence >= fact.terminal_sequence
@@ -1596,6 +1799,12 @@ def inspect_authorization_shadows(
                     if valid_task_binding
                     else None
                 ),
+                publication_authorization_enforcement_coverage=(
+                    task_binding
+                    .publication_authorization_enforcement_coverage
+                    if valid_task_binding
+                    else None
+                ),
                 permission_class=fact.permission_class,
                 attempt=fact.attempt,
                 latest_status=fact.latest_status,
@@ -1604,6 +1813,9 @@ def inspect_authorization_shadows(
                 missing_scopes=missing,
                 events=events,
                 mock_dispatch_enforcement=mock_dispatch_enforcement,
+                local_candidate_publication_enforcement=(
+                    local_candidate_publication_enforcement
+                ),
                 integrity_issues=tuple(sorted(set(run_issues))),
             )
         )
@@ -1612,6 +1824,7 @@ def inspect_authorization_shadows(
         len(event_rows)
         + len(mock_dispatch_decision_rows)
         + len(mock_dispatch_receipt_rows)
+        + len(local_candidate_publication_decision_rows)
     )
     parity_mismatch_count = sum(
         event.recomputed_execution_parity is False
@@ -2212,6 +2425,45 @@ def _read_mock_dispatch_events(
     return tuple(rows)
 
 
+def _read_local_candidate_publication_decision_events(
+    connection: sqlite3.Connection,
+    facts: tuple[_RunFacts, ...],
+) -> tuple[sqlite3.Row, ...]:
+    """Read two decisions per run so duplicate publication gates are visible."""
+
+    if not facts:
+        return ()
+    placeholders = ",".join("?" for _ in facts)
+    parameters: tuple[Any, ...] = (
+        LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+        *(fact.raw_run_id for fact in facts),
+        _MAX_LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENTS_PER_RUN,
+    )
+    rows = connection.execute(
+        f"""
+        WITH ranked_publication_decisions AS (
+            SELECT
+                event_id,
+                run_id,
+                sequence,
+                occurred_at,
+                payload_json,
+                ROW_NUMBER() OVER (
+                    PARTITION BY run_id ORDER BY sequence
+                ) AS event_rank
+            FROM run_events
+            WHERE event_type = ? AND run_id IN ({placeholders})
+        )
+        SELECT event_id, run_id, sequence, occurred_at, payload_json
+        FROM ranked_publication_decisions
+        WHERE event_rank <= ?
+        ORDER BY run_id, sequence
+        """,
+        parameters,
+    ).fetchall()
+    return tuple(rows)
+
+
 def _read_comparison_binding_events(
     connection: sqlite3.Connection,
     facts: tuple[_RunFacts, ...],
@@ -2718,32 +2970,43 @@ def _inspect_task_attempt_binding(
         "binding_digest",
         "schema_version",
     }
-    if schema_version == 3:
+    if schema_version in {3, 4}:
         expected_outer_keys.add("authorization_enforcement_coverage")
+    if schema_version == 4:
+        expected_outer_keys.add(
+            "publication_authorization_enforcement_coverage"
+        )
     if payload is None or set(payload) != expected_outer_keys:
         return _invalid_task_binding(
             sequence,
             "task_binding_payload_invalid",
-            schema_version=(schema_version if schema_version == 3 else None),
+            schema_version=(schema_version if schema_version in {3, 4} else None),
         )
     if (
         isinstance(schema_version, bool)
         or not isinstance(schema_version, int)
-        or schema_version not in {1, 2, 3}
+        or schema_version not in {1, 2, 3, 4}
         or payload.get("authorization_shadow_coverage")
         != TASK_ATTEMPT_SHADOW_COVERAGE
         or payload.get("authorization_action_receipt_coverage")
         != TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE
         or (
-            schema_version == 3
+            schema_version in {3, 4}
             and payload.get("authorization_enforcement_coverage")
             != TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE
+        )
+        or (
+            schema_version == 4
+            and payload.get(
+                "publication_authorization_enforcement_coverage"
+            )
+            != TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
         )
     ):
         return _invalid_task_binding(
             sequence,
             "task_binding_payload_invalid",
-            schema_version=(schema_version if schema_version == 3 else None),
+            schema_version=(schema_version if schema_version in {3, 4} else None),
         )
     binding = payload.get("binding")
     if not _is_task_attempt_binding_shape(
@@ -2753,7 +3016,7 @@ def _inspect_task_attempt_binding(
         return _invalid_task_binding(
             sequence,
             "task_binding_payload_invalid",
-            schema_version=(schema_version if schema_version == 3 else None),
+            schema_version=(schema_version if schema_version in {3, 4} else None),
         )
     assert isinstance(binding, Mapping)
     binding_digest = payload.get("binding_digest")
@@ -2766,7 +3029,12 @@ def _inspect_task_attempt_binding(
             ("task_binding_digest_mismatch",),
             authorization_enforcement_coverage=(
                 TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE
-                if schema_version == 3
+                if schema_version in {3, 4}
+                else None
+            ),
+            publication_authorization_enforcement_coverage=(
+                TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
+                if schema_version == 4
                 else None
             ),
             schema_version=schema_version,
@@ -2797,7 +3065,12 @@ def _inspect_task_attempt_binding(
         tuple(issues),
         authorization_enforcement_coverage=(
             TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE
-            if schema_version == 3
+            if schema_version in {3, 4}
+            else None
+        ),
+        publication_authorization_enforcement_coverage=(
+            TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
+            if schema_version == 4
             else None
         ),
         schema_version=schema_version,
@@ -2818,7 +3091,12 @@ def _invalid_task_binding(
         (issue,),
         authorization_enforcement_coverage=(
             TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE
-            if schema_version == 3
+            if schema_version in {3, 4}
+            else None
+        ),
+        publication_authorization_enforcement_coverage=(
+            TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
+            if schema_version == 4
             else None
         ),
         schema_version=schema_version,
@@ -2832,7 +3110,7 @@ def _inspect_task_execution_selection(
 ) -> _TaskExecutionSelectionFacts:
     """Validate one bounded, controller-authored profile-selection record."""
 
-    required = task_binding.schema_version in {2, 3}
+    required = task_binding.schema_version in {2, 3, 4}
     if fact.task_execution_selection_event_count == 0:
         return _TaskExecutionSelectionFacts(
             False,
@@ -2910,7 +3188,7 @@ def _inspect_task_execution_selection(
         issues.append("execution_selection_payload_invalid")
         selected = None
     binding = task_binding.binding
-    if task_binding.schema_version not in {2, 3}:
+    if task_binding.schema_version not in {2, 3, 4}:
         issues.append("execution_selection_unbound")
     elif not isinstance(binding, Mapping) or task_binding.issues:
         issues.append("execution_selection_binding_mismatch")
@@ -3725,7 +4003,7 @@ def _inspect_mock_dispatch_decision(
 ) -> _MockDispatchDecisionFacts:
     """Validate and independently re-evaluate the enforcing mock decision."""
 
-    required = task_binding.schema_version == 3
+    required = task_binding.schema_version in {3, 4}
     if not required:
         if rows:
             return _empty_mock_dispatch_decision(
@@ -4647,7 +4925,7 @@ def _inspect_mock_dispatch_receipt(
 ) -> _MockDispatchReceiptFacts:
     """Validate the exact post-invocation receipt and its temporal links."""
 
-    enforcing = task_binding.schema_version == 3
+    enforcing = task_binding.schema_version in {3, 4}
     if not enforcing:
         if rows:
             return _empty_mock_dispatch_receipt(
@@ -5037,7 +5315,7 @@ def _project_mock_dispatch_enforcement(
 ) -> MockDispatchEnforcementInspection:
     issues = tuple(sorted(set((*decision.issues, *receipt.issues))))
     return MockDispatchEnforcementInspection(
-        required=task_binding.schema_version == 3,
+        required=task_binding.schema_version in {3, 4},
         decision_observed=decision.observed,
         decision_sequence=decision.sequence,
         effect=decision.effect,
@@ -5052,6 +5330,955 @@ def _project_mock_dispatch_enforcement(
             receipt.permit_current_at_action_start
         ),
         integrity_issues=issues,
+    )
+
+
+def _inspect_local_candidate_publication_decision(
+    fact: _RunFacts,
+    task_binding: _TaskAttemptBindingFacts,
+    task_execution_selection: _TaskExecutionSelectionFacts,
+    dispatch_decision: _MockDispatchDecisionFacts,
+    dispatch_receipt: _MockDispatchReceiptFacts,
+    task_accounting: _TaskAccountingFacts,
+    shadow_rows: list[sqlite3.Row],
+    artifact_rows: list[sqlite3.Row],
+    rows: list[sqlite3.Row],
+) -> _LocalCandidatePublicationDecisionFacts:
+    """Validate and independently re-evaluate the publication PEP decision."""
+
+    required = task_binding.schema_version == 4
+    boundary_observed = _local_candidate_publication_boundary_observed(
+        fact,
+        shadow_rows,
+        artifact_rows,
+        rows,
+    )
+    if not required:
+        if rows:
+            return _empty_local_candidate_publication_decision(
+                observed=True,
+                issue="local_candidate_publication_decision_unexpected",
+            )
+        return _empty_local_candidate_publication_decision()
+    if not boundary_observed and not rows:
+        return _empty_local_candidate_publication_decision()
+    if len(rows) != 1:
+        return _empty_local_candidate_publication_decision(
+            observed=bool(rows),
+            issue=(
+                "local_candidate_publication_decision_missing"
+                if not rows
+                else "local_candidate_publication_decision_duplicate"
+            ),
+        )
+
+    row = rows[0]
+    sequence = _optional_sequence(row["sequence"])
+    occurred_at = _optional_timestamp(row["occurred_at"])
+    event_id = row["event_id"] if _is_digest(row["event_id"]) else None
+    payload = _bounded_json_mapping(row["payload_json"])
+    issues: list[str] = []
+    if sequence is None:
+        issues.append("local_candidate_publication_decision_sequence_invalid")
+    if occurred_at is None:
+        issues.append("local_candidate_publication_decision_timestamp_invalid")
+    if not isinstance(payload, Mapping):
+        return _empty_local_candidate_publication_decision(
+            observed=True,
+            sequence=sequence,
+            occurred_at=occurred_at,
+            event_id=event_id,
+            issue="local_candidate_publication_decision_payload_invalid",
+            additional_issues=issues,
+        )
+
+    failure = payload.get("failure_stage") is not None
+    expected_keys = {
+        "action_scope",
+        "artifact_digest",
+        "artifact_metadata_digest",
+        "authorization_eligible",
+        "authority_ceiling_satisfied",
+        "billing_disposition_digest",
+        "block_reason_codes",
+        "controller_owned_mock_runner",
+        "credential_scan_passed",
+        "decision",
+        "decision_current_at_evaluation",
+        "decision_digest",
+        "derived_permission_class",
+        "destination_digest",
+        "dispatch_action_receipt_digest",
+        "dispatch_decision_digest",
+        "dispatch_request_digest",
+        "effect",
+        "enforcement_coverage",
+        "evaluated_at",
+        "evaluation_accepted",
+        "execution_accounting_digest",
+        "execution_selection_digest",
+        "legacy_executable",
+        "mode",
+        "obligations_supported",
+        "policy",
+        "policy_digest",
+        "publication_authorization_intent_digest",
+        "request",
+        "request_digest",
+        "requested_permission_class",
+        "safe_publication_prerequisites",
+        "schema_version",
+        "task_attempt_binding_digest",
+        "task_authorization_intent_digest",
+    }
+    if failure:
+        expected_keys.add("failure_stage")
+    if set(payload) != expected_keys:
+        issues.append("local_candidate_publication_decision_payload_invalid")
+    if (
+        payload.get("schema_version")
+        != LOCAL_CANDIDATE_PUBLICATION_EVENT_SCHEMA_VERSION
+        or payload.get("mode") != "enforcing"
+        or payload.get("action_scope")
+        != LOCAL_CANDIDATE_PUBLICATION_ACTION_SCOPE
+        or payload.get("enforcement_coverage")
+        != LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
+    ):
+        issues.append("local_candidate_publication_decision_payload_invalid")
+    if not _event_identifier_matches(
+        row,
+        event_type=LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+        payload=payload,
+        run_id=fact.raw_run_id,
+    ):
+        issues.append(
+            "local_candidate_publication_decision_event_identifier_mismatch"
+        )
+
+    binding = task_binding.binding
+    accounting = task_accounting.payload
+    dispatch_payload = dispatch_receipt.payload
+    dispatch_receipt_digest = (
+        dispatch_payload.get("receipt_digest")
+        if isinstance(dispatch_payload, Mapping)
+        else None
+    )
+    accounting_digest = (
+        canonical_digest(accounting)
+        if isinstance(accounting, Mapping)
+        else None
+    )
+    expected_class = fact.permission_class
+    expected_legacy = expected_class in {
+        int(PermissionClass.READ_ONLY),
+        int(PermissionClass.LOCAL_DRAFT),
+    }
+    selected = task_execution_selection.selected
+    controller_owned_mock_runner = bool(
+        isinstance(binding, Mapping)
+        and binding.get("runner_id") == "mock"
+        and fact.raw_runner_id == "mock"
+        and isinstance(selected, Mapping)
+        and selected.get("runner_id") == "mock"
+    )
+    safe_publication_prerequisites = (
+        _local_candidate_publication_prerequisites_satisfied(
+            dispatch_payload,
+            accounting,
+        )
+    )
+    if (
+        not isinstance(binding, Mapping)
+        or task_binding.binding_digest is None
+        or payload.get("task_attempt_binding_digest")
+        != task_binding.binding_digest
+        or payload.get("execution_selection_digest")
+        != task_execution_selection.selection_digest
+        or payload.get("task_authorization_intent_digest")
+        != binding.get("authorization_intent_digest")
+        or payload.get("dispatch_request_digest")
+        != dispatch_decision.request_digest
+        or payload.get("dispatch_decision_digest")
+        != dispatch_decision.decision_digest
+        or payload.get("dispatch_action_receipt_digest")
+        != dispatch_receipt_digest
+        or payload.get("execution_accounting_digest")
+        != accounting_digest
+        or payload.get("billing_disposition_digest")
+        != task_accounting.billing_disposition_digest
+        or payload.get("requested_permission_class") != expected_class
+        or payload.get("controller_owned_mock_runner")
+        is not controller_owned_mock_runner
+        or payload.get("legacy_executable") is not expected_legacy
+        or payload.get("safe_publication_prerequisites")
+        is not safe_publication_prerequisites
+        or payload.get("evaluation_accepted") is not True
+        or payload.get("credential_scan_passed") is not True
+    ):
+        issues.append("local_candidate_publication_decision_binding_mismatch")
+    for digest_key in (
+        "artifact_digest",
+        "artifact_metadata_digest",
+        "destination_digest",
+        "publication_authorization_intent_digest",
+    ):
+        if not _is_digest(payload.get(digest_key)):
+            issues.append(
+                "local_candidate_publication_decision_binding_mismatch"
+            )
+
+    publication_shadow = _raw_task_publication_shadow_payload(shadow_rows)
+    publication_shadow_request = (
+        publication_shadow.get("request")
+        if isinstance(publication_shadow, Mapping)
+        else None
+    )
+    publication_shadow_resource = (
+        publication_shadow_request.get("resource")
+        if isinstance(publication_shadow_request, Mapping)
+        else None
+    )
+    if isinstance(publication_shadow, Mapping) and (
+        payload.get("publication_authorization_intent_digest")
+        != publication_shadow.get("intent_digest")
+        or not isinstance(publication_shadow_resource, Mapping)
+        or payload.get("artifact_digest")
+        != publication_shadow_resource.get("version")
+        or payload.get("artifact_digest")
+        != publication_shadow_resource.get("content_digest")
+    ):
+        issues.append("local_candidate_publication_decision_binding_mismatch")
+
+    evaluated_at = _optional_timestamp(payload.get("evaluated_at"))
+    if evaluated_at is None or (
+        occurred_at is not None and occurred_at < evaluated_at
+    ):
+        issues.append("local_candidate_publication_decision_timestamp_invalid")
+    effect = _known_string(payload.get("effect"), _KNOWN_EFFECTS)
+    eligible = _optional_boolean(payload.get("authorization_eligible"))
+    current = _optional_boolean(
+        payload.get("decision_current_at_evaluation")
+    )
+    if effect is None or eligible is None or current is None:
+        issues.append("local_candidate_publication_decision_projection_invalid")
+
+    if failure:
+        if not _is_exact_local_candidate_publication_failure(payload):
+            issues.append("local_candidate_publication_decision_failure_invalid")
+        return _LocalCandidatePublicationDecisionFacts(
+            True,
+            sequence,
+            occurred_at,
+            event_id,
+            payload,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            effect,
+            eligible,
+            current,
+            None,
+            None,
+            tuple(sorted(set(issues))),
+        )
+
+    request_mapping = payload.get("request")
+    policy_mapping = payload.get("policy")
+    decision_mapping = payload.get("decision")
+    request_digest = payload.get("request_digest")
+    policy_digest = payload.get("policy_digest")
+    decision_digest = payload.get("decision_digest")
+    if not _digest_matches(request_digest, request_mapping):
+        issues.append("local_candidate_publication_request_digest_mismatch")
+        request_digest = None
+    if not _digest_matches(policy_digest, policy_mapping):
+        issues.append("local_candidate_publication_policy_digest_mismatch")
+        policy_digest = None
+    if not _digest_matches(decision_digest, decision_mapping):
+        issues.append("local_candidate_publication_decision_digest_mismatch")
+        decision_digest = None
+
+    request = _mock_dispatch_request_from_mapping(request_mapping)
+    policy = _mock_dispatch_policy_from_mapping(policy_mapping)
+    if request is None:
+        issues.append("local_candidate_publication_request_invalid")
+    if policy is None:
+        issues.append("local_candidate_publication_policy_invalid")
+    if not _is_decision_shape(decision_mapping):
+        issues.append("local_candidate_publication_authorization_decision_invalid")
+
+    raw_pre_effect = _raw_enforcing_task_pre_effect_payload(artifact_rows)
+    task_intent = _mock_dispatch_task_intent_from_shadow(
+        task_binding,
+        shadow_rows,
+    )
+    if request is not None:
+        issues.extend(
+            _inspect_local_candidate_publication_request_projection(
+                fact,
+                task_binding,
+                task_execution_selection,
+                dispatch_decision,
+                dispatch_receipt,
+                task_accounting,
+                payload,
+                request,
+                task_intent,
+                raw_pre_effect,
+            )
+        )
+    if policy is not None:
+        issues.extend(
+            _inspect_local_candidate_publication_policy_projection(policy)
+        )
+
+    expected_decision: Mapping[str, Any] | None = None
+    if request is not None and policy is not None:
+        try:
+            expected_decision = ShadowAuthorizationEvaluator().evaluate(
+                request,
+                policy,
+            ).to_canonical()
+        except (TypeError, ValueError, ValidationError):
+            issues.append(
+                "local_candidate_publication_authorization_reevaluation_failed"
+            )
+    if expected_decision is not None and decision_mapping != expected_decision:
+        issues.append(
+            "local_candidate_publication_authorization_reevaluation_mismatch"
+        )
+
+    issued_at = (
+        _optional_timestamp(decision_mapping.get("issued_at"))
+        if isinstance(decision_mapping, Mapping)
+        else None
+    )
+    expires_at = (
+        _optional_timestamp(decision_mapping.get("expires_at"))
+        if isinstance(decision_mapping, Mapping)
+        else None
+    )
+    recomputed_current = bool(
+        evaluated_at is not None
+        and issued_at is not None
+        and expires_at is not None
+        and issued_at <= evaluated_at < expires_at
+    )
+    derived = (
+        _permission_class(decision_mapping.get("derived_permission_class"))
+        if isinstance(decision_mapping, Mapping)
+        else None
+    )
+    recomputed_ceiling = bool(
+        derived is not None
+        and expected_class is not None
+        and derived <= expected_class
+        and derived <= int(PermissionClass.LOCAL_DRAFT)
+    )
+    obligations = (
+        decision_mapping.get("obligations")
+        if isinstance(decision_mapping, Mapping)
+        else None
+    )
+    supported_obligations = _mock_dispatch_obligations_supported(
+        effect,
+        obligations,
+    )
+    policy_matches = bool(
+        isinstance(decision_mapping, Mapping)
+        and request is not None
+        and policy is not None
+        and decision_mapping.get("request_id") == request.request_id
+        and decision_mapping.get("request_digest") == request.digest
+        and decision_mapping.get("policy_bundle_id") == policy.bundle_id
+        and decision_mapping.get("policy_version") == policy.version
+        and decision_mapping.get("policy_digest") == policy.digest
+        and issued_at == evaluated_at
+    )
+    recomputed_blocks: list[str] = []
+    if not controller_owned_mock_runner:
+        recomputed_blocks.append("controller_owned_mock_runner_not_verified")
+    if not expected_legacy:
+        recomputed_blocks.append("legacy_gate_not_executable")
+    if not safe_publication_prerequisites:
+        recomputed_blocks.append(
+            "safe_publication_prerequisites_not_satisfied"
+        )
+    if not policy_matches:
+        recomputed_blocks.append("authorization_policy_mismatch")
+    if effect != AuthorizationEffect.PERMIT.value:
+        recomputed_blocks.append("authorization_effect_not_permit")
+    if not recomputed_current:
+        recomputed_blocks.append("authorization_decision_not_current")
+    if not recomputed_ceiling:
+        recomputed_blocks.append("authorization_class_ceiling_exceeded")
+    if not supported_obligations:
+        recomputed_blocks.append("authorization_obligation_unsupported")
+    reported_blocks = payload.get("block_reason_codes")
+    recomputed_eligible = not recomputed_blocks
+    if (
+        not isinstance(reported_blocks, list)
+        or reported_blocks != recomputed_blocks
+        or payload.get("decision_current_at_evaluation")
+        is not recomputed_current
+        or payload.get("authority_ceiling_satisfied")
+        is not recomputed_ceiling
+        or payload.get("obligations_supported")
+        is not supported_obligations
+        or payload.get("authorization_eligible")
+        is not recomputed_eligible
+        or payload.get("derived_permission_class") != derived
+        or (
+            isinstance(decision_mapping, Mapping)
+            and payload.get("effect") != decision_mapping.get("effect")
+        )
+    ):
+        issues.append(
+            "local_candidate_publication_decision_projection_mismatch"
+        )
+
+    return _LocalCandidatePublicationDecisionFacts(
+        True,
+        sequence,
+        occurred_at,
+        event_id,
+        payload,
+        request_mapping if isinstance(request_mapping, Mapping) else None,
+        policy_mapping if isinstance(policy_mapping, Mapping) else None,
+        decision_mapping if isinstance(decision_mapping, Mapping) else None,
+        request_digest if isinstance(request_digest, str) else None,
+        policy_digest if isinstance(policy_digest, str) else None,
+        decision_digest if isinstance(decision_digest, str) else None,
+        effect,
+        eligible,
+        current,
+        issued_at,
+        expires_at,
+        tuple(sorted(set(issues))),
+    )
+
+
+def _empty_local_candidate_publication_decision(
+    *,
+    observed: bool = False,
+    sequence: int | None = None,
+    occurred_at: float | None = None,
+    event_id: str | None = None,
+    issue: str | None = None,
+    additional_issues: list[str] | None = None,
+) -> _LocalCandidatePublicationDecisionFacts:
+    issues = list(additional_issues or ())
+    if issue is not None:
+        issues.append(issue)
+    return _LocalCandidatePublicationDecisionFacts(
+        observed,
+        sequence,
+        occurred_at,
+        event_id,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        tuple(sorted(set(issues))),
+    )
+
+
+def _local_candidate_publication_boundary_observed(
+    fact: _RunFacts,
+    shadow_rows: list[sqlite3.Row],
+    artifact_rows: list[sqlite3.Row],
+    decision_rows: list[sqlite3.Row],
+) -> bool:
+    publication_shadow = any(
+        _shadow_row_schema(row) == 5
+        and (
+            (_bounded_json_mapping(row["payload_json"]) or {}).get(
+                "action_scope"
+            )
+            == PUBLICATION_SCOPE
+        )
+        for row in shadow_rows
+    )
+    return bool(
+        decision_rows
+        or publication_shadow
+        or artifact_rows
+        or fact.task_artifact_metadata_count > 0
+        or fact.succeeded_observed
+    )
+
+
+def _is_exact_local_candidate_publication_failure(
+    payload: Mapping[str, Any],
+) -> bool:
+    digest_keys = {
+        "artifact_digest",
+        "artifact_metadata_digest",
+        "billing_disposition_digest",
+        "destination_digest",
+        "dispatch_action_receipt_digest",
+        "dispatch_decision_digest",
+        "dispatch_request_digest",
+        "execution_accounting_digest",
+        "execution_selection_digest",
+        "publication_authorization_intent_digest",
+        "task_attempt_binding_digest",
+        "task_authorization_intent_digest",
+    }
+    return bool(
+        payload.get("failure_stage") == "request_or_evaluation"
+        and all(_is_optional_digest(payload.get(key)) for key in digest_keys)
+        and payload.get("request") is None
+        and payload.get("request_digest") is None
+        and payload.get("policy") is None
+        and payload.get("policy_digest") is None
+        and payload.get("decision") is None
+        and payload.get("decision_digest") is None
+        and payload.get("effect") == AuthorizationEffect.INDETERMINATE.value
+        and payload.get("derived_permission_class") is None
+        and payload.get("decision_current_at_evaluation") is False
+        and payload.get("authority_ceiling_satisfied") is False
+        and payload.get("obligations_supported") is False
+        and payload.get("authorization_eligible") is False
+        and payload.get("block_reason_codes")
+        == ["authorization_evaluation_failed"]
+        and _optional_timestamp(payload.get("evaluated_at")) is not None
+        and isinstance(payload.get("controller_owned_mock_runner"), bool)
+        and isinstance(payload.get("legacy_executable"), bool)
+        and isinstance(payload.get("safe_publication_prerequisites"), bool)
+        and isinstance(payload.get("evaluation_accepted"), bool)
+        and isinstance(payload.get("credential_scan_passed"), bool)
+        and _permission_class(payload.get("requested_permission_class"))
+        is not None
+    )
+
+
+def _raw_enforcing_task_pre_effect_payload(
+    rows: list[sqlite3.Row],
+) -> Mapping[str, Any] | None:
+    matches: list[Mapping[str, Any]] = []
+    for row in rows:
+        if row["event_type"] != TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE:
+            continue
+        payload = _bounded_json_mapping(row["payload_json"])
+        if (
+            isinstance(payload, Mapping)
+            and payload.get("schema_version") == 3
+            and payload.get("mode") == "enforcing"
+        ):
+            matches.append(payload)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _raw_task_publication_shadow_payload(
+    rows: list[sqlite3.Row],
+) -> Mapping[str, Any] | None:
+    matches: list[Mapping[str, Any]] = []
+    for row in rows:
+        payload = _bounded_json_mapping(row["payload_json"])
+        if (
+            isinstance(payload, Mapping)
+            and payload.get("schema_version") == 5
+            and payload.get("mode") == "shadow"
+            and payload.get("action_scope") == PUBLICATION_SCOPE
+        ):
+            matches.append(payload)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _local_candidate_publication_prerequisites_satisfied(
+    dispatch_receipt: Mapping[str, Any] | None,
+    accounting: Mapping[str, Any] | None,
+) -> bool:
+    receipt = (
+        dispatch_receipt.get("receipt")
+        if isinstance(dispatch_receipt, Mapping)
+        else None
+    )
+    return bool(
+        isinstance(receipt, Mapping)
+        and receipt.get("outcome") == ReceiptOutcome.SUCCEEDED.value
+        and isinstance(accounting, Mapping)
+        and accounting.get("billing_matches") is True
+        and accounting.get("capacity_state")
+        == CapacityState.NOT_APPLICABLE.value
+        and accounting.get("paid_capacity_consumed")
+        == PaidCapacityConsumed.NOT_APPLICABLE.value
+        and accounting.get("incremental_ai_charge")
+        == IncrementalAICharge.NONE.value
+        and accounting.get("billing_quarantine_required") is False
+        and accounting.get("billing_circuit_breaker_required") is False
+        and accounting.get("billing_disposition_reason_codes") == []
+    )
+
+
+def _publication_intent_from_task_intent(
+    task_intent: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    resource = task_intent.get("resource")
+    consequences = task_intent.get("consequences")
+    if not isinstance(resource, Mapping) or not isinstance(
+        consequences,
+        Mapping,
+    ):
+        return None
+    intent = {
+        "action": {
+            "verb": ActionVerb.CREATE.value,
+            "operation": LOCAL_CANDIDATE_PUBLICATION_OPERATION,
+            "intended_effect": "create_isolated_local_candidate",
+        },
+        "resource": {
+            "resource_type": LOCAL_CANDIDATE_PUBLICATION_RESOURCE_TYPE,
+            "trust_boundary": "isolated_run_workspace",
+            "protected": resource.get("protected"),
+            "sensitivity": resource.get("sensitivity"),
+        },
+        "consequences": {
+            "availability": consequences.get("availability"),
+            "blast_radius": BlastRadius.SINGLE_RESOURCE.value,
+            "confidentiality": consequences.get("confidentiality"),
+            "destructive": False,
+            "integrity": consequences.get("integrity"),
+            "reach": Reach.LOCAL.value,
+            "reversible": True,
+            "sensitivity": consequences.get("sensitivity"),
+        },
+    }
+    return intent if _is_task_intent_shape(intent) else None
+
+
+def _inspect_local_candidate_publication_request_projection(
+    fact: _RunFacts,
+    task_binding: _TaskAttemptBindingFacts,
+    task_execution_selection: _TaskExecutionSelectionFacts,
+    dispatch_decision: _MockDispatchDecisionFacts,
+    dispatch_receipt: _MockDispatchReceiptFacts,
+    task_accounting: _TaskAccountingFacts,
+    wrapper: Mapping[str, Any],
+    request: AuthorizationRequest,
+    task_intent: Mapping[str, Any] | None,
+    pre_effect: Mapping[str, Any] | None,
+) -> tuple[str, ...]:
+    issues: list[str] = []
+    binding = task_binding.binding
+    publication_intent = (
+        _publication_intent_from_task_intent(task_intent)
+        if isinstance(task_intent, Mapping)
+        else None
+    )
+    if not isinstance(binding, Mapping) or publication_intent is None:
+        return ("local_candidate_publication_request_intent_mismatch",)
+    publication_intent_digest = canonical_digest(publication_intent)
+    if wrapper.get("publication_authorization_intent_digest") != (
+        publication_intent_digest
+    ):
+        issues.append("local_candidate_publication_request_intent_mismatch")
+
+    expected_profile_ref = binding.get("profile_ref")
+    expected_repository_ref = binding.get("repository_ref")
+    artifact_digest = wrapper.get("artifact_digest")
+    destination_digest = wrapper.get("destination_digest")
+    artifact_metadata_digest = wrapper.get("artifact_metadata_digest")
+    expected_identifier = canonical_digest(
+        {
+            "artifact_metadata_digest": artifact_metadata_digest,
+            "destination_digest": destination_digest,
+            "resource_type": LOCAL_CANDIDATE_PUBLICATION_RESOURCE_TYPE,
+            "run_ref": fact.run_ref,
+        }
+    )
+    expected_consequences = publication_intent["consequences"]
+    expected_resource_intent = publication_intent["resource"]
+    if (
+        request.request_id
+        != f"{LOCAL_CANDIDATE_PUBLICATION_ACTION_SCOPE}:{fact.run_ref}"
+        or request.subject.principal_id != "agent:task-attempt"
+        or request.subject.controller_id != "ordomata:local-controller"
+        or request.subject.role is not Role.IMPLEMENTER
+        or request.subject.role_version != "1"
+        or request.subject.profile_id != expected_profile_ref
+        or request.subject.runner_id != "mock"
+        or request.subject.session_id != f"attempt:{fact.run_ref}"
+        or request.action.verb is not ActionVerb.CREATE
+        or request.action.operation
+        != LOCAL_CANDIDATE_PUBLICATION_OPERATION
+        or request.action.intended_effect
+        != "create_isolated_local_candidate"
+        or request.action.tool_id is not None
+        or request.action.descriptive_claims
+        or request.resource.resource_type
+        != LOCAL_CANDIDATE_PUBLICATION_RESOURCE_TYPE
+        or request.resource.identifier != expected_identifier
+        or request.resource.version != artifact_digest
+        or request.resource.owner != "operator:local"
+        or request.resource.trust_boundary != "isolated_run_workspace"
+        or request.resource.protected
+        is not expected_resource_intent.get("protected")
+        or request.resource.sensitivity.value
+        != expected_resource_intent.get("sensitivity")
+        or request.resource.repository_id != expected_repository_ref
+        or request.resource.content_digest != artifact_digest
+        or request.environment.isolation_state is not IsolationState.VERIFIED
+        or request.environment.network_state is not NetworkState.DISABLED
+        or request.environment.billing_route is not BillingRoute.LOCAL_NON_AI
+        or request.environment.capacity_state
+        is not CapacityState.NOT_APPLICABLE
+        or request.environment.paid_continuation_protection
+        is not PaidContinuationProtection.NOT_APPLICABLE
+        or request.environment.circuit_state is not CircuitState.CLOSED
+        or request.environment.flow_state
+        != "local_candidate_publication_proposed"
+        or request.environment.evaluated_at
+        != _optional_timestamp(wrapper.get("evaluated_at"))
+        or request.environment.approval_grants
+        or request.consequences.to_canonical() != expected_consequences
+    ):
+        issues.append("local_candidate_publication_request_binding_mismatch")
+
+    dispatch_payload = dispatch_receipt.payload
+    dispatch_receipt_digest = (
+        dispatch_payload.get("receipt_digest")
+        if isinstance(dispatch_payload, Mapping)
+        else None
+    )
+    accounting = task_accounting.payload
+    candidate = pre_effect
+    if isinstance(candidate, Mapping):
+        expected_parameters_digest = canonical_digest(
+            {
+                "artifact_digest": artifact_digest,
+                "artifact_kind": candidate.get("artifact_kind"),
+                "artifact_metadata_digest": artifact_metadata_digest,
+                "artifact_size_bytes": candidate.get("artifact_size_bytes"),
+                "billing_disposition_digest": (
+                    task_accounting.billing_disposition_digest
+                ),
+                "controller_owned_mock_runner": True,
+                "credential_scan_passed": True,
+                "destination_digest": destination_digest,
+                "dispatch_action_receipt_digest": dispatch_receipt_digest,
+                "dispatch_decision_digest": dispatch_decision.decision_digest,
+                "dispatch_request_digest": dispatch_decision.request_digest,
+                "evaluation_accepted": True,
+                "execution_accounting_digest": (
+                    canonical_digest(accounting)
+                    if isinstance(accounting, Mapping)
+                    else None
+                ),
+                "execution_selection_digest": (
+                    task_execution_selection.selection_digest
+                ),
+                "legacy_permission_class": fact.permission_class,
+                "output_schema_digest": binding.get("output_schema_digest"),
+                "profile_ref": expected_profile_ref,
+                "publication_authorization_intent_digest": (
+                    publication_intent_digest
+                ),
+                "repository_ref": expected_repository_ref,
+                "run_ref": fact.run_ref,
+                "safe_publication_prerequisites": True,
+                "task_attempt_binding_digest": task_binding.binding_digest,
+                "task_authorization_intent_digest": binding.get(
+                    "authorization_intent_digest"
+                ),
+                "task_definition_digest": binding.get(
+                    "task_definition_digest"
+                ),
+                "workspace_ref": binding.get("workspace_ref"),
+            }
+        )
+        if request.action.parameters_digest != expected_parameters_digest:
+            issues.append(
+                "local_candidate_publication_request_binding_mismatch"
+            )
+        if (
+            candidate.get("artifact_digest") != artifact_digest
+            or candidate.get("artifact_record_digest")
+            != artifact_metadata_digest
+            or candidate.get("destination_digest") != destination_digest
+        ):
+            issues.append(
+                "local_candidate_publication_request_binding_mismatch"
+            )
+
+    evidence_by_attribute = {
+        item.attribute: item for item in request.evidence
+    }
+    expected_sources = {
+        "subject": EvidenceSource.CONTROLLER,
+        "action": EvidenceSource.LOCAL_REGISTRY,
+        "resource": EvidenceSource.LOCAL_REGISTRY,
+        "environment": EvidenceSource.CONTROLLER,
+        "consequences": EvidenceSource.LOCAL_REGISTRY,
+    }
+    if len(evidence_by_attribute) != 5 or len(request.evidence) != 5:
+        issues.append("local_candidate_publication_evidence_invalid")
+    else:
+        for attribute, source in expected_sources.items():
+            evidence = evidence_by_attribute.get(attribute)
+            if (
+                evidence is None
+                or evidence.source is not source
+                or evidence.source_id != f"ordomata:{source.value}"
+                or evidence.evidence_id
+                != f"{LOCAL_CANDIDATE_PUBLICATION_ACTION_SCOPE}:{attribute}"
+                or evidence.authenticated is not True
+                or evidence.observed_at != request.environment.evaluated_at
+                or evidence.expires_at
+                != request.environment.evaluated_at + 120.0
+                or evidence.value_digest
+                != canonical_digest(request.attribute_value(attribute))
+            ):
+                issues.append("local_candidate_publication_evidence_invalid")
+                break
+    return tuple(sorted(set(issues)))
+
+
+def _inspect_local_candidate_publication_policy_projection(
+    policy: PolicyBundle,
+) -> tuple[str, ...]:
+    expected_evidence = tuple(
+        sorted(
+            PolicyBundle.current_stage().evidence_requirements,
+            key=lambda item: item.attribute,
+        )
+    )
+    valid = bool(
+        policy.bundle_id == LOCAL_CANDIDATE_PUBLICATION_POLICY_ID
+        and policy.version == LOCAL_CANDIDATE_PUBLICATION_POLICY_VERSION
+        and policy.issued_at == 0.0
+        and policy.schema_version
+        == LOCAL_CANDIDATE_PUBLICATION_EVENT_SCHEMA_VERSION
+        and policy.evidence_requirements == expected_evidence
+        and policy.enabled_classes == (PermissionClass.LOCAL_DRAFT,)
+        and policy.allowed_verbs == (ActionVerb.CREATE,)
+        and policy.allowed_roles == (Role.IMPLEMENTER,)
+        and policy.allowed_operations
+        == (LOCAL_CANDIDATE_PUBLICATION_OPERATION,)
+        and policy.allowed_resource_types
+        == (LOCAL_CANDIDATE_PUBLICATION_RESOURCE_TYPE,)
+        and policy.allowed_trust_boundaries == ("isolated_run_workspace",)
+        and policy.allowed_flow_states
+        == ("local_candidate_publication_proposed",)
+        and policy.allowed_network_states == (NetworkState.DISABLED,)
+        and policy.allowed_billing_routes == (BillingRoute.LOCAL_NON_AI,)
+        and not policy.approval_requirements
+        and policy.decision_ttl_seconds == 60.0
+    )
+    return () if valid else ("local_candidate_publication_policy_binding_mismatch",)
+
+
+def _is_local_candidate_publication_freshness_stop(
+    fact: _RunFacts,
+    decision: _LocalCandidatePublicationDecisionFacts,
+    rows: list[sqlite3.Row],
+) -> bool:
+    """Recognize only the controller's exact pre-effect freshness stop."""
+
+    if len(rows) != 1:
+        return False
+    row = rows[0]
+    payload = _bounded_json_mapping(row["payload_json"])
+    terminal_sequence = _optional_sequence(row["sequence"])
+    return bool(
+        row["event_type"] == "status"
+        and row["status"] == RunStatus.BLOCKED.value
+        and fact.latest_status == RunStatus.BLOCKED.value
+        and terminal_sequence == fact.terminal_sequence
+        and terminal_sequence is not None
+        and decision.sequence is not None
+        and terminal_sequence > decision.sequence
+        and decision.effect == AuthorizationEffect.PERMIT.value
+        and decision.authorization_eligible is True
+        and _optional_timestamp(row["occurred_at"]) is not None
+        and isinstance(payload, Mapping)
+        and payload
+        == {"phase": "local_candidate_publication_authorization_freshness"}
+        and _event_identifier_matches_status(row, payload, fact.raw_run_id)
+    )
+
+
+def _local_candidate_publication_receipts_expected(
+    fact: _RunFacts,
+    decision: _LocalCandidatePublicationDecisionFacts,
+    rows: list[sqlite3.Row],
+) -> bool:
+    return bool(
+        decision.authorization_eligible is True
+        and not _is_local_candidate_publication_freshness_stop(
+            fact,
+            decision,
+            rows,
+        )
+    )
+
+
+def _project_local_candidate_publication_enforcement(
+    task_binding: _TaskAttemptBindingFacts,
+    decision: _LocalCandidatePublicationDecisionFacts,
+    receipts: _TaskArtifactReceiptFacts,
+) -> LocalCandidatePublicationEnforcementInspection:
+    action = receipts.action
+    effect_started_at = (
+        _optional_timestamp(action.get("effect_started_at"))
+        if isinstance(action, Mapping)
+        else None
+    )
+    enforcing = task_binding.schema_version == 4
+    permit_current = (
+        bool(
+            decision.effect == AuthorizationEffect.PERMIT.value
+            and decision.authorization_eligible is True
+            and effect_started_at is not None
+            and decision.issued_at is not None
+            and decision.expires_at is not None
+            and decision.issued_at
+            <= effect_started_at
+            < decision.expires_at
+        )
+        if enforcing and action is not None
+        else None
+    )
+    issues = list((*decision.issues, *receipts.issues))
+    if enforcing and action is not None and permit_current is not True:
+        issues.append("local_candidate_publication_receipt_permit_not_current")
+    return LocalCandidatePublicationEnforcementInspection(
+        required=enforcing,
+        boundary_observed=bool(
+            decision.observed
+            or receipts.pre_effect is not None
+            or receipts.action is not None
+            or "local_candidate_publication_decision_missing"
+            in decision.issues
+        ),
+        decision_observed=decision.observed,
+        decision_sequence=decision.sequence,
+        effect=decision.effect,
+        authorization_eligible=decision.authorization_eligible,
+        decision_current_at_evaluation=(
+            decision.decision_current_at_evaluation
+        ),
+        pre_effect_observed=receipts.pre_effect is not None,
+        pre_effect_sequence=receipts.pre_effect_sequence,
+        action_receipt_observed=receipts.action is not None,
+        action_receipt_sequence=receipts.action_sequence,
+        action_receipt_outcome=(
+            action.get("outcome") if isinstance(action, Mapping) else None
+        ),
+        permit_current_at_effect_start=permit_current,
+        integrity_issues=tuple(sorted(set(issues))),
     )
 
 
@@ -5946,6 +7173,8 @@ def _inspect_task_artifact_receipts(
     metadata_rows: list[sqlite3.Row],
     *,
     publication_shadow_observed: bool,
+    publication_decision: _LocalCandidatePublicationDecisionFacts,
+    terminal_rows: list[sqlite3.Row],
 ) -> _TaskArtifactReceiptFacts:
     """Validate ordinary local-candidate pre-effect and action receipts."""
 
@@ -5980,12 +7209,28 @@ def _inspect_task_artifact_receipts(
         )
 
     issues: list[str] = []
-    publication_expected = (
-        fact.succeeded_observed
-        or publication_shadow_observed
-        or fact.task_artifact_intent_event_count > 0
-        or fact.task_artifact_action_receipt_event_count > 0
+    enforcing = task_binding.schema_version == 4
+    freshness_stop = _is_local_candidate_publication_freshness_stop(
+        fact,
+        publication_decision,
+        terminal_rows,
     )
+    publication_expected = (
+        publication_decision.authorization_eligible is True
+        if enforcing
+        else (
+            fact.succeeded_observed
+            or publication_shadow_observed
+            or fact.task_artifact_intent_event_count > 0
+            or fact.task_artifact_action_receipt_event_count > 0
+        )
+    )
+    action_expected = publication_expected and not freshness_stop
+    if enforcing and publication_decision.authorization_eligible is not True:
+        if has_receipt_evidence or fact.task_artifact_metadata_count > 0:
+            issues.append(
+                "local_candidate_publication_effect_after_nonpermit"
+            )
     pre_effect: Mapping[str, Any] | None = None
     pre_sequence: int | None = None
     pre_digest: str | None = None
@@ -6008,7 +7253,7 @@ def _inspect_task_artifact_receipts(
     action_sequence: int | None = None
     action_digest: str | None = None
     if fact.task_artifact_action_receipt_event_count == 0:
-        if publication_expected:
+        if action_expected:
             issues.append("task_publication_action_receipt_missing")
     elif (
         fact.task_artifact_action_receipt_event_count != 1
@@ -6040,6 +7285,14 @@ def _inspect_task_artifact_receipts(
             _inspect_task_receipt_linkage(
                 pre_effect,
                 pre_effect_receipt_digest=pre_digest,
+                action=action,
+            )
+        )
+    if enforcing and (pre_effect is not None or action is not None):
+        issues.extend(
+            _inspect_local_candidate_publication_receipt_binding(
+                publication_decision,
+                pre_effect=pre_effect,
                 action=action,
             )
         )
@@ -6213,7 +7466,7 @@ def _inspect_task_pre_effect_receipt(
     tuple[str, ...],
 ]:
     sequence, payload = _bounded_artifact_event_payload(row)
-    if payload is None or set(payload) != {
+    expected_keys = {
         "action_digest",
         "artifact_digest",
         "artifact_kind",
@@ -6235,7 +7488,18 @@ def _inspect_task_pre_effect_receipt(
         "schema_version",
         "started_at",
         "task_attempt_binding_digest",
-    }:
+    }
+    enforcing = task_binding.schema_version == 4
+    if enforcing:
+        expected_keys.update(
+            {
+                "publication_authorization_event_id",
+                "publication_enforcement_coverage",
+                "publication_shadow_decision_digest",
+                "publication_shadow_request_digest",
+            }
+        )
+    if payload is None or set(payload) != expected_keys:
         return (
             sequence,
             None,
@@ -6244,20 +7508,26 @@ def _inspect_task_pre_effect_receipt(
         )
 
     issues: list[str] = []
-    if _optional_timestamp(row["occurred_at"]) is None:
+    occurred_at = _optional_timestamp(row["occurred_at"])
+    if occurred_at is None:
         issues.append("task_publication_pre_effect_timestamp_invalid")
     receipt_digest = payload.get("receipt_digest")
     receipt_body = dict(payload)
     del receipt_body["receipt_digest"]
     if not _digest_matches(receipt_digest, receipt_body):
         issues.append("task_publication_pre_effect_digest_mismatch")
+    started_at = _optional_timestamp(payload.get("started_at"))
     if (
-        payload.get("schema_version") != 2
-        or payload.get("mode") != "shadow"
+        payload.get("schema_version") != (3 if enforcing else 2)
+        or payload.get("mode") != ("enforcing" if enforcing else "shadow")
         or payload.get("receipt_kind") != "pre_effect"
-        or payload.get("authorization_enforced") is not False
+        or payload.get("authorization_enforced") is not enforcing
         or payload.get("authority_basis")
-        != "legacy_permission_class_gate"
+        != (
+            "abac_exact_permit_and_legacy_permission_class_gate"
+            if enforcing
+            else "legacy_permission_class_gate"
+        )
         or fact.permission_class is None
         or _permission_class(payload.get("requested_permission_class"))
         != fact.permission_class
@@ -6276,9 +7546,34 @@ def _inspect_task_pre_effect_receipt(
         or not _is_positive_integer(payload.get("artifact_size_bytes"))
         or not _is_digest(payload.get("artifact_record_digest"))
         or not _is_digest(payload.get("billing_disposition_digest"))
-        or _optional_timestamp(payload.get("started_at")) is None
+        or started_at is None
+        or (
+            enforcing
+            and (
+                payload.get("publication_enforcement_coverage")
+                != TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
+                or not _is_digest(
+                    payload.get("publication_authorization_event_id")
+                )
+                or not _is_optional_digest(
+                    payload.get("publication_shadow_request_digest")
+                )
+                or not _is_optional_digest(
+                    payload.get("publication_shadow_decision_digest")
+                )
+                or not _is_digest(payload.get("publication_request_digest"))
+                or not _is_digest(payload.get("publication_decision_digest"))
+                or not _is_digest(payload.get("action_digest"))
+            )
+        )
     ):
         issues.append("task_publication_pre_effect_receipt_invalid")
+    if (
+        occurred_at is not None
+        and started_at is not None
+        and occurred_at < started_at
+    ):
+        issues.append("task_publication_pre_effect_timestamp_invalid")
     if payload.get("task_attempt_binding_digest") != (
         task_binding.binding_digest
     ):
@@ -6287,7 +7582,7 @@ def _inspect_task_pre_effect_receipt(
         issues.append(
             "task_publication_pre_effect_event_identifier_mismatch"
         )
-    if (
+    if not enforcing and (
         (payload.get("publication_request_digest") is None)
         != (payload.get("action_digest") is None)
         or (
@@ -6316,7 +7611,7 @@ def _inspect_task_action_receipt(
     tuple[str, ...],
 ]:
     sequence, payload = _bounded_artifact_event_payload(row)
-    if payload is None or set(payload) != {
+    expected_keys = {
         "action_digest",
         "artifact_kind",
         "artifact_record_digest",
@@ -6347,7 +7642,21 @@ def _inspect_task_action_receipt(
         "schema_version",
         "started_at",
         "task_attempt_binding_digest",
-    }:
+    }
+    enforcing = task_binding.schema_version == 4
+    if enforcing:
+        expected_keys.update(
+            {
+                "effect_started_at",
+                "enforcement_receipt",
+                "enforcement_receipt_digest",
+                "publication_authorization_event_id",
+                "publication_enforcement_coverage",
+                "publication_shadow_decision_digest",
+                "publication_shadow_request_digest",
+            }
+        )
+    if payload is None or set(payload) != expected_keys:
         return (
             sequence,
             None,
@@ -6365,14 +7674,24 @@ def _inspect_task_action_receipt(
         issues.append("task_publication_action_receipt_digest_mismatch")
     started_at = _optional_timestamp(payload.get("started_at"))
     completed_at = _optional_timestamp(payload.get("completed_at"))
+    effect_started_at = (
+        _optional_timestamp(payload.get("effect_started_at"))
+        if enforcing
+        else None
+    )
     if (
-        payload.get("schema_version") != 2
-        or payload.get("mode") != "shadow"
+        payload.get("schema_version") != (3 if enforcing else 2)
+        or payload.get("mode") != ("enforcing" if enforcing else "shadow")
         or payload.get("receipt_kind") != "action"
-        or payload.get("authorization_enforced") is not False
+        or payload.get("authorization_enforced") is not enforcing
         or payload.get("authority_basis")
-        != "legacy_permission_class_gate"
-        or payload.get("executor_id") != "ordomata:local-controller"
+        != (
+            "abac_exact_permit_and_legacy_permission_class_gate"
+            if enforcing
+            else "legacy_permission_class_gate"
+        )
+        or payload.get("executor_id")
+        != LOCAL_CANDIDATE_PUBLICATION_EXECUTOR_ID
         or fact.permission_class is None
         or _permission_class(payload.get("requested_permission_class"))
         != fact.permission_class
@@ -6406,8 +7725,43 @@ def _inspect_task_action_receipt(
             and completed_at is not None
             and completed_at < started_at
         )
+        or (
+            enforcing
+            and (
+                payload.get("publication_enforcement_coverage")
+                != TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
+                or not _is_digest(
+                    payload.get("publication_authorization_event_id")
+                )
+                or not _is_optional_digest(
+                    payload.get("publication_shadow_request_digest")
+                )
+                or not _is_optional_digest(
+                    payload.get("publication_shadow_decision_digest")
+                )
+                or not _is_digest(payload.get("publication_request_digest"))
+                or not _is_digest(payload.get("publication_decision_digest"))
+                or not _is_digest(payload.get("action_digest"))
+                or _optional_timestamp(payload.get("effect_started_at"))
+                is None
+                or not _is_digest(payload.get("enforcement_receipt_digest"))
+                or not isinstance(payload.get("enforcement_receipt"), Mapping)
+            )
+        )
     ):
         issues.append("task_publication_action_receipt_invalid")
+    if enforcing and (
+        effect_started_at is None
+        or started_at is None
+        or completed_at is None
+        or effect_started_at < started_at
+        or completed_at < effect_started_at
+        or (
+            _optional_timestamp(row["occurred_at"]) is not None
+            and completed_at > float(row["occurred_at"])
+        )
+    ):
+        issues.append("task_publication_action_timestamp_invalid")
     if payload.get("task_attempt_binding_digest") != (
         task_binding.binding_digest
     ):
@@ -6429,7 +7783,7 @@ def _inspect_task_action_receipt(
         issues.append(
             "task_publication_action_event_identifier_mismatch"
         )
-    if (
+    if not enforcing and (
         (payload.get("publication_request_digest") is None)
         != (payload.get("action_digest") is None)
         or (
@@ -6440,6 +7794,8 @@ def _inspect_task_action_receipt(
         issues.append("task_publication_action_receipt_linkage_invalid")
     issues.extend(_inspect_task_obligation_results(payload))
     issues.extend(_inspect_task_action_outcome(payload))
+    if enforcing:
+        issues.extend(_inspect_task_enforcement_receipt(payload))
     return (
         sequence,
         payload,
@@ -6472,6 +7828,199 @@ def _inspect_task_obligation_results(
     ):
         return ("task_publication_obligation_results_invalid",)
     return ()
+
+
+def _inspect_task_enforcement_receipt(
+    payload: Mapping[str, Any],
+) -> tuple[str, ...]:
+    """Validate the typed enforcing receipt embedded in schema-v3 evidence."""
+
+    receipt = payload.get("enforcement_receipt")
+    if not isinstance(receipt, Mapping) or set(receipt) != {
+        "completed_at",
+        "decision_digest",
+        "enforced_action_digest",
+        "executor_id",
+        "obligation_results",
+        "outcome",
+        "receipt_id",
+        "request_digest",
+        "result_digest",
+        "started_at",
+    }:
+        return ("task_publication_enforcement_receipt_invalid",)
+    if not _digest_matches(
+        payload.get("enforcement_receipt_digest"),
+        receipt,
+    ):
+        return ("task_publication_enforcement_receipt_digest_mismatch",)
+
+    effect_started_at = _optional_timestamp(payload.get("effect_started_at"))
+    completed_at = _optional_timestamp(payload.get("completed_at"))
+    receipt_started_at = _optional_timestamp(receipt.get("started_at"))
+    receipt_completed_at = _optional_timestamp(receipt.get("completed_at"))
+    raw_results = receipt.get("obligation_results")
+    projected_results = payload.get("obligation_results")
+    if not isinstance(raw_results, list) or not isinstance(
+        projected_results,
+        list,
+    ):
+        return ("task_publication_enforcement_receipt_invalid",)
+    expected_projection: list[dict[str, Any]] = []
+    raw_pairs: list[tuple[str, str]] = []
+    for item in raw_results:
+        if (
+            not isinstance(item, Mapping)
+            or set(item) != {"kind", "satisfied", "value"}
+            or not isinstance(item.get("kind"), str)
+            or item.get("satisfied") is not True
+            or not isinstance(item.get("value"), str)
+        ):
+            return ("task_publication_enforcement_receipt_invalid",)
+        kind = item["kind"]
+        value = item["value"]
+        raw_pairs.append((kind, value))
+        expected_projection.append(
+            {
+                "kind": kind,
+                "satisfied": True,
+                "value_digest": canonical_digest({"value": value}),
+            }
+        )
+    expected_projection.sort(
+        key=lambda item: (item["kind"], item["value_digest"])
+    )
+    fixed_obligations = {
+        (ObligationKind.AUDIT_RECEIPT.value, "append_after_action"),
+        (ObligationKind.ISOLATED_LOCAL_ONLY.value, "required"),
+    }
+    valid = bool(
+        _is_digest(receipt.get("receipt_id"))
+        and receipt.get("executor_id")
+        == LOCAL_CANDIDATE_PUBLICATION_EXECUTOR_ID
+        and receipt.get("request_digest")
+        == payload.get("publication_request_digest")
+        and receipt.get("decision_digest")
+        == payload.get("publication_decision_digest")
+        and receipt.get("enforced_action_digest")
+        == payload.get("action_digest")
+        and receipt_started_at is not None
+        and receipt_started_at == effect_started_at
+        and receipt_completed_at is not None
+        and receipt_completed_at == completed_at
+        and receipt.get("outcome") == payload.get("outcome")
+        and receipt.get("result_digest") == payload.get("result_digest")
+        and len(raw_pairs) == len(set(raw_pairs))
+        and raw_pairs == sorted(raw_pairs)
+        and set(raw_pairs) == fixed_obligations
+        and projected_results == expected_projection
+    )
+    return () if valid else ("task_publication_enforcement_receipt_invalid",)
+
+
+def _inspect_local_candidate_publication_receipt_binding(
+    decision: _LocalCandidatePublicationDecisionFacts,
+    *,
+    pre_effect: Mapping[str, Any] | None,
+    action: Mapping[str, Any] | None,
+) -> tuple[str, ...]:
+    """Bind schema-v3 effect evidence to one authoritative permit event."""
+
+    issues: list[str] = []
+    wrapper = decision.payload
+    request = decision.request
+    authorization_decision = decision.decision
+    if (
+        not decision.observed
+        or not isinstance(wrapper, Mapping)
+        or not isinstance(request, Mapping)
+        or not isinstance(authorization_decision, Mapping)
+        or decision.effect != AuthorizationEffect.PERMIT.value
+        or decision.authorization_eligible is not True
+        or decision.event_id is None
+        or decision.request_digest is None
+        or decision.decision_digest is None
+    ):
+        return ("local_candidate_publication_receipt_authorization_mismatch",)
+
+    request_action = request.get("action")
+    request_resource = request.get("resource")
+    expected_action_digest = (
+        canonical_digest(
+            {"action": request_action, "resource": request_resource}
+        )
+        if isinstance(request_action, Mapping)
+        and isinstance(request_resource, Mapping)
+        else None
+    )
+    common_links = {
+        "publication_authorization_event_id": decision.event_id,
+        "publication_enforcement_coverage": (
+            TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
+        ),
+        "publication_request_digest": decision.request_digest,
+        "publication_decision_digest": decision.decision_digest,
+        "action_digest": expected_action_digest,
+        "task_attempt_binding_digest": wrapper.get(
+            "task_attempt_binding_digest"
+        ),
+        "destination_digest": wrapper.get("destination_digest"),
+        "artifact_record_digest": wrapper.get("artifact_metadata_digest"),
+        "billing_disposition_digest": wrapper.get(
+            "billing_disposition_digest"
+        ),
+    }
+    for receipt in (pre_effect, action):
+        if isinstance(receipt, Mapping) and any(
+            receipt.get(key) != expected
+            for key, expected in common_links.items()
+        ):
+            issues.append(
+                "local_candidate_publication_receipt_authorization_mismatch"
+            )
+
+    if isinstance(pre_effect, Mapping) and (
+        pre_effect.get("artifact_digest") != wrapper.get("artifact_digest")
+        or pre_effect.get("requested_permission_class")
+        != wrapper.get("requested_permission_class")
+    ):
+        issues.append(
+            "local_candidate_publication_receipt_authorization_mismatch"
+        )
+    if isinstance(action, Mapping):
+        if (
+            action.get("intended_artifact_digest")
+            != wrapper.get("artifact_digest")
+            or action.get("requested_permission_class")
+            != wrapper.get("requested_permission_class")
+        ):
+            issues.append(
+                "local_candidate_publication_receipt_authorization_mismatch"
+            )
+        enforcement_receipt = action.get("enforcement_receipt")
+        expected_receipt_id = canonical_digest(
+            {
+                "decision_digest": decision.decision_digest,
+                "destination_digest": wrapper.get("destination_digest"),
+                "request_digest": decision.request_digest,
+                "task_attempt_binding_digest": wrapper.get(
+                    "task_attempt_binding_digest"
+                ),
+                "receipt_kind": "local_candidate_publication_action",
+            }
+        )
+        if (
+            not isinstance(enforcement_receipt, Mapping)
+            or enforcement_receipt.get("receipt_id") != expected_receipt_id
+            or not _mock_dispatch_receipt_obligations_match(
+                authorization_decision.get("obligations"),
+                enforcement_receipt.get("obligation_results"),
+            )
+        ):
+            issues.append(
+                "local_candidate_publication_receipt_authorization_mismatch"
+            )
+    return tuple(sorted(set(issues)))
 
 
 def _inspect_task_action_outcome(
@@ -6511,7 +8060,7 @@ def _inspect_task_receipt_linkage(
     pre_effect_receipt_digest: str | None,
     action: Mapping[str, Any],
 ) -> tuple[str, ...]:
-    comparisons = (
+    comparisons: tuple[tuple[str, Any], ...] = (
         ("pre_effect_receipt_digest", pre_effect_receipt_digest),
         (
             "task_attempt_binding_digest",
@@ -6551,6 +8100,26 @@ def _inspect_task_receipt_linkage(
             pre_effect.get("credential_scan_passed"),
         ),
     )
+    if pre_effect.get("schema_version") == 3:
+        comparisons = (
+            *comparisons,
+            (
+                "publication_authorization_event_id",
+                pre_effect.get("publication_authorization_event_id"),
+            ),
+            (
+                "publication_enforcement_coverage",
+                pre_effect.get("publication_enforcement_coverage"),
+            ),
+            (
+                "publication_shadow_request_digest",
+                pre_effect.get("publication_shadow_request_digest"),
+            ),
+            (
+                "publication_shadow_decision_digest",
+                pre_effect.get("publication_shadow_decision_digest"),
+            ),
+        )
     if any(action.get(key, _MISSING) != expected for key, expected in comparisons):
         return ("task_publication_receipt_linkage_mismatch",)
     if (
@@ -7563,7 +9132,7 @@ def _inspect_task_boundary_shadow_binding(
         "authorization_intent_digest"
     ]:
         issues.append("task_boundary_intent_binding_mismatch")
-    if task_binding.schema_version in {2, 3}:
+    if task_binding.schema_version in {2, 3, 4}:
         selection_digest = binding.get("execution_selection_digest")
         if (
             task_execution_selection.issues
@@ -7652,7 +9221,7 @@ def _inspect_task_boundary_shadow_binding(
             != ("closed" if mock_runner else "unknown")
         ):
             issues.append("task_dispatch_billing_binding_mismatch")
-    if task_binding.schema_version in {2, 3}:
+    if task_binding.schema_version in {2, 3, 4}:
         parameters["execution_selection_digest"] = binding[
             "execution_selection_digest"
         ]
@@ -7727,10 +9296,20 @@ def _inspect_task_publication_shadow_binding(
         issues.append("task_publication_billing_disposition_mismatch")
     if pre_effect.get("publication_shadow_persisted") is not True:
         issues.append("task_publication_shadow_receipt_mismatch")
+    shadow_request_key = (
+        "publication_shadow_request_digest"
+        if task_binding.schema_version == 4
+        else "publication_request_digest"
+    )
+    shadow_decision_key = (
+        "publication_shadow_decision_digest"
+        if task_binding.schema_version == 4
+        else "publication_decision_digest"
+    )
     if (
-        pre_effect.get("publication_request_digest")
+        pre_effect.get(shadow_request_key)
         != payload.get("request_digest")
-        or pre_effect.get("publication_decision_digest")
+        or pre_effect.get(shadow_decision_key)
         != payload.get("decision_digest")
     ):
         issues.append("task_publication_shadow_receipt_mismatch")
@@ -7771,7 +9350,10 @@ def _inspect_task_publication_shadow_binding(
             "resource": resource,
         }
     )
-    if pre_effect.get("action_digest") != expected_action_digest:
+    if (
+        task_binding.schema_version != 4
+        and pre_effect.get("action_digest") != expected_action_digest
+    ):
         issues.append("task_publication_action_digest_mismatch")
 
     if isinstance(accounting_payload, Mapping):
@@ -7830,7 +9412,11 @@ def _inspect_task_publication_shadow_binding(
 
     action_receipt = task_artifact_receipts.action
     decision = payload.get("decision")
-    if isinstance(action_receipt, Mapping) and isinstance(decision, Mapping):
+    if (
+        task_binding.schema_version != 4
+        and isinstance(action_receipt, Mapping)
+        and isinstance(decision, Mapping)
+    ):
         issues.extend(
             _inspect_task_receipt_obligation_linkage(
                 decision,
@@ -8520,7 +10106,7 @@ def _is_task_attempt_binding_shape(
         "runner_overrides_digest",
         "task_definition_digest",
     }
-    if schema_version in {2, 3}:
+    if schema_version in {2, 3, 4}:
         expected_keys.update(
             {
                 "execution_selection_digest",
@@ -8535,7 +10121,7 @@ def _is_task_attempt_binding_shape(
                 "profile_version_ref",
             }
         )
-        if schema_version == 3:
+        if schema_version in {3, 4}:
             expected_keys.update(
                 {
                     "pre_run_approval_requirements_digest",
@@ -8951,6 +10537,8 @@ __all__ = [
     "DISPATCH_SCOPE",
     "EvidenceFreshnessInspection",
     "KNOWN_ACTION_SCOPES",
+    "LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE",
+    "LocalCandidatePublicationEnforcementInspection",
     "MockDispatchEnforcementInspection",
     "PUBLICATION_SCOPE",
     "RunAuthorizationInspection",
@@ -8960,6 +10548,7 @@ __all__ = [
     "TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE",
     "TASK_ATTEMPT_BINDING_EVENT_TYPE",
     "TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE",
+    "TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE",
     "TASK_ATTEMPT_SHADOW_COVERAGE",
     "TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE",
     "TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE",

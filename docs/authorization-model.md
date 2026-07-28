@@ -1,15 +1,15 @@
 # Runtime authorization model
 
-Status: target architecture adopted; first profile-backed built-in-mock dispatch PEP implemented; broader enforcement planned
+Status: target architecture adopted; profile-backed built-in-mock dispatch and local-candidate publication PEPs implemented; broader enforcement planned
 
 Date: 2026-07-28
 
 This document defines the target authorization model for the local,
 single-operator orchestrator. It does not widen current authority. The runtime
-still enforces its existing Class 0/1 checks. A separate first ABAC
-enforcement point now gates only profile-backed ordinary attempts that use the
-exact controller-owned in-memory mock implementation. Classes 2 and 3 remain
-disabled.
+still enforces its existing Class 0/1 checks. Two separate ABAC enforcement
+points now gate only profile-backed ordinary attempts that use the exact
+controller-owned in-memory mock implementation: mock dispatch and the resulting
+owner-private local-candidate publication. Classes 2 and 3 remain disabled.
 
 ## Normative project decision
 
@@ -111,18 +111,24 @@ must remain in place until a backward-compatible migration and parity tests
 prove the new PDP cannot widen behavior.
 
 New profile-backed ordinary attempts using the exact built-in `MockRunner`
-also pass a narrow controller-owned PEP at the `runner.execute` boundary. A
-schema-v3 attempt binding declares that coverage. After required selection and
+pass narrow controller-owned PEPs at the `runner.execute` and owner-private
+local-candidate publication boundaries. A schema-v4 attempt binding declares
+both chains; historical schema-v3 bindings declare dispatch only. After required selection and
 billing evidence, the controller builds an exact mock-only execute request,
 evaluates a fixed versioned policy, persists and reconciles the decision, and
 requires a fresh `permit`, a derived class no greater than the persisted run
 class or Class 1, exact supported obligations, and the independent legacy gate
 before invoking the runner. The action start is checked immediately before the
 call; a linked terminal action receipt is required once invocation begins.
-Non-permits and uncertain decision persistence invoke no runner. Unprofiled
-schema-v1 and live or historical schema-v2 selected bindings remain valid
-shadow-only evidence, and comparison/supervisor paths do not inherit this
-authority.
+After a succeeded, accepted, credential-clean mock result, a separate exact
+Class 1 CREATE request binds that receipt, accounting, billing disposition, and
+candidate metadata. Its decision and enforcing pre-effect record must be
+durable before a second freshness check immediately adjacent to staging, and
+the existing reconciliation chain embeds its action receipt. Non-permits and
+uncertain decision persistence perform no governed action. Unprofiled
+schema-v1, live or historical schema-v2, and historical schema-v3 publication
+histories remain valid under their prior semantics, and comparison/supervisor
+paths do not inherit this authority.
 
 The first task contract now distinguishes the owner-private local candidate
 action from future active/shared promotion. Independently, the publication
@@ -135,9 +141,11 @@ availability impact so higher impact is never relabeled as low;
 New task attempts bind immutable run inputs and the controller-resolved typed
 authorization intent before admission. Dispatch also binds the persisted
 preflight billing assessment, while schema-v2 execution accounting links to the
-schema-v5 publication shadow plus schema-v2 pre-effect/action receipts. Those
-receipts make the legacy gate's local effect durably inspectable; they remain
-non-enforcing and cannot turn a shadow permit into authority.
+schema-v5 publication shadow. On schema-v4 exact-mock attempts, schema-v3
+pre-effect/action receipts carry the enforcing decision and canonical action
+receipt; older paths retain schema-v2 non-enforcing receipts. The shadow never
+becomes authority, and the existing Class 0/1 gate remains independently
+required.
 Policy activation, Git/remote publication, deployment, and other shared effects
 remain separate unimplemented typed actions whose exact resource version and
 digest must receive fresh authorization and any required approval.
@@ -164,8 +172,9 @@ groups. Phase 1C implements these groups as immutable standard-library value
 types. The Chief-of-Staff contract supplies typed task-effect intent for
 non-enforcing admission and dispatch observations, while the controller
 supplies the exact local-create intent at publication. For the narrow
-profile-backed built-in-mock path, the controller additionally constructs a
-separate exact execute request immediately before the runner boundary.
+profile-backed built-in-mock path, the controller additionally constructs
+separate exact execute and local-candidate CREATE requests at their respective
+boundaries.
 
 Controlled comparison trials use a distinct controller projection for the
 Class 0 effect of reading and evaluating one immutable comparison snapshot. A
@@ -203,11 +212,11 @@ effective value from an authoritative source.
 
 The canonical decision is immutable before enforcement and contains the fields
 below. Phase 1C implements the value type, non-authoritative Chief-of-Staff
-shadow events, and the first narrow enforcing decision for profile-backed
-built-in-mock dispatch. That enforcing record is distinct from admission,
-dispatch-intent, and publication shadows. Chief-of-Staff candidate publication
-and controlled-comparison publication still use non-enforcing pre-effect and
-observed-action receipts; those records do not issue an executable permit:
+shadow events, and narrow enforcing decisions for profile-backed built-in-mock
+dispatch and owner-private candidate publication. Those enforcing records are
+distinct from admission, dispatch-intent, and publication shadows. Historical
+ordinary and all controlled-comparison publication receipts remain
+non-enforcing; only the schema-v4 ordinary path carries an exact permit:
 
 - decision, request, and policy identifiers and digests;
 - an effect, fixed reason codes, and matched rule identifiers;
@@ -411,27 +420,32 @@ violation, not an instruction to follow.
    `task_attempt_admission_only`, `runner_model_dispatch_only`, and
    `local_candidate_publication_only` observations. Shadow build, evaluation,
    and append failures are sanitized and cannot allow or block legacy work.
-   Newly bound task attempts add required non-enforcing publication receipts;
-   failure to prove those audit records or the exact local effect fails closed
-   without changing the underlying authorization decision. A read-only
+   Historical paths add required non-enforcing publication receipts. New
+   schema-v4 exact-mock attempts instead add a separate enforcing publication
+   decision and schema-v3 pre-effect/action receipts; failure to prove those
+   audit records or the exact local effect fails closed. A read-only
    inspector recomputes canonical
    digests, evidence authenticity/freshness, legacy executability from the
    persisted run, the class from validated typed request attributes,
    derived-class authority-ceiling parity, and expected boundary coverage and
-   controller-event order. Class-ceiling mismatches are evidence, not
-   enforcement. Ordinary candidates add a digest-only attempt binding,
+   controller-event order. Class-ceiling mismatches in shadows are evidence;
+   the narrow dispatch and publication PEPs enforce their independent ceilings.
+   Ordinary candidates add a digest-only attempt binding,
    receipt-bound billing accounting, and exact metadata/filesystem
    reconciliation. Controlled comparison trials add a versioned Class 0 binding,
    admission/dispatch shadows, and a separately bounded Class 1 private-
    publication shadow with pre-effect/action-receipt evidence. Historical v1
    trials remain valid partial evidence. Other current decision paths remain
    planned.
-3. **Partly implemented — initial enforcement.** The first deterministic PEP
-   gates only profile-backed ordinary dispatch through the exact built-in mock
-   runner. It persists a fixed-policy decision before `RUNNING`, rechecks
+3. **Partly implemented — initial enforcement.** The first deterministic PEPs
+   gate only profile-backed ordinary dispatch through the exact built-in mock
+   runner and the resulting owner-private candidate publication. Dispatch
+   persists a fixed-policy decision before `RUNNING`, rechecks
    freshness and the Class 0/1 ceiling immediately before invocation, and
-   requires a linked action receipt after invocation starts. Admission, local
-   artifact publication, comparison, supervisor worker dispatch, live harness,
+   requires a linked action receipt after invocation starts. Publication uses
+   its own fixed Class 1 decision, pre-effect record, staging-bound freshness
+   check, and reconciled action receipt. Admission, shared publication or
+   promotion, comparison, supervisor worker dispatch, live harness,
    approvals/resumption, and mediated commands/tools remain non-enforcing or
    disabled. Retain legacy Class 0/1 checks as defense in depth through the
    migration.

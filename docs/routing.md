@@ -5,10 +5,11 @@ profiles; it never grants authority. Model output cannot select its own billing
 route, widen permissions, modify profile policy, or promote a new profile. The
 target runtime requires a fresh decision under the
 [authorization model](authorization-model.md) at dispatch and every later
-enforcement point. The first narrow PEP now applies only after routing selects
-the exact controller-owned built-in mock implementation; all other dispatch
-and effect boundaries remain non-enforcing or disabled. Existing Class 0/1
-checks remain independent authoritative compatibility gates.
+enforcement point. Two narrow PEPs now apply only after routing selects the
+exact controller-owned built-in mock implementation: one at mock dispatch and
+one at the resulting owner-private local-candidate publication. All other
+dispatch and effect boundaries remain non-enforcing or disabled. Existing
+Class 0/1 checks remain independent authoritative compatibility gates.
 
 ## Execution profile
 
@@ -65,8 +66,9 @@ or mutable values are not copied into the event. Model identifiers,
 profile settings, account/subscription identity, assessment evidence and
 warnings, capacity pool names, environment names, and local paths are omitted
 or represented by canonical digest refs. The event is linked by an ordinary
-task binding—schema v3 for new exact built-in-mock attempts and schema v2 for
-live or historical selected attempts—and by admission/dispatch parameter
+task binding—schema v4 for new exact built-in-mock attempts, schema v3 for
+historical dispatch-only mock attempts, and schema v2 for live or historical
+selected attempts—and by admission/dispatch parameter
 digests. Its required
 append uses exact readback reconciliation: an unproven write blocks before the
 runner executes, while a commit-then-raise write may continue only after exact
@@ -78,14 +80,17 @@ preflight on billing security semantics, and that fresh evidence must remain
 valid through the recorded attempt horizon. A mismatch blocks before `RUNNING`
 or runner execution.
 
-For a schema-v3 built-in-mock attempt, routing evidence is also an input to a
+For a schema-v4 built-in-mock attempt, routing evidence is also an input to a
 separate exact execute request. The controller must persist a fixed-policy
 decision before `RUNNING`, then recheck its freshness, exact obligations, and
 Class 0/1 ceiling immediately before invocation. A linked action receipt is
-required after invocation starts. Selection does not grant that permit.
+required after invocation starts. If the result reaches candidate publication,
+the selection and succeeded dispatch receipt are inputs to a second exact
+Class 1 request checked immediately before staging. Selection grants neither
+permit.
 
 The read-only authorization inspector validates one-and-only-one coverage for
-schema-v2/v3 attempts and independently recomputes the candidate-set and policy
+schema-v2/v3/v4 attempts and independently recomputes the candidate-set and policy
 digests, eligibility codes, six score dimensions, rank, selected-candidate
 links, plus the applicable shadow and enforcement order. Historical schema-v1
 bindings remain readable. Selection

@@ -1301,8 +1301,9 @@ class ShadowAuthorizationEvaluator:
     """Deterministic deny-by-default Phase 1C policy decision point.
 
     The historical class name is retained for compatibility.  Most current
-    boundaries remain shadow-only; the first narrow mock-dispatch PEP consumes
-    this pure evaluator through the ``AuthorizationEvaluator`` alias.
+    boundaries remain shadow-only; the narrow mock-dispatch and local-candidate
+    publication PEPs consume this pure evaluator through the
+    ``AuthorizationEvaluator`` alias.
     """
 
     def evaluate(

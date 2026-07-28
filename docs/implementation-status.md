@@ -30,10 +30,10 @@ Earlier design discussion selected machine-verifiable repository maintenance as 
 ## Current-stage boundaries
 
 - Only work represented by the current Permission Classes 0 and 1 is eligible.
-  The runtime still enforces that interim numeric representation. The first
-  narrow profile-backed built-in-mock dispatch PEP also derives and enforces
-  the same ceiling from an exact ABAC request; broader target coverage remains
-  incomplete.
+  The runtime still enforces that interim numeric representation. The two
+  narrow profile-backed built-in-mock PEPs for dispatch and local-candidate
+  publication also derive and enforce the same ceiling from exact ABAC
+  requests; broader target coverage remains incomplete.
 - No production inbox, calendar, Drive, Slack, or similar connectors.
 - No n8n dependency.
 - No purchased-credit, subscription-overage, AI API SDK, cloud-model, or metered fallback.
@@ -47,7 +47,7 @@ Detailed component and verification status is updated in the session completion 
 
 ## Authorization status
 
-**Implemented foundations, shadow coverage, and the first narrow PEP:** deterministic controller-owned
+**Implemented foundations, shadow coverage, and two narrow PEPs:** deterministic controller-owned
 fail-closed gates; the current Class 0/1 approval ceiling; role, task,
 capability, route, billing, identity, capacity, environment, isolation, and
 circuit checks; narrow harness configurations; and append-only run evidence.
@@ -77,15 +77,18 @@ without creating state.
 The inspector can prove ordering against persisted billing, running,
 runner-event, accounting, and terminal markers. New ordinary Chief-of-Staff
 attempts have a digest-only controller binding, schema-v2 execution accounting,
-a schema-v5 publication shadow, and linked schema-v2 pre-effect/action receipts
-before and after the local candidate mutation. Historical unbound task attempts
+and a schema-v5 publication shadow. Schema-v4 exact-mock attempts add a separate
+publication decision and linked schema-v3 enforcing pre-effect/action receipts
+before and after the local candidate mutation; older paths retain schema-v2
+non-enforcing receipts. Historical unbound task attempts
 remain readable as legacy shadow-only evidence and are not reinterpreted as
 receipt-complete. The controlled comparison path has its own separately bounded
 pre-effect and post-effect receipt pair.
 
 For a new profile-backed ordinary attempt using the exact controller-owned
-`MockRunner` implementation, a schema-v3 binding declares separate enforcing
-coverage. After required selection and billing records, the controller builds
+`MockRunner` implementation, a schema-v4 binding declares separate dispatch and
+local-candidate publication enforcement coverage. After required selection and
+billing records, the controller builds
 an exact mock-only execute request, evaluates a fixed versioned policy,
 persists and reconciles its decision before `RUNNING`, and checks permit
 freshness, supported obligations, the derived Class 0/1 ceiling, and the
@@ -93,14 +96,21 @@ independent legacy gate immediately before invocation. A non-permit,
 evaluation failure, stale decision, unsupported obligation, or uncertain
 decision append invokes no runner. Once invocation starts, a linked terminal
 action receipt is required; only a validated identity-matched no-process mock
-result may receive a succeeded receipt. This PEP does not cover unprofiled
-schema-v1 history, historical/live schema-v2 selections, comparison trials,
-supervisor workers, publication, tools, commands, or external effects.
+result may receive a succeeded receipt. Accepted, credential-clean output then
+passes a second fixed Class 1 policy that binds the dispatch receipt,
+content-addressed accounting, billing disposition, and exact candidate. Its
+decision and pre-effect receipt must persist before a fresh permit is checked
+immediately at staging; the reconciled filesystem receipt is the canonical
+action receipt. These PEPs do not cover unprofiled schema-v1 history,
+historical/live schema-v2 selections, historical schema-v3 publication,
+comparison trials, supervisor workers, shared publication, tools, commands, or
+external effects.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and
-their task binding. New built-in-mock attempts use schema v3; live and
-historical selected attempts use schema v2. The privacy-safe record binds a
+their task binding. New built-in-mock attempts use schema v4; historical
+dispatch-only mock attempts use schema v3, and live or historical selected
+attempts use schema v2. The privacy-safe record binds a
 captured routing
 policy clock, exact task/context/authorization refs, canonical candidates,
 fixed rejection codes, raw score tiers and evidence-source markers, safe
@@ -136,11 +146,12 @@ decisions with distinct `permit`, `defer`, `deny`, and `indeterminate`
 effects, policy and evidence digests, obligations, continuous enforcement,
 RBAC role constraints, adapted confidentiality/integrity/availability impact
 labels, untrusted MCP claim handling, and conservatively derived Class 0-3
-summaries. There is still no general admission/publication PDP, RBAC
+summaries. There is still no general admission/shared-publication PDP, RBAC
 separation-of-duty enforcement, approval resumption, mediated command/tool
-coverage, supervisor worker permit, or live-harness ABAC enforcement. The one
-persisted enforcing decision/action-receipt chain is limited to profile-backed
-built-in-mock dispatch. The controlled comparison path now records a
+coverage, supervisor worker permit, or live-harness ABAC enforcement. The two
+persisted enforcing decision/action-receipt chains are limited to profile-backed
+built-in-mock dispatch and its owner-private local-candidate publication. The
+controlled comparison path now records a
 durable Class 0 run/event stream for every started trial, including a schema-v2
 digest-only binding, bounded billing/accounting facts, runner-event ordinals,
 and schema-v3 non-enforcing admission and immediate pre-dispatch shadows. Its
@@ -164,9 +175,9 @@ Controller-derived post-run billing disposition governs quarantine, circuit
 scope, output withholding, and terminal reporting; adapter flags cannot make
 unknown or changed evidence succeed. Historical schema-v1 comparison evidence
 remains backward-compatible partial coverage with an explicit publication gap.
-None of those comparison or publication observations and receipts is an
-executable permit; their enforcement follows only after broader parity
-evidence.
+Comparison publication observations and receipts remain non-enforcing; the
+ordinary schema-v4 publication chain is the narrow exception and grants no
+shared, promotion, live, comparison, Class 2/3, or external authority.
 
 **Adopted target design, not implemented:** revocable standing authorization
 envelopes and fresh per-action permits; permissive but exactly bounded Class 3

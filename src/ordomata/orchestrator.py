@@ -54,6 +54,14 @@ from .dispatch_authorization import (
     build_mock_dispatch_failure_payload,
     evaluate_mock_dispatch_authorization,
 )
+from .publication_authorization import (
+    LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+    LocalCandidatePublicationAuthorization,
+    assert_local_candidate_publication_authorized,
+    build_local_candidate_publication_enforcement_receipt,
+    build_local_candidate_publication_failure_payload,
+    evaluate_local_candidate_publication_authorization,
+)
 from .errors import (
     AuthorizationBlocked,
     OrdomataError,
@@ -142,6 +150,21 @@ class _CandidateArtifactPublicationUncertain(ConfigurationError):
     ) -> None:
         super().__init__(message)
         self.artifact_observed = artifact_observed
+
+
+class _LocalCandidatePublicationFreshnessBlocked(AuthorizationBlocked):
+    """A persisted publication permit stopped before its first mutation."""
+
+
+@dataclass(frozen=True, slots=True)
+class _LocalCandidatePublicationEnforcementContext:
+    """Immutable upstream evidence for the exact mock publication PEP."""
+
+    execution_selection_digest: str
+    mock_dispatch_request_digest: str
+    mock_dispatch_decision_digest: str
+    mock_dispatch_action_receipt_digest: str
+    mock_dispatch_succeeded: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -682,6 +705,7 @@ async def run_chief_of_staff(
                 else selected_execution.selected_profile_configuration_digest
             ),
             enforce_mock_dispatch=enforce_mock_dispatch,
+            enforce_local_candidate_publication=enforce_mock_dispatch,
         )
         task_binding_digest = task_binding["binding_digest"]
         assert isinstance(task_binding_digest, str)
@@ -797,6 +821,7 @@ async def run_chief_of_staff(
             raise
         mock_dispatch_authorization: MockDispatchAuthorization | None = None
         mock_dispatch_action_started_at: float | None = None
+        mock_dispatch_action_receipt_payload: dict[str, Any] | None = None
         if enforce_mock_dispatch:
             assert execution_selection_digest is not None
             assert selected_profile_id is not None
@@ -1069,23 +1094,25 @@ async def run_chief_of_staff(
                 runner_event_count=event_count,
             )
             try:
-                _append_mock_dispatch_action_receipt(
-                    state,
-                    run_id=selected_run_id,
-                    authorization=mock_dispatch_authorization,
-                    action_started_at=mock_dispatch_action_started_at,
-                    outcome=_mock_dispatch_receipt_outcome(
-                        result,
-                        result_valid=mock_dispatch_result_valid,
-                    ),
-                    result_digest=(
-                        _mock_dispatch_result_digest(
+                mock_dispatch_action_receipt_payload = (
+                    _append_mock_dispatch_action_receipt(
+                        state,
+                        run_id=selected_run_id,
+                        authorization=mock_dispatch_authorization,
+                        action_started_at=mock_dispatch_action_started_at,
+                        outcome=_mock_dispatch_receipt_outcome(
                             result,
-                            runner_event_count=event_count,
-                        )
-                        if mock_dispatch_result_valid
-                        else None
-                    ),
+                            result_valid=mock_dispatch_result_valid,
+                        ),
+                        result_digest=(
+                            _mock_dispatch_result_digest(
+                                result,
+                                runner_event_count=event_count,
+                            )
+                            if mock_dispatch_result_valid
+                            else None
+                        ),
+                    )
                 )
             except BaseException as receipt_error:
                 _best_effort_terminal_status(
@@ -1099,6 +1126,51 @@ async def run_chief_of_staff(
                     phase="mock_dispatch_action_receipt",
                 )
                 raise
+
+        publication_enforcement_context: (
+            _LocalCandidatePublicationEnforcementContext | None
+        ) = None
+        if enforce_mock_dispatch:
+            if (
+                mock_dispatch_authorization is None
+                or mock_dispatch_action_receipt_payload is None
+            ):
+                raise ValidationError(
+                    "mock publication enforcement context is unavailable"
+                )
+            dispatch_receipt = mock_dispatch_action_receipt_payload.get(
+                "receipt"
+            )
+            dispatch_receipt_digest = (
+                mock_dispatch_action_receipt_payload.get("receipt_digest")
+            )
+            if not isinstance(dispatch_receipt, Mapping) or not isinstance(
+                dispatch_receipt_digest,
+                str,
+            ):
+                raise ValidationError(
+                    "mock publication dispatch receipt is invalid"
+                )
+            publication_enforcement_context = (
+                _LocalCandidatePublicationEnforcementContext(
+                    execution_selection_digest=(
+                        mock_dispatch_authorization.execution_selection_digest
+                    ),
+                    mock_dispatch_request_digest=(
+                        mock_dispatch_authorization.request.digest
+                    ),
+                    mock_dispatch_decision_digest=(
+                        mock_dispatch_authorization.decision.digest
+                    ),
+                    mock_dispatch_action_receipt_digest=(
+                        dispatch_receipt_digest
+                    ),
+                    mock_dispatch_succeeded=(
+                        dispatch_receipt.get("outcome")
+                        == ReceiptOutcome.SUCCEEDED.value
+                    ),
+                )
+            )
 
         if not isinstance(result, RunnerExecutionResult):
             if preflight_assessment.route is BillingRoute.SUBSCRIPTION_INCLUDED:
@@ -1134,7 +1206,29 @@ async def run_chief_of_staff(
                 profile_id=selected_profile_id,
                 legacy_executable=legacy_executable,
                 task_attempt_binding_digest=task_binding_digest,
+                task_authorization_intent_digest=(
+                    resolved_task_authorization_intent_digest
+                ),
+                publication_enforcement_context=(
+                    publication_enforcement_context
+                ),
             )
+        except _LocalCandidatePublicationFreshnessBlocked:
+            _best_effort_terminal_status(
+                state,
+                selected_run_id,
+                status=RunStatus.BLOCKED,
+                phase="local_candidate_publication_authorization_freshness",
+            )
+            raise
+        except AuthorizationBlocked:
+            _best_effort_terminal_status(
+                state,
+                selected_run_id,
+                status=RunStatus.BLOCKED,
+                phase="local_candidate_publication_authorization",
+            )
+            raise
         except ValidationError:
             _best_effort_terminal_status(
                 state,
@@ -1182,6 +1276,10 @@ def _finalize_result(
     profile_id: str | None,
     legacy_executable: bool,
     task_attempt_binding_digest: str,
+    task_authorization_intent_digest: str,
+    publication_enforcement_context: (
+        _LocalCandidatePublicationEnforcementContext | None
+    ),
 ) -> TaskRunReport:
     persisted_runner_id = state.get_run(request.run_id).runner_id
     if (
@@ -1269,6 +1367,7 @@ def _finalize_result(
         runner_event_count=event_count,
         incremental_api_charge=incremental_api_charge,
     )
+    execution_accounting_digest = canonical_digest(accounting_payload)
     _append_required_event(
         state,
         request.run_id,
@@ -1318,12 +1417,16 @@ def _finalize_result(
                 path=candidate_artifact_path,
                 content=artifact_bytes,
                 contract=prepared.contract,
+                request=request,
                 run_id=request.run_id,
                 runner_id=expected_runner_id,
                 profile_id=profile_id,
                 project_root=root,
                 task_attempt_binding_digest=(
                     task_attempt_binding_digest
+                ),
+                task_authorization_intent_digest=(
+                    task_authorization_intent_digest
                 ),
                 requested_permission_class=request.permission_class,
                 artifact_kind=(
@@ -1333,6 +1436,10 @@ def _finalize_result(
                 billing_matches=billing_matches,
                 billing_disposition_digest=publication_billing_digest,
                 legacy_executable=legacy_executable,
+                execution_accounting_digest=execution_accounting_digest,
+                publication_enforcement_context=(
+                    publication_enforcement_context
+                ),
             )
             artifact_path = candidate_artifact_path
     elif result.status not in {
@@ -2067,23 +2174,30 @@ def _publish_candidate_artifact(
     path: Path,
     content: bytes,
     contract: TaskContract,
+    request: RunRequest,
     run_id: str,
     runner_id: str,
     profile_id: str | None,
     project_root: Path,
     task_attempt_binding_digest: str,
+    task_authorization_intent_digest: str,
     requested_permission_class: PermissionClass,
     artifact_kind: str,
     billing_disposition: BillingPostRunDisposition,
     billing_matches: bool,
     billing_disposition_digest: str,
     legacy_executable: bool,
+    execution_accounting_digest: str,
+    publication_enforcement_context: (
+        _LocalCandidatePublicationEnforcementContext | None
+    ),
 ) -> str:
     """Publish one local candidate with a reconciled receipt chain.
 
-    Authorization is still owned by the existing Class 0/1 gate.  Required
-    evidence persistence and exact effect reconciliation only make that legacy
-    decision observable and fail closed; neither can widen it.
+    Schema-v4 exact-mock attempts require a fresh ABAC permit immediately
+    before staging, independently of the existing Class 0/1 gate.  Historical
+    paths retain their non-enforcing receipt semantics.  Neither path can
+    widen authority beyond an isolated local candidate.
     """
 
     artifact_sha256 = hashlib.sha256(content).hexdigest()
@@ -2132,6 +2246,205 @@ def _publish_candidate_artifact(
         run_id,
         lambda: publication_shadow,
     )
+    publication_authorization: (
+        LocalCandidatePublicationAuthorization | None
+    ) = None
+    publication_authorization_payload: dict[str, Any] | None = None
+    publication_authorization_event_id: str | None = None
+    if publication_enforcement_context is not None:
+        if runner_id != "mock" or profile_id is None:
+            raise ValidationError(
+                "local candidate publication enforcement requires a selected mock profile"
+            )
+        safe_publication_prerequisites = bool(
+            publication_enforcement_context.mock_dispatch_succeeded
+            and billing_matches
+            and billing_disposition.capacity_state
+            is CapacityState.NOT_APPLICABLE
+            and billing_disposition.paid_capacity_consumed
+            is PaidCapacityConsumed.NOT_APPLICABLE
+            and billing_disposition.incremental_ai_charge
+            is IncrementalAICharge.NONE
+            and not billing_disposition.quarantine_required
+            and not billing_disposition.circuit_breaker_required
+            and not billing_disposition.reasons
+        )
+        authorization_evaluated_at = time.time()
+        authorization_evaluation_error: BaseException | None = None
+        publication_intent_digest = publication_shadow.get("intent_digest")
+        if not isinstance(publication_intent_digest, str):
+            publication_intent_digest = ""
+        try:
+            publication_authorization = (
+                evaluate_local_candidate_publication_authorization(
+                    contract=contract,
+                    request=request,
+                    runner_id=runner_id,
+                    profile_id=profile_id,
+                    project_root=project_root,
+                    controller_owned_mock_runner=True,
+                    task_attempt_binding_digest=(
+                        task_attempt_binding_digest
+                    ),
+                    execution_selection_digest=(
+                        publication_enforcement_context.execution_selection_digest
+                    ),
+                    dispatch_request_digest=(
+                        publication_enforcement_context.mock_dispatch_request_digest
+                    ),
+                    dispatch_decision_digest=(
+                        publication_enforcement_context.mock_dispatch_decision_digest
+                    ),
+                    dispatch_action_receipt_digest=(
+                        publication_enforcement_context.mock_dispatch_action_receipt_digest
+                    ),
+                    execution_accounting_digest=(
+                        execution_accounting_digest
+                    ),
+                    billing_disposition_digest=(
+                        billing_disposition_digest
+                    ),
+                    artifact_digest=canonical_artifact_digest,
+                    destination_digest=destination_digest,
+                    artifact_metadata_digest=metadata_digest,
+                    artifact_kind=artifact_kind,
+                    artifact_size_bytes=artifact_size_bytes,
+                    evaluation_accepted=True,
+                    credential_scan_passed=True,
+                    safe_publication_prerequisites=(
+                        safe_publication_prerequisites
+                    ),
+                    evaluated_at=authorization_evaluated_at,
+                    legacy_executable=legacy_executable,
+                )
+            )
+            publication_authorization_payload = (
+                publication_authorization.to_event_payload()
+            )
+        except Exception:
+            publication_authorization = None
+            publication_authorization_payload = (
+                build_local_candidate_publication_failure_payload(
+                    task_attempt_binding_digest=(
+                        task_attempt_binding_digest
+                    ),
+                    execution_selection_digest=(
+                        publication_enforcement_context.execution_selection_digest
+                    ),
+                    task_authorization_intent_digest=(
+                        task_authorization_intent_digest
+                    ),
+                    publication_authorization_intent_digest=(
+                        publication_intent_digest
+                    ),
+                    dispatch_request_digest=(
+                        publication_enforcement_context.mock_dispatch_request_digest
+                    ),
+                    dispatch_decision_digest=(
+                        publication_enforcement_context.mock_dispatch_decision_digest
+                    ),
+                    dispatch_action_receipt_digest=(
+                        publication_enforcement_context.mock_dispatch_action_receipt_digest
+                    ),
+                    execution_accounting_digest=(
+                        execution_accounting_digest
+                    ),
+                    billing_disposition_digest=(
+                        billing_disposition_digest
+                    ),
+                    artifact_digest=canonical_artifact_digest,
+                    destination_digest=destination_digest,
+                    artifact_metadata_digest=metadata_digest,
+                    requested_permission_class=(
+                        requested_permission_class
+                    ),
+                    controller_owned_mock_runner=True,
+                    legacy_executable=legacy_executable,
+                    safe_publication_prerequisites=(
+                        safe_publication_prerequisites
+                    ),
+                    evaluation_accepted=True,
+                    credential_scan_passed=True,
+                    evaluated_at=authorization_evaluated_at,
+                )
+            )
+        except BaseException as cancellation_error:
+            publication_authorization = None
+            authorization_evaluation_error = cancellation_error
+            publication_authorization_payload = (
+                build_local_candidate_publication_failure_payload(
+                    task_attempt_binding_digest=(
+                        task_attempt_binding_digest
+                    ),
+                    execution_selection_digest=(
+                        publication_enforcement_context.execution_selection_digest
+                    ),
+                    task_authorization_intent_digest=(
+                        task_authorization_intent_digest
+                    ),
+                    publication_authorization_intent_digest=(
+                        publication_intent_digest
+                    ),
+                    dispatch_request_digest=(
+                        publication_enforcement_context.mock_dispatch_request_digest
+                    ),
+                    dispatch_decision_digest=(
+                        publication_enforcement_context.mock_dispatch_decision_digest
+                    ),
+                    dispatch_action_receipt_digest=(
+                        publication_enforcement_context.mock_dispatch_action_receipt_digest
+                    ),
+                    execution_accounting_digest=(
+                        execution_accounting_digest
+                    ),
+                    billing_disposition_digest=(
+                        billing_disposition_digest
+                    ),
+                    artifact_digest=canonical_artifact_digest,
+                    destination_digest=destination_digest,
+                    artifact_metadata_digest=metadata_digest,
+                    requested_permission_class=(
+                        requested_permission_class
+                    ),
+                    controller_owned_mock_runner=True,
+                    legacy_executable=legacy_executable,
+                    safe_publication_prerequisites=(
+                        safe_publication_prerequisites
+                    ),
+                    evaluation_accepted=True,
+                    credential_scan_passed=True,
+                    evaluated_at=authorization_evaluated_at,
+                )
+            )
+        publication_authorization_event_id = _controller_event_id(
+            run_id,
+            LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+            publication_authorization_payload,
+        )
+        try:
+            _append_required_event(
+                state,
+                run_id,
+                LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+                publication_authorization_payload,
+                event_id=publication_authorization_event_id,
+            )
+        except BaseException as authorization_evidence_error:
+            if authorization_evaluation_error is not None:
+                raise authorization_evaluation_error from (
+                    authorization_evidence_error
+                )
+            raise
+        if authorization_evaluation_error is not None:
+            raise authorization_evaluation_error
+        if (
+            publication_authorization is None
+            or not publication_authorization.authorized_at_evaluation
+        ):
+            raise AuthorizationBlocked(
+                "local candidate publication requires a fresh exact Class 1 authorization permit"
+            )
+
     pre_effect_receipt = build_candidate_artifact_pre_effect_receipt(
         task_attempt_binding_digest=task_attempt_binding_digest,
         publication_shadow=publication_shadow,
@@ -2144,6 +2457,10 @@ def _publish_candidate_artifact(
         artifact_metadata_digest=metadata_digest,
         billing_disposition_digest=billing_disposition_digest,
         started_at=started_at,
+        publication_authorization=publication_authorization_payload,
+        publication_authorization_event_id=(
+            publication_authorization_event_id
+        ),
     )
     pre_effect_event_id = pre_effect_receipt["receipt_digest"]
     assert isinstance(pre_effect_event_id, str)
@@ -2160,6 +2477,113 @@ def _publish_candidate_artifact(
             f".{path.name}.{pre_effect_event_id.removeprefix('sha256:')}.tmp"
         )
     )
+    effect_started_at: float | None = None
+
+    def build_action_receipt(
+        *,
+        completed_at: float,
+        outcome: str,
+        result_digest: str | None,
+        observed_artifact_size_bytes: int | None,
+        failure_code: str | None,
+    ) -> dict[str, Any]:
+        enforcement_receipt: Mapping[str, Any] | None = None
+        if publication_authorization is not None:
+            if effect_started_at is None:
+                raise ValidationError(
+                    "candidate publication effect start is unavailable"
+                )
+            enforcement_wrapper = (
+                build_local_candidate_publication_enforcement_receipt(
+                    authorization=publication_authorization,
+                    action_started_at=effect_started_at,
+                    completed_at=completed_at,
+                    outcome=ReceiptOutcome(outcome),
+                    result_digest=result_digest,
+                )
+            )
+            candidate = enforcement_wrapper.get("receipt")
+            if not isinstance(candidate, Mapping):
+                raise ValidationError(
+                    "candidate publication enforcement receipt is invalid"
+                )
+            enforcement_receipt = candidate
+        return build_candidate_artifact_action_receipt(
+            task_attempt_binding_digest=task_attempt_binding_digest,
+            pre_effect_receipt=pre_effect_receipt,
+            publication_shadow=publication_shadow,
+            publication_shadow_persisted=shadow_persisted,
+            requested_permission_class=requested_permission_class,
+            artifact_kind=artifact_kind,
+            destination_digest=destination_digest,
+            intended_artifact_digest=canonical_artifact_digest,
+            intended_artifact_size_bytes=artifact_size_bytes,
+            artifact_metadata_digest=metadata_digest,
+            billing_disposition_digest=billing_disposition_digest,
+            started_at=started_at,
+            completed_at=completed_at,
+            outcome=outcome,
+            result_digest=result_digest,
+            observed_artifact_size_bytes=(
+                observed_artifact_size_bytes
+            ),
+            failure_code=failure_code,
+            publication_authorization=publication_authorization_payload,
+            publication_authorization_event_id=(
+                publication_authorization_event_id
+            ),
+            effect_started_at=(
+                effect_started_at
+                if publication_authorization is not None
+                else None
+            ),
+            enforcement_receipt=enforcement_receipt,
+        )
+
+    effect_started_at = time.time()
+    if publication_authorization is not None:
+        try:
+            assert_local_candidate_publication_authorized(
+                publication_authorization,
+                action_started_at=effect_started_at,
+                persisted_payload=publication_authorization_payload,
+                contract=contract,
+                request=request,
+                runner_id=runner_id,
+                profile_id=profile_id,
+                project_root=project_root,
+                controller_owned_mock_runner=True,
+                task_attempt_binding_digest=task_attempt_binding_digest,
+                execution_selection_digest=(
+                    publication_enforcement_context.execution_selection_digest
+                ),
+                dispatch_request_digest=(
+                    publication_enforcement_context.mock_dispatch_request_digest
+                ),
+                dispatch_decision_digest=(
+                    publication_enforcement_context.mock_dispatch_decision_digest
+                ),
+                dispatch_action_receipt_digest=(
+                    publication_enforcement_context.mock_dispatch_action_receipt_digest
+                ),
+                execution_accounting_digest=execution_accounting_digest,
+                billing_disposition_digest=billing_disposition_digest,
+                artifact_digest=canonical_artifact_digest,
+                destination_digest=destination_digest,
+                artifact_metadata_digest=metadata_digest,
+                artifact_kind=artifact_kind,
+                artifact_size_bytes=artifact_size_bytes,
+                evaluation_accepted=True,
+                credential_scan_passed=True,
+                safe_publication_prerequisites=(
+                    safe_publication_prerequisites
+                ),
+                legacy_executable=legacy_executable,
+            )
+        except AuthorizationBlocked as freshness_error:
+            raise _LocalCandidatePublicationFreshnessBlocked(
+                "local candidate publication permit was not current at effect start"
+            ) from freshness_error
     try:
         _stage_artifact(path, content, stage=stage)
         if stage.identity is None:
@@ -2216,19 +2640,7 @@ def _publish_candidate_artifact(
             outcome = "failed"
             failure_code = "artifact_persistence_failed"
         try:
-            receipt = build_candidate_artifact_action_receipt(
-                task_attempt_binding_digest=task_attempt_binding_digest,
-                pre_effect_receipt=pre_effect_receipt,
-                publication_shadow=publication_shadow,
-                publication_shadow_persisted=shadow_persisted,
-                requested_permission_class=requested_permission_class,
-                artifact_kind=artifact_kind,
-                destination_digest=destination_digest,
-                intended_artifact_digest=canonical_artifact_digest,
-                intended_artifact_size_bytes=artifact_size_bytes,
-                artifact_metadata_digest=metadata_digest,
-                billing_disposition_digest=billing_disposition_digest,
-                started_at=started_at,
+            receipt = build_action_receipt(
                 completed_at=time.time(),
                 outcome=outcome,
                 result_digest=None,
@@ -2261,19 +2673,7 @@ def _publish_candidate_artifact(
             ) from publication_error
         raise
     try:
-        success_receipt = build_candidate_artifact_action_receipt(
-            task_attempt_binding_digest=task_attempt_binding_digest,
-            pre_effect_receipt=pre_effect_receipt,
-            publication_shadow=publication_shadow,
-            publication_shadow_persisted=shadow_persisted,
-            requested_permission_class=requested_permission_class,
-            artifact_kind=artifact_kind,
-            destination_digest=destination_digest,
-            intended_artifact_digest=canonical_artifact_digest,
-            intended_artifact_size_bytes=artifact_size_bytes,
-            artifact_metadata_digest=metadata_digest,
-            billing_disposition_digest=billing_disposition_digest,
-            started_at=started_at,
+        success_receipt = build_action_receipt(
             completed_at=time.time(),
             outcome="succeeded",
             result_digest=canonical_artifact_digest,
@@ -2375,19 +2775,7 @@ def _publish_candidate_artifact(
                 "candidate artifact action receipt is missing",
                 artifact_observed=True,
             ) from receipt_error
-        failure_receipt = build_candidate_artifact_action_receipt(
-            task_attempt_binding_digest=task_attempt_binding_digest,
-            pre_effect_receipt=pre_effect_receipt,
-            publication_shadow=publication_shadow,
-            publication_shadow_persisted=shadow_persisted,
-            requested_permission_class=requested_permission_class,
-            artifact_kind=artifact_kind,
-            destination_digest=destination_digest,
-            intended_artifact_digest=canonical_artifact_digest,
-            intended_artifact_size_bytes=artifact_size_bytes,
-            artifact_metadata_digest=metadata_digest,
-            billing_disposition_digest=billing_disposition_digest,
-            started_at=started_at,
+        failure_receipt = build_action_receipt(
             completed_at=time.time(),
             outcome=(
                 "cancelled"
@@ -2618,7 +3006,7 @@ def _append_mock_dispatch_action_receipt(
     action_started_at: float,
     outcome: ReceiptOutcome,
     result_digest: str | None,
-) -> None:
+) -> dict[str, Any]:
     payload = build_mock_dispatch_action_receipt(
         authorization=authorization,
         action_started_at=action_started_at,
@@ -2639,6 +3027,7 @@ def _append_mock_dispatch_action_receipt(
         payload,
         event_id=receipt_id,
     )
+    return payload
 
 
 def _append_terminal_event(
