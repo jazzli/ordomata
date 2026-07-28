@@ -78,22 +78,25 @@ plus missing, duplicate, swapped, or controller-event-misordered boundaries
 without creating state.
 The inspector can prove ordering against persisted admission, billing, running,
 runner-event, accounting, and terminal markers. New ordinary Chief-of-Staff
-attempts have a digest-only controller binding, schema-v2 execution accounting,
-and a schema-v5 publication shadow. New schema-v5 exact-mock attempts add a
-Class 1 admission decision and durable succeeded receipt while retaining
-schema-v4's dispatch and publication chains. Schema-v4 exact-mock attempts
-retain their separate publication decision and linked schema-v3 enforcing
-pre-effect/action receipts before and after the local candidate mutation;
-schema-v1-v3 paths retain schema-v2 non-enforcing publication receipts.
-Historical unbound task attempts
-remain readable as legacy shadow-only evidence and are not reinterpreted as
-receipt-complete. The controlled comparison path has its own separately bounded
-pre-effect and post-effect receipt pair.
+attempts have a privacy-bounded controller binding, schema-v2 execution
+accounting, and a schema-v5 publication shadow. Current schema-v6 exact-mock
+attempts retain schema-v5's Class 1 admission decision and durable succeeded
+receipt plus schema-v4's dispatch and publication chains, while adding bounded
+canonical task-intent lineage to the authoritative binding. Schema-v4 exact-
+mock attempts retain their separate publication decision and linked schema-v3
+enforcing pre-effect/action receipts before and after the local candidate
+mutation; schema-v1-v3 paths retain schema-v2 non-enforcing publication
+receipts. Historical unbound task attempts remain readable as legacy
+shadow-only evidence and are not reinterpreted as receipt-complete. The
+controlled comparison path has its own separately bounded pre-effect and
+post-effect receipt pair.
 
 For a new profile-backed ordinary Class 1 attempt using the exact
-controller-owned `MockRunner` implementation, a schema-v5 binding declares
+controller-owned `MockRunner` implementation, a schema-v6 binding declares
 separate admission, dispatch, and local-candidate publication enforcement
-coverage. The run record and private directories created first are inert
+coverage and commits the canonical task-intent preimage, its controller-owned
+source, and exact digests needed for replay. The run record and private
+directories created first are inert
 controller scaffolding. After required selection and binding records, the
 controller builds a fixed admission CREATE request, inherits the task's full
 consequence vector, persists its decision, rebuilds current authoritative
@@ -103,8 +106,9 @@ unsafe/high-impact, non-permit, stale, evaluation, or evidence failures stop
 before the admission shadow and billing. After admission and billing, the controller builds
 an exact mock-only execute request, evaluates a fixed versioned policy,
 exactly reads back the selection, task-attempt binding, mock billing assessment
-and decision, and then rebuilds
-from current authoritative inputs. Before `RUNNING`, it independently
+and decision, and then rebuilds from current authoritative inputs. Before
+`RUNNING`, it requires the resolved task intent and digest to equal the durable
+lineage, independently
 constructs the canonical wrapper and compares it with the retained persisted
 payload, independently replays the fixed policy, checks finite freshness,
 supported obligations, the derived Class 0/1 ceiling, the independent legacy
@@ -115,8 +119,10 @@ immediately before invocation. A non-permit, evaluation failure, stale
 decision, unsupported obligation, or uncertain pre-effect evidence invokes no
 runner. Once invocation starts, a linked terminal action receipt and execution
 accounting must read back exactly before publication; unprovable receipt
-persistence after the effect quarantines the attempt. Read-only inspection
-requires exact terminal linkage for non-permits and rejects any dispatch
+persistence after the effect quarantines the attempt. Read-only inspection of
+schema v6 derives dispatch intent only from that authoritative binding and
+never from a shadow preimage. It requires exact terminal linkage for non-
+permits and rejects any dispatch
 receipt that contradicts a claimed pre-effect stop. Only a validated
 identity-matched no-process mock
 result may receive a succeeded receipt. Accepted, credential-clean output then
@@ -129,17 +135,23 @@ historical/live schema-v2 selections, historical schema-v3/v4 admission,
 comparison trials, supervisor workers, general or live admission, shared
 publication, tools, commands, or external effects.
 
-This dispatch hardening uses the existing event schema and schema-v5 binding;
-it adds no schema version or authority. The next narrow authorization slice
-should make authoritative dispatch intent lineage self-contained for read-only
-replay without depending on non-authoritative shadow preimages, before any
-permission expansion.
+This lineage slice advances only current exact-mock task bindings to schema v6;
+it changes no dispatch decision or receipt schema and adds no authority. Frozen
+schema-v1 through v5 histories retain their prior interpretation. The next
+recommended narrow slice threads the existing v6 lineage and shipped-resolver
+equality through the owner-private local-candidate publication runtime PEP and
+final pre-mutation replay, with exact binding readback. The publication
+request-projection inspector already replays the v6 preimage from that binding,
+so no new lineage is needed. The slice must not widen the Class 1 local-only
+effect or enable a live harness.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and
-their task binding. New built-in-mock attempts use schema v5; frozen schema v4
-means dispatch plus publication, historical dispatch-only mock attempts use
-schema v3, and live or historical selected attempts use schema v2. The privacy-safe record binds a
+their task binding. New built-in-mock attempts use schema v6; frozen schema v5
+retains admission, dispatch, and publication without self-contained dispatch
+lineage, schema v4 means dispatch plus publication, historical dispatch-only
+mock attempts use schema v3, and live or historical selected attempts use
+schema v2. The privacy-safe record binds a
 captured routing
 policy clock, exact task/context/authorization refs, canonical candidates,
 fixed rejection codes, raw score tiers and evidence-source markers, safe
@@ -207,7 +219,7 @@ scope, output withholding, and terminal reporting; adapter flags cannot make
 unknown or changed evidence succeed. Historical schema-v1 comparison evidence
 remains backward-compatible partial coverage with an explicit publication gap.
 Comparison publication observations and receipts remain non-enforcing; the
-ordinary schema-v4/v5 publication chain is the narrow exception and grants no
+ordinary schema-v4/v5/v6 publication chain is the narrow exception and grants no
 shared, promotion, live, comparison, Class 2/3, or external authority.
 
 **Adopted target design, not implemented:** revocable standing authorization

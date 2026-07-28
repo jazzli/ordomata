@@ -121,6 +121,20 @@ Other harnesses remain blocked until their billing route, account identity, incl
 
 The full suite uses deterministic mocks, sanitized event fixtures, and simulated route, credit, overage, capacity, identity, circuit, timeout, and postflight failures. Normal tests never invoke a model or network service.
 
+The schema-v6 task-attempt binding is limited to the exact controller-owned
+in-memory mock path. Its bounded canonical task-intent lineage and the final
+PEP's current-intent comparison add authorization provenance only: they do not
+change an allowed billing route, satisfy any live gate, invoke a harness, or
+enable credit, overage, API, cloud, comparison, supervisor, or external-action
+fallback. Schema-v1 through v5 histories retain their prior billing and
+authorization meanings.
+
+The next narrow publication-runtime slice will reuse that existing v6 lineage
+and shipped-resolver equality at the owner-private final pre-mutation PEP, with
+exact binding readback. The publication request-projection inspector already
+replays the preimage from the binding; the slice creates no new lineage and
+changes no billing or live-route eligibility.
+
 `compare-run` is an opt-in execution workflow, not a bypass. It requires the same live gate and current evidence for every selected profile before creating comparison records. Trials use one immutable sanitized Class 0 snapshot, randomized repetition blocks, fresh sessions and workspaces, no shared outputs, and no external actions. Reports expose raw automated dimensions and separate human-review fields; they do not declare a winner or auto-promote a profile.
 
 No live Codex-versus-Claude comparison has yet been completed in this repository.

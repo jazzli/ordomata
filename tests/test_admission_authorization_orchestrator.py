@@ -64,6 +64,7 @@ from ordomata.shadow_authorization import (
 from ordomata.state import SQLiteStateStore
 from ordomata.task_evidence import (
     TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE,
+    TASK_ATTEMPT_AUTHORIZATION_BINDING_LINEAGE_SCHEMA_VERSION,
     TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
     TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
 )
@@ -278,7 +279,10 @@ class AdmissionAuthorizationOrchestratorTests(unittest.TestCase):
                 and event.payload.get("phase") == "runner_execution"
             )
 
-            self.assertEqual(binding.payload["schema_version"], 5)
+            self.assertEqual(
+                binding.payload["schema_version"],
+                TASK_ATTEMPT_AUTHORIZATION_BINDING_LINEAGE_SCHEMA_VERSION,
+            )
             self.assertEqual(
                 binding.payload[
                     "admission_authorization_enforcement_coverage"

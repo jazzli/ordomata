@@ -91,10 +91,12 @@ records.
   binding, mock billing assessment, enforcing decision, and `RUNNING`
   transition each require exact durable readback. Before `RUNNING`
   and again immediately before invocation, the controller rebuilds the permit
-  from current authoritative inputs, independently constructs the canonical
-  wrapper for equality with the retained persisted payload, replays the fixed
-  policy, rejects non-finite or stale action times, and rechecks exact runner
-  ownership, including unchanged shipped class and instance boundaries. Its
+  from current authoritative inputs, requires the current resolved task intent
+  to equal the bounded canonical lineage in the durable binding, independently
+  constructs the canonical wrapper for equality with the retained persisted
+  payload, replays the fixed policy, rejects non-finite or stale action times,
+  and rechecks exact runner ownership, including unchanged shipped class and
+  instance boundaries. Its
   content-addressed terminal action receipt and execution accounting also
   require exact readback before publication may proceed; an unprovable receipt
   after execution quarantines the attempt. Accepted, credential-clean output then
@@ -105,17 +107,20 @@ records.
   validated identity-matched no-process result can receive a succeeded
   dispatch receipt, while live, comparison, supervisor, shared publication,
   and promotion paths remain non-enforcing or disabled;
-- digest-only ordinary task-attempt bindings that cover the typed authorization
-  intent and, for profile-backed attempts, the immutable execution selection,
-  profile version, and configuration; new enforced mock attempts use one
-  schema-v5 binding that declares admission, dispatch, and local-candidate
-  publication coverage; schema-v4 is frozen as dispatch plus publication,
-  historical schema-v3 bindings declare dispatch only, and unprofiled
-  schema-v1 plus live or historical schema-v2 histories retain their prior
-  meaning;
+- privacy-bounded ordinary task-attempt bindings that cover the typed
+  authorization intent and, for profile-backed attempts, the immutable
+  execution selection, profile version, and configuration; current enforced
+  mock attempts use a schema-v6 binding that retains admission, dispatch, and
+  local-candidate publication coverage while adding the canonical task-intent
+  preimage, its controller-owned source, and exact digests needed for
+  authoritative replay. Schema-v5 retains the same three enforcement chains
+  without the self-contained lineage, schema-v4 is frozen as dispatch plus
+  publication, historical schema-v3 bindings declare dispatch only, and
+  unprofiled schema-v1 plus live or historical schema-v2 histories retain their
+  prior meaning;
   schema-v2 execution accounting, billing-bound dispatch, and schema-v3
   enforcing pre-effect/action receipts around the schema-v5 local-candidate
-  publication shadow for schema-v4/v5 enforcing paths, with exact metadata,
+  publication shadow for schema-v4/v5/v6 enforcing paths, with exact metadata,
   filesystem, and receipt reconciliation; schema-v1-v3 paths retain schema-v2
   non-enforcing receipts;
 - append-only schema-v2 Class 0 comparison-trial bindings, lifecycle/accounting
@@ -141,13 +146,24 @@ records.
   controller vocabulary;
 - an operator CLI and a deterministic, live-model-free test suite.
 
-The dispatch hardening changes no event or attempt-binding schema and grants no
-new authority. Dispatch remains limited to Class 0/1 requests for the exact
-profile-backed controller-owned `MockRunner`; new attempts that reach it still
-require the existing Class 1 admission permit. The next narrow authorization
-slice should make authoritative dispatch intent lineage self-contained for
-read-only replay without depending on non-authoritative shadow preimages,
-before any permission expansion.
+The authoritative dispatch-lineage slice advances only the current built-in-
+mock attempt binding from schema v5 to v6; it changes no dispatch decision or
+receipt schema and grants no new authority. The binding carries only a strict,
+bounded canonical task-intent lineage; prompts, task inputs, paths, approver
+values, and credentials remain omitted. The final PEP compares that durable
+lineage and digest with the current controller-resolved intent before
+invocation, and read-only inspection replays schema-v6 dispatch without using a
+shadow preimage. Schema-v1 through v5 histories keep their frozen meanings.
+Dispatch remains limited to Class 0/1 requests for the exact profile-backed
+controller-owned `MockRunner`, new attempts still require
+the Class 1 admission permit, and no live harness path is enabled. The next
+recommended narrow slice is to thread the existing v6 lineage and
+shipped-resolver equality through the owner-private local-candidate publication
+runtime PEP and final pre-mutation replay, with an exact authoritative-binding
+readback.
+The publication request-projection inspector already replays the v6 preimage
+from that binding; this does not create another lineage or widen the effect or
+permission ceiling.
 
 ## Quick start
 

@@ -89,12 +89,15 @@ non-permit, stale, or unprovable admission evidence stops before the admission
 shadow, billing preflight, dispatch, or `RUNNING`. The dispatch PEP constructs
 a separate exact `runner.execute` request, evaluates a fixed mock-only policy,
 and requires exact readback of the selection, task-attempt binding, mock
-billing assessment, and decision. Before
-`RUNNING`, it rebuilds from current authoritative inputs, independently
-constructs the canonical wrapper and compares it with the retained persisted
-payload, independently replays the fixed policy, checks finite freshness, and
-rechecks exact runner ownership, including the unchanged shipped class and
-instance boundary definitions. The exact `RUNNING` record must then read back
+billing assessment, and decision. Current attempts use a schema-v6 binding
+whose bounded canonical task-intent lineage is part of the binding digest.
+Before `RUNNING`, the PEP rebuilds from current authoritative inputs, requires
+the current controller-resolved intent and digest to equal that durable
+lineage, independently constructs the canonical wrapper and compares it with
+the retained persisted payload, independently replays the fixed policy, checks
+finite freshness, and rechecks exact runner ownership, including the unchanged
+shipped class and instance boundary definitions. The exact `RUNNING` record
+must then read back
 before a second ownership, binding, policy, and freshness check immediately
 precedes invocation. A linked terminal action receipt must read back exactly
 before publication can proceed; if its persistence is unprovable after the
@@ -120,14 +123,16 @@ independent authority-ceiling parity. These observations
 remain non-permits and cannot authorize execution or publication;
 shadow-decision persistence remains best-effort. Schema-v3 mock attempt
 bindings declare dispatch enforcement; frozen schema-v4 bindings add
-local-candidate publication enforcement; new schema-v5 bindings retain both
-chains and separately declare Class 1 task-admission enforcement. Their
-enforcing decisions and action receipts are distinct from the shadows.
-Unprofiled schema-v1 bindings, live or historical schema-v2 bindings,
-historical schema-v3/v4 bindings, and every comparison path retain their prior
-meaning.
-This hardening uses the existing dispatch event schema and schema-v5 attempt
-binding; it adds no schema version or authority. The dispatch PEP remains
+local-candidate publication enforcement; schema-v5 bindings add Class 1 task-
+admission enforcement; and current schema-v6 bindings retain all three chains
+while carrying the bounded canonical task-intent lineage required for
+authoritative dispatch replay. Their enforcing decisions and action receipts
+are distinct from the shadows. Unprofiled schema-v1 bindings, live or
+historical schema-v2 bindings, historical schema-v3/v4/v5 bindings, and every
+comparison path retain their prior meaning.
+This lineage slice uses the existing dispatch decision and receipt schemas and
+advances only the current exact-mock attempt binding to schema v6; it adds no
+authority. The dispatch PEP remains
 limited to Class 0/1 requests for the exact profile-backed controller-owned
 `MockRunner`, while every new attempt that reaches it still requires the Class
 1 admission permit.
@@ -179,7 +184,8 @@ trigger
   -> build sanitized child environment
   -> choose an eligible execution profile
   -> create the append-only run record, private directories, execution
-     selection, and task binding as inert controller scaffolding
+     selection, and task binding as inert controller scaffolding; current exact
+     mocks bind a bounded canonical task-intent lineage in schema v6
   -> for a new profile-backed exact built-in-mock Class 1 attempt only,
      persist an admission decision, rebuild/replay it at the boundary, and
      require a durable succeeded admission receipt
@@ -187,8 +193,9 @@ trigger
   -> inspect, persist, and exactly read back billing preflight evidence
   -> for that same narrow path, persist and exactly read back a fixed-policy
      decision for the exact mock runner invocation
-  -> rebuild from current inputs, construct and compare the canonical wrapper,
-     replay fixed policy, and check finite freshness and runner ownership
+  -> rebuild from current inputs, require exact current-intent/lineage equality,
+     construct and compare the canonical wrapper, replay fixed policy, and check
+     finite freshness and runner ownership
   -> transition to RUNNING and exactly read back that record
   -> append the non-authoritative task-effect dispatch-intent observation
   -> recheck current binding, fixed policy, finite freshness, and exact runner
@@ -203,7 +210,7 @@ trigger
   -> run deterministic evaluation
   -> append a shadow local-candidate observation bound to the validated bytes
      and digest, using the controller-owned local-create projection
-  -> for the schema-v5 exact-mock path only, persist a separate fixed-policy
+  -> for the schema-v4/v5/v6 exact-mock paths, persist a separate fixed-policy
      Class 1 publication decision and enforcing pre-effect record
   -> recheck that permit immediately before the first staging mutation
   -> reconcile the local artifact, metadata, and integrated action receipt;
@@ -258,10 +265,12 @@ settings, account/subscription values, diagnostics, prompts, paths, and
 environment values are represented only by digests or omitted. Every source
 candidate must still match the controller-loaded catalog, and the selected
 source assessment must match fresh horizon-valid runner preflight evidence. A
-schema-v5 binding links new exact built-in-mock admission, dispatch, and
-publication enforcement; frozen schema v4 retains dispatch-plus-publication,
-schema v3 retains its historical dispatch-only meaning, and schema v2 remains
-for live and historical selected attempts. Both admission/dispatch observations
+schema-v6 binding links current exact built-in-mock admission, dispatch, and
+publication enforcement and adds canonical task-intent lineage; frozen schema
+v5 retains those three chains without self-contained lineage, schema v4 retains
+dispatch-plus-publication, schema v3 retains its historical dispatch-only
+meaning, and schema v2 remains for live and historical selected attempts. Both
+admission/dispatch observations
 link the selection digest. Exact persistence is required before execution; the
 read-only
 inspector independently recomputes shape, digests, filters, scores, rank,
@@ -377,23 +386,26 @@ authoritative acceptance checks.
 
 ## Ordinary local-candidate publication
 
-Every new Chief-of-Staff attempt records a digest-only binding before its
-admission shadow. For a schema-v5 exact-mock attempt, the run record and
+Every new Chief-of-Staff attempt records a privacy-bounded binding before its
+admission shadow. For a schema-v6 exact-mock attempt, the run record and
 private run directories that precede the binding are inert controller
 scaffolding: they cannot authorize billing, dispatch, `RUNNING`, or
 publication. The binding covers the controller-resolved typed authorization
-intent as well as immutable run inputs, and dispatch binds the
+intent as well as immutable run inputs; schema v6 also retains its strict,
+bounded canonical preimage and source inside the binding digest so dispatch
+inspection no longer needs a shadow preimage. Dispatch binds the
 persisted preflight billing assessment. After runner execution, schema-v2
 accounting projects the identity and billing disposition fields needed to
 recompute one sanitized billing digest. Runner-provided version text is reduced
 to a content reference, execution mode is restricted to controller-known
 labels, and billing/accounting events are content-addressed for exact ambiguous
 write reconciliation. An accepted, credential-clean candidate then receives a
-schema-v5 non-enforcing publication shadow. On the schema-v5 exact-mock path,
-the controller also persists a separate fixed-policy publication decision and
-a schema-v3 enforcing pre-effect receipt before the first artifact-directory
-mutation. Frozen schema-v4 retains the same enforcing publication chain;
-schema-v1-v3 paths retain schema-v2 non-enforcing pre-effect receipts.
+schema-v5 non-enforcing publication shadow. On the schema-v4/v5/v6 exact-mock
+paths, the controller also persists a separate fixed-policy publication
+decision and a schema-v3 enforcing pre-effect receipt before the first
+artifact-directory mutation. Frozen schema-v4/v5 retain the same enforcing
+publication chain; schema-v1-v3 paths retain schema-v2 non-enforcing pre-effect
+receipts.
 
 The controller stages owner-private bytes under a deterministic name, opens the
 parent chain without following mutable symlinks, and retains verified parent
@@ -401,7 +413,7 @@ and inode descriptors through receipt reconciliation. It fsyncs the file and
 namespace, reconciles immutable artifact metadata by exact readback, promotes
 without overwrite, and verifies the final bytes, mode, size, inode, parent
 identity, and expected hard-link count. A deterministic action receipt records
-succeeded, failed, cancelled, or unknown outcome. For schema-v4/v5 enforcing
+succeeded, failed, cancelled, or unknown outcome. For schema-v4/v5/v6 enforcing
 attempts it is schema v3 and embeds the canonical ABAC action receipt;
 schema-v1-v3 paths retain the schema-v2 legacy-gate receipt. Proven
 missing receipts roll back only the owned final inode; an unexpected surviving
@@ -414,18 +426,19 @@ controller-owned terminal record is an attention-required incomplete history;
 a bound attempt that has not reached billing may still be legitimately in
 progress.
 
-For a selected controller-owned mock profile, the binding is schema v5 and
-declares three separate chains. The first is an exact Class 1 admission CREATE
-request and fixed-policy decision followed by current-input rebuild, exact
-persisted-wrapper comparison, independent policy replay, freshness checking,
-and a durable succeeded admission receipt. It inherits the full task
+For a selected controller-owned mock profile, the current binding is schema v6
+and declares three separate chains. The first is an exact Class 1 admission
+CREATE request and fixed-policy decision followed by current-input rebuild,
+exact persisted-wrapper comparison, independent policy replay, freshness
+checking, and a durable succeeded admission receipt. It inherits the full task
 consequence vector; Class 0, unsafe/high-impact, non-permit, stale, evaluation,
 or evidence failures stop before the admission shadow and billing preflight.
 The second is billing assessment, exact mock-dispatch request and fixed-policy
 decision, with exact readback for the selection, task-attempt binding, billing,
 decision, and `RUNNING` evidence. Before `RUNNING`, the controller rebuilds
-current authoritative
-inputs, independently constructs and compares the canonical wrapper,
+current authoritative inputs, compares the resolved task intent and digest with
+the canonical lineage committed by the binding, independently constructs and
+compares the canonical wrapper,
 independently replays the fixed policy, checks finite freshness and the Class
 0/1 ceiling, and rechecks exact runner ownership. It repeats the binding,
 policy, freshness, and ownership check immediately before invocation. A
@@ -444,15 +457,29 @@ decision and pre-effect append must reconcile before mutation, and freshness,
 exact obligations, and both Class ceilings are rechecked immediately before
 staging. A non-permit or uncertain decision append creates no staged bytes or
 metadata. Schema-v1 unprofiled, schema-v2 selected/live, and historical
-schema-v3/v4 histories remain valid with their previous semantics.
+schema-v3/v4/v5 histories remain valid with their previous semantics. For v6,
+the read-only inspector validates dispatch intent only from the authoritative
+binding lineage; shadow observations are inspected separately and cannot supply
+or repair that preimage.
 
-None of the three chains authorizes shared, remote, active-policy, promotion, deployment,
-live-harness, supervisor-worker, or Class 2/3 effects. The existing Class 0/1
-gate remains an independent prerequisite and cannot be widened by any PEP.
+None of the three chains authorizes shared, remote, active-policy, promotion,
+deployment, live-harness, supervisor-worker, or Class 2/3 effects. The existing
+Class 0/1 gate remains an independent prerequisite and cannot be widened by any
+PEP.
 
-The next narrow authorization slice should make authoritative dispatch intent
-lineage self-contained for read-only replay without depending on
-non-authoritative shadow preimages, before any permission expansion.
+The next recommended narrow authorization slice is to thread the existing v6
+lineage and shipped-resolver equality through the owner-private local-candidate
+publication runtime PEP and final pre-mutation replay, with an exact
+authoritative-binding readback. The publication request-projection inspector
+already replays the v6 preimage from that binding, so the slice creates no new
+lineage. It must preserve the present Class 1 local-only effect and may not
+enable shared publication, promotion, live harnesses, or any Class 2/3 path.
+
+The lineage digest, downstream content links, and SQLite append-only guards
+detect ordinary in-place mutation; they are not an external tamper anchor
+against an operator who can replace and coherently rewrite the entire local
+state database. External anchoring remains target work rather than an authority
+claim of this stage.
 
 ## Controlled comparison
 

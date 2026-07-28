@@ -218,10 +218,17 @@ _MAX_PAYLOAD_BYTES = 512 * 1024
 _SHADOW_EVIDENCE_LIFETIME_SECONDS = 120.0
 _MISSING = object()
 
-_SELECTED_TASK_BINDING_SCHEMA_VERSIONS = frozenset({2, 3, 4, 5})
-_DISPATCH_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS = frozenset({3, 4, 5})
-_PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS = frozenset({4, 5})
-_ADMISSION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS = frozenset({5})
+_SELECTED_TASK_BINDING_SCHEMA_VERSIONS = frozenset({2, 3, 4, 5, 6})
+_DISPATCH_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS = frozenset({3, 4, 5, 6})
+_PUBLICATION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS = frozenset({4, 5, 6})
+_ADMISSION_ENFORCING_TASK_BINDING_SCHEMA_VERSIONS = frozenset({5, 6})
+_TASK_AUTHORIZATION_INTENT_LINEAGE_SCHEMA_VERSION = 1
+_TASK_AUTHORIZATION_INTENT_LINEAGE_KIND = (
+    "task_authorization_intent_lineage"
+)
+_TASK_AUTHORIZATION_INTENT_LINEAGE_SOURCES = frozenset(
+    {"legacy_permission_class_fallback", "task_contract"}
+)
 
 _COMPARISON_ACCOUNTING_KEYS = frozenset(
     {
@@ -414,7 +421,7 @@ class ShadowDecisionInspection:
 
 @dataclass(frozen=True, slots=True)
 class MockDispatchEnforcementInspection:
-    """Sanitized findings for the first authoritative mock dispatch PEP."""
+    """Sanitized findings for the authoritative mock dispatch PEP."""
 
     required: bool
     decision_observed: bool
@@ -771,6 +778,7 @@ class _TaskAttemptBindingFacts:
     authorization_enforcement_coverage: str | None = None
     publication_authorization_enforcement_coverage: str | None = None
     schema_version: int | None = None
+    authorization_intent: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -3251,7 +3259,7 @@ def _inspect_task_attempt_binding(
     fact: _RunFacts,
     rows: list[sqlite3.Row],
 ) -> _TaskAttemptBindingFacts:
-    """Validate one digest-only ordinary task-attempt binding."""
+    """Validate one privacy-bounded ordinary task-attempt binding."""
 
     if fact.task_binding_event_count == 0:
         return _TaskAttemptBindingFacts(False, None, None, None, ())
@@ -3268,6 +3276,15 @@ def _inspect_task_attempt_binding(
     sequence = _optional_sequence(row["sequence"])
     payload = _bounded_json_mapping(row["payload_json"])
     schema_version = payload.get("schema_version") if payload is not None else None
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version not in {1, 2, 3, 4, 5, 6}
+    ):
+        return _invalid_task_binding(
+            sequence,
+            "task_binding_payload_invalid",
+        )
     expected_outer_keys = {
         "authorization_action_receipt_coverage",
         "authorization_shadow_coverage",
@@ -3290,14 +3307,11 @@ def _inspect_task_attempt_binding(
             sequence,
             "task_binding_payload_invalid",
             schema_version=(
-                schema_version if schema_version in {3, 4, 5} else None
+                schema_version if schema_version in {3, 4, 5, 6} else None
             ),
         )
     if (
-        isinstance(schema_version, bool)
-        or not isinstance(schema_version, int)
-        or schema_version not in {1, 2, 3, 4, 5}
-        or payload.get("authorization_shadow_coverage")
+        payload.get("authorization_shadow_coverage")
         != TASK_ATTEMPT_SHADOW_COVERAGE
         or payload.get("authorization_action_receipt_coverage")
         != TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE
@@ -3328,7 +3342,7 @@ def _inspect_task_attempt_binding(
             sequence,
             "task_binding_payload_invalid",
             schema_version=(
-                schema_version if schema_version in {3, 4, 5} else None
+                schema_version if schema_version in {3, 4, 5, 6} else None
             ),
         )
     binding = payload.get("binding")
@@ -3340,10 +3354,21 @@ def _inspect_task_attempt_binding(
             sequence,
             "task_binding_payload_invalid",
             schema_version=(
-                schema_version if schema_version in {3, 4, 5} else None
+                schema_version if schema_version in {3, 4, 5, 6} else None
             ),
         )
     assert isinstance(binding, Mapping)
+    authorization_intent = (
+        _authorization_intent_from_task_binding_lineage(binding)
+        if schema_version == 6
+        else None
+    )
+    if schema_version == 6 and authorization_intent is None:
+        return _invalid_task_binding(
+            sequence,
+            "task_binding_authorization_intent_lineage_invalid",
+            schema_version=schema_version,
+        )
     binding_digest = payload.get("binding_digest")
     if not _digest_matches(binding_digest, binding):
         return _TaskAttemptBindingFacts(
@@ -3415,6 +3440,7 @@ def _inspect_task_attempt_binding(
             else None
         ),
         schema_version=schema_version,
+        authorization_intent=authorization_intent,
     )
 
 
@@ -6092,32 +6118,31 @@ def _inspect_mock_dispatch_request_projection(
     billing = task_billing.payload
     if not isinstance(binding, Mapping):
         return ("mock_dispatch_request_binding_mismatch",)
-    expected_parameters_digest = canonical_digest(
-        {
-            "attempt": binding.get("attempt"),
-            "billing_assessment_digest": task_billing.assessment_digest,
-            "context_digest": binding.get("context_digest"),
-            "execution_selection_digest": binding.get(
-                "execution_selection_digest"
-            ),
-            "output_schema_digest": binding.get("output_schema_digest"),
-            "profile_ref": binding.get("profile_ref"),
-            "prompt_digest": binding.get("prompt_digest"),
-            "run_ref": binding.get("run_ref"),
-            "runner_overrides_digest": binding.get(
-                "runner_overrides_digest"
-            ),
-            "task_attempt_binding_digest": task_binding.binding_digest,
-            "task_authorization_intent_digest": binding.get(
-                "authorization_intent_digest"
-            ),
-            "task_definition_digest": binding.get(
-                "task_definition_digest"
-            ),
-            "timeout_seconds": binding.get("timeout_seconds"),
-            "workspace_ref": binding.get("workspace_ref"),
-        }
-    )
+    expected_parameters = {
+        "attempt": binding.get("attempt"),
+        "billing_assessment_digest": task_billing.assessment_digest,
+        "context_digest": binding.get("context_digest"),
+        "execution_selection_digest": binding.get(
+            "execution_selection_digest"
+        ),
+        "output_schema_digest": binding.get("output_schema_digest"),
+        "profile_ref": binding.get("profile_ref"),
+        "prompt_digest": binding.get("prompt_digest"),
+        "run_ref": binding.get("run_ref"),
+        "runner_overrides_digest": binding.get("runner_overrides_digest"),
+        "task_attempt_binding_digest": task_binding.binding_digest,
+        "task_authorization_intent_digest": binding.get(
+            "authorization_intent_digest"
+        ),
+        "task_definition_digest": binding.get("task_definition_digest"),
+        "timeout_seconds": binding.get("timeout_seconds"),
+        "workspace_ref": binding.get("workspace_ref"),
+    }
+    if task_binding.schema_version == 6:
+        expected_parameters["task_authorization_intent_lineage_digest"] = (
+            binding.get("authorization_intent_lineage_digest")
+        )
+    expected_parameters_digest = canonical_digest(expected_parameters)
     expected_resource_identifier = canonical_digest(
         {
             "resource_type": MOCK_DISPATCH_RESOURCE_TYPE,
@@ -6234,8 +6259,10 @@ def _mock_dispatch_task_intent_from_shadow(
     task_binding: _TaskAttemptBindingFacts,
     rows: list[sqlite3.Row],
 ) -> Mapping[str, Any] | None:
-    """Recover the validated task intent without treating shadow as policy."""
+    """Recover v6 binding lineage or frozen historical shadow lineage."""
 
+    if task_binding.schema_version == 6:
+        return task_binding.authorization_intent
     binding = task_binding.binding
     if not isinstance(binding, Mapping):
         return None
@@ -11616,21 +11643,36 @@ def _is_task_intent_shape(value: Any) -> bool:
     }:
         return False
     impact_values = frozenset(item.value for item in ImpactLevel)
+    action_verb = action.get("verb")
+    resource_sensitivity = resource.get("sensitivity")
+    availability = consequences.get("availability")
+    confidentiality = consequences.get("confidentiality")
+    integrity = consequences.get("integrity")
+    consequence_sensitivity = consequences.get("sensitivity")
+    reach = consequences.get("reach")
+    blast_radius = consequences.get("blast_radius")
     return (
-        action.get("verb") in {item.value for item in ActionVerb}
+        isinstance(action_verb, str)
+        and action_verb in {item.value for item in ActionVerb}
         and _bounded_authorization_identifier(action.get("operation"))
         and _bounded_authorization_identifier(action.get("intended_effect"))
         and _bounded_authorization_identifier(resource.get("resource_type"))
         and _bounded_authorization_identifier(resource.get("trust_boundary"))
         and isinstance(resource.get("protected"), bool)
-        and resource.get("sensitivity") in impact_values
-        and consequences.get("availability") in impact_values
-        and consequences.get("confidentiality") in impact_values
-        and consequences.get("integrity") in impact_values
-        and consequences.get("sensitivity") in impact_values
-        and consequences.get("reach") in {item.value for item in Reach}
-        and consequences.get("blast_radius")
-        in {item.value for item in BlastRadius}
+        and isinstance(resource_sensitivity, str)
+        and resource_sensitivity in impact_values
+        and isinstance(availability, str)
+        and availability in impact_values
+        and isinstance(confidentiality, str)
+        and confidentiality in impact_values
+        and isinstance(integrity, str)
+        and integrity in impact_values
+        and isinstance(consequence_sensitivity, str)
+        and consequence_sensitivity in impact_values
+        and isinstance(reach, str)
+        and reach in {item.value for item in Reach}
+        and isinstance(blast_radius, str)
+        and blast_radius in {item.value for item in BlastRadius}
         and isinstance(consequences.get("destructive"), bool)
         and isinstance(consequences.get("reversible"), bool)
     )
@@ -11714,7 +11756,7 @@ def _is_task_attempt_binding_shape(
     *,
     schema_version: int,
 ) -> bool:
-    """Accept only the fixed digest-only ordinary task binding schema."""
+    """Accept only a fixed privacy-bounded ordinary task binding schema."""
 
     expected_keys = {
         "attempt",
@@ -11773,6 +11815,14 @@ def _is_task_attempt_binding_shape(
                     "workspace_ref",
                 }
             )
+        if schema_version == 6:
+            expected_keys.update(
+                {
+                    "authorization_intent_lineage",
+                    "authorization_intent_lineage_digest",
+                }
+            )
+            digest_fields.add("authorization_intent_lineage_digest")
     elif schema_version != 1:
         return False
     if not isinstance(value, Mapping) or set(value) != expected_keys:
@@ -11782,7 +11832,7 @@ def _is_task_attempt_binding_shape(
     timeout_seconds = value.get("timeout_seconds")
     attempt = value.get("attempt")
     permission_class = _permission_class(value.get("permission_class"))
-    return (
+    base_shape_valid = (
         value.get("kind") == TASK_ATTEMPT_RUN_KIND
         and _is_safe_identifier(value.get("task_id"))
         and _is_safe_identifier(value.get("task_version"))
@@ -11799,6 +11849,61 @@ def _is_task_attempt_binding_shape(
         and not isinstance(attempt, bool)
         and attempt > 0
     )
+    return base_shape_valid
+
+
+def _authorization_intent_from_task_binding_lineage(
+    binding: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    """Recover one exact schema-v6 intent preimage without exposing it."""
+
+    lineage = binding.get("authorization_intent_lineage")
+    if not isinstance(lineage, Mapping) or set(lineage) != {
+        "authorization_intent_digest",
+        "intent_source",
+        "kind",
+        "requested_permission_class",
+        "schema_version",
+        "task_authorization_intent",
+        "task_definition_digest",
+    }:
+        return None
+    intent = lineage.get("task_authorization_intent")
+    lineage_permission_class = _permission_class(
+        lineage.get("requested_permission_class")
+    )
+    binding_permission_class = _permission_class(
+        binding.get("permission_class")
+    )
+    authorization_intent_digest = lineage.get(
+        "authorization_intent_digest"
+    )
+    lineage_schema_version = lineage.get("schema_version")
+    intent_source = lineage.get("intent_source")
+    if (
+        isinstance(lineage_schema_version, bool)
+        or not isinstance(lineage_schema_version, int)
+        or lineage_schema_version
+        != _TASK_AUTHORIZATION_INTENT_LINEAGE_SCHEMA_VERSION
+        or lineage.get("kind") != _TASK_AUTHORIZATION_INTENT_LINEAGE_KIND
+        or not isinstance(intent_source, str)
+        or intent_source not in _TASK_AUTHORIZATION_INTENT_LINEAGE_SOURCES
+        or lineage.get("task_definition_digest")
+        != binding.get("task_definition_digest")
+        or lineage_permission_class is None
+        or lineage_permission_class != binding_permission_class
+        or not _is_task_intent_shape(intent)
+        or not isinstance(intent, Mapping)
+        or not _digest_matches(authorization_intent_digest, intent)
+        or authorization_intent_digest
+        != binding.get("authorization_intent_digest")
+        or not _digest_matches(
+            binding.get("authorization_intent_lineage_digest"),
+            lineage,
+        )
+    ):
+        return None
+    return intent
 
 
 def _is_task_billing_shape(value: Any) -> bool:

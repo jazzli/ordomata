@@ -71,8 +71,11 @@ from ordomata.shadow_authorization import (
 from ordomata.state import SQLiteStateStore
 from ordomata.task_evidence import (
     TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE,
+    TASK_ATTEMPT_AUTHORIZATION_BINDING_LINEAGE_SCHEMA_VERSION,
     TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
     TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
+    TASK_AUTHORIZATION_INTENT_LINEAGE_KIND,
+    TASK_AUTHORIZATION_INTENT_LINEAGE_SCHEMA_VERSION,
     TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
     TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
     build_task_attempt_binding_event,
@@ -240,7 +243,31 @@ class DispatchAuthorizationTests(unittest.TestCase):
             and event.payload.get("action_scope") == DISPATCH_ACTION_SCOPE
         )
 
-        self.assertEqual(binding.payload["schema_version"], 5)
+        self.assertEqual(
+            binding.payload["schema_version"],
+            TASK_ATTEMPT_AUTHORIZATION_BINDING_LINEAGE_SCHEMA_VERSION,
+        )
+        intent_lineage = binding.payload["binding"][
+            "authorization_intent_lineage"
+        ]
+        self.assertEqual(
+            intent_lineage["schema_version"],
+            TASK_AUTHORIZATION_INTENT_LINEAGE_SCHEMA_VERSION,
+        )
+        self.assertEqual(
+            intent_lineage["kind"],
+            TASK_AUTHORIZATION_INTENT_LINEAGE_KIND,
+        )
+        self.assertEqual(
+            intent_lineage["authorization_intent_digest"],
+            binding.payload["binding"]["authorization_intent_digest"],
+        )
+        self.assertEqual(
+            binding.payload["binding"][
+                "authorization_intent_lineage_digest"
+            ],
+            canonical_digest(intent_lineage),
+        )
         self.assertEqual(
             binding.payload[
                 "admission_authorization_enforcement_coverage"
@@ -1496,6 +1523,67 @@ class DispatchAuthorizationTests(unittest.TestCase):
                     )
                     self.assertEqual(state.list_artifacts(run_id), ())
 
+    def test_current_mock_binding_schema_downgrade_never_reaches_admission(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            run_id = "mock-dispatch-binding-schema-downgrade"
+            prepared, profile, selection, runner = self._explicit_inputs(
+                root,
+                run_id,
+            )
+            original_builder = (
+                orchestrator_module.build_task_attempt_binding_event
+            )
+
+            def build_schema_five_binding(**kwargs):
+                return original_builder(
+                    **{
+                        **kwargs,
+                        "bind_dispatch_intent_lineage": False,
+                    }
+                )
+
+            with (
+                patch.object(
+                    orchestrator_module,
+                    "build_task_attempt_binding_event",
+                    new=build_schema_five_binding,
+                ),
+                recording_mock_calls() as calls,
+                self.assertRaisesRegex(
+                    ValidationError,
+                    "intent lineage binding is unavailable",
+                ),
+            ):
+                asyncio.run(
+                    run_chief_of_staff(
+                        root,
+                        runner=runner,
+                        runner_overrides=runner_overrides_for_profile(profile),
+                        run_id=run_id,
+                        profile_id=profile.profile_id,
+                        prepared_task=prepared,
+                        execution_selection=selection,
+                    )
+                )
+
+            self.assertEqual(calls["execute"], 0)
+            events = self._events(root, run_id)
+            self.assertFalse(
+                any(
+                    event.event_type == TASK_ADMISSION_DECISION_EVENT_TYPE
+                    for event in events
+                )
+            )
+            self.assertFalse(
+                any(
+                    event.event_type == MOCK_DISPATCH_DECISION_EVENT_TYPE
+                    for event in events
+                )
+            )
+
     def test_silent_execution_accounting_drop_prevents_publication(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = self._project(temporary)
@@ -1575,65 +1663,85 @@ class DispatchAuthorizationTests(unittest.TestCase):
                 (root / "artifacts" / "chief-of-staff-lite.json").exists()
             )
 
-    def test_effect_time_decision_readback_drop_never_executes(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = self._project(temporary)
-            run_id = "mock-dispatch-effect-time-decision-drop"
-            prepared, profile, selection, runner = self._explicit_inputs(
-                root,
-                run_id,
-            )
-            original_list_events = SQLiteStateStore.list_events
-            hidden = False
-
-            def hide_decision_after_running(store, observed_run_id):
-                nonlocal hidden
-                events = original_list_events(store, observed_run_id)
-                if any(event.status is RunStatus.RUNNING for event in events):
-                    hidden = True
-                    return tuple(
-                        event
-                        for event in events
-                        if event.event_type
-                        != MOCK_DISPATCH_DECISION_EVENT_TYPE
-                    )
-                return events
-
+    def test_effect_time_authoritative_readback_drop_never_executes(self) -> None:
+        for target_event_type in (
+            "task_attempt_authorization_binding",
+            MOCK_DISPATCH_DECISION_EVENT_TYPE,
+        ):
             with (
-                patch.object(
-                    SQLiteStateStore,
-                    "list_events",
-                    new=hide_decision_after_running,
-                ),
-                recording_mock_calls() as calls,
-                self.assertRaises(ConfigurationError),
+                self.subTest(target_event_type=target_event_type),
+                tempfile.TemporaryDirectory() as temporary,
             ):
-                asyncio.run(
-                    run_chief_of_staff(
-                        root,
-                        runner=runner,
-                        runner_overrides=runner_overrides_for_profile(profile),
-                        run_id=run_id,
-                        profile_id=profile.profile_id,
-                        prepared_task=prepared,
-                        execution_selection=selection,
+                root = self._project(temporary)
+                run_id = (
+                    "mock-dispatch-effect-time-"
+                    f"{target_event_type.replace('_', '-')}-drop"
+                )
+                prepared, profile, selection, runner = self._explicit_inputs(
+                    root,
+                    run_id,
+                )
+                original_list_events = SQLiteStateStore.list_events
+                hidden = False
+
+                def hide_authoritative_event_after_running(
+                    store,
+                    observed_run_id,
+                ):
+                    nonlocal hidden
+                    events = original_list_events(store, observed_run_id)
+                    if any(
+                        event.status is RunStatus.RUNNING for event in events
+                    ):
+                        hidden = True
+                        return tuple(
+                            event
+                            for event in events
+                            if event.event_type != target_event_type
+                        )
+                    return events
+
+                with (
+                    patch.object(
+                        SQLiteStateStore,
+                        "list_events",
+                        new=hide_authoritative_event_after_running,
+                    ),
+                    recording_mock_calls() as calls,
+                    self.assertRaises(ConfigurationError),
+                ):
+                    asyncio.run(
+                        run_chief_of_staff(
+                            root,
+                            runner=runner,
+                            runner_overrides=runner_overrides_for_profile(
+                                profile
+                            ),
+                            run_id=run_id,
+                            profile_id=profile.profile_id,
+                            prepared_task=prepared,
+                            execution_selection=selection,
+                        )
+                    )
+
+                self.assertTrue(hidden)
+                self.assertEqual(calls["execute"], 0)
+                events = self._events(root, run_id)
+                self.assertFalse(
+                    any(
+                        event.event_type
+                        == MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE
+                        for event in events
                     )
                 )
-
-            self.assertTrue(hidden)
-            self.assertEqual(calls["execute"], 0)
-            events = self._events(root, run_id)
-            self.assertFalse(
-                any(
-                    event.event_type == MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE
-                    for event in events
-                )
-            )
-            with SQLiteStateStore(
-                root / ".ordomata" / "state.sqlite3"
-            ) as state:
-                self.assertEqual(state.current_status(run_id), RunStatus.FAILED)
-                self.assertEqual(state.list_artifacts(run_id), ())
+                with SQLiteStateStore(
+                    root / ".ordomata" / "state.sqlite3"
+                ) as state:
+                    self.assertEqual(
+                        state.current_status(run_id),
+                        RunStatus.FAILED,
+                    )
+                    self.assertEqual(state.list_artifacts(run_id), ())
 
     def test_retained_decision_payload_mutation_is_caught_at_final_pep(
         self,

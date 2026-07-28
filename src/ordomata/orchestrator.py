@@ -796,9 +796,35 @@ async def run_chief_of_staff(
             enforce_mock_dispatch=enforce_mock_dispatch,
             enforce_local_candidate_publication=enforce_mock_dispatch,
             enforce_task_admission=enforce_mock_dispatch,
+            bind_dispatch_intent_lineage=enforce_mock_dispatch,
         )
         task_binding_digest = task_binding["binding_digest"]
         assert isinstance(task_binding_digest, str)
+        task_authorization_intent_lineage: Mapping[str, Any] | None = None
+        task_authorization_intent_lineage_digest: str | None = None
+        if enforce_mock_dispatch:
+            binding_body = task_binding.get("binding")
+            if not isinstance(binding_body, Mapping):
+                raise ValidationError(
+                    "mock dispatch task-attempt binding is invalid"
+                )
+            lineage_candidate = binding_body.get(
+                "authorization_intent_lineage"
+            )
+            lineage_digest_candidate = binding_body.get(
+                "authorization_intent_lineage_digest"
+            )
+            if not isinstance(lineage_candidate, Mapping) or not isinstance(
+                lineage_digest_candidate,
+                str,
+            ):
+                raise ValidationError(
+                    "mock dispatch intent lineage binding is unavailable"
+                )
+            task_authorization_intent_lineage = lineage_candidate
+            task_authorization_intent_lineage_digest = (
+                lineage_digest_candidate
+            )
         try:
             _append_required_event(
                 state,
@@ -1243,6 +1269,8 @@ async def run_chief_of_staff(
         if enforce_mock_dispatch:
             assert execution_selection_digest is not None
             assert selected_profile_id is not None
+            assert task_authorization_intent_lineage is not None
+            assert task_authorization_intent_lineage_digest is not None
             authorization_evaluated_at = time.time()
             authorization_evaluation_error: BaseException | None = None
             try:
@@ -1268,6 +1296,12 @@ async def run_chief_of_staff(
                         billing_assessment_digest=billing_metadata[
                             "assessment_digest"
                         ],
+                        task_authorization_intent_lineage=(
+                            task_authorization_intent_lineage
+                        ),
+                        task_authorization_intent_lineage_digest=(
+                            task_authorization_intent_lineage_digest
+                        ),
                         evaluated_at=authorization_evaluated_at,
                         legacy_executable=legacy_executable,
                     )
@@ -1385,10 +1419,19 @@ async def run_chief_of_staff(
                 or mock_dispatch_authorization_event_id is None
                 or execution_selection_digest is None
                 or selected_profile_id is None
+                or task_authorization_intent_lineage is None
+                or task_authorization_intent_lineage_digest is None
             ):
                 raise AuthorizationBlocked(
                     "mock dispatch requires an exact persisted authorization permit"
                 )
+            _require_exact_event_readback(
+                state,
+                selected_run_id,
+                TASK_ATTEMPT_AUTHORIZATION_BINDING_EVENT_TYPE,
+                task_binding,
+                event_id=task_binding_digest,
+            )
             _require_exact_event_readback(
                 state,
                 selected_run_id,
@@ -1417,6 +1460,12 @@ async def run_chief_of_staff(
                 billing_assessment_digest=billing_metadata[
                     "assessment_digest"
                 ],
+                task_authorization_intent_lineage=(
+                    task_authorization_intent_lineage
+                ),
+                task_authorization_intent_lineage_digest=(
+                    task_authorization_intent_lineage_digest
+                ),
                 legacy_executable=legacy_executable,
             )
 
