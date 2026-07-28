@@ -120,30 +120,33 @@ decision, unsupported obligation, or uncertain pre-effect evidence invokes no
 runner. Once invocation starts, a linked terminal action receipt and execution
 accounting must read back exactly before publication; unprovable receipt
 persistence after the effect quarantines the attempt. Read-only inspection of
-schema v6 derives dispatch intent only from that authoritative binding and
-never from a shadow preimage. It requires exact terminal linkage for non-
+schema v6 derives dispatch and publication intent only from that authoritative
+binding and never from a shadow preimage. It requires exact terminal linkage for non-
 permits and rejects any dispatch
 receipt that contradicts a claimed pre-effect stop. Only a validated
 identity-matched no-process mock
 result may receive a succeeded receipt. Accepted, credential-clean output then
 passes a second fixed Class 1 policy that binds the dispatch receipt,
-content-addressed accounting, billing disposition, and exact candidate. Its
-decision and pre-effect receipt must persist before a fresh permit is checked
-immediately at staging; the reconciled filesystem receipt is the canonical
+content-addressed accounting, billing disposition, and exact candidate. It
+reuses the v6 lineage, checks equality with the captured shipped resolver, and
+independently replays the shipped evaluator and fixed policy. Its decision and
+pre-effect receipt read back exactly. Immediately before staging, the binding,
+decision, and pre-effect record read back again; the permit is rebuilt and a
+new post-replay action time must be fresh. The reconciled filesystem receipt is
+the canonical
 action receipt. These PEPs do not cover unprofiled schema-v1 history,
 historical/live schema-v2 selections, historical schema-v3/v4 admission,
 comparison trials, supervisor workers, general or live admission, shared
 publication, tools, commands, or external effects.
 
-This lineage slice advances only current exact-mock task bindings to schema v6;
-it changes no dispatch decision or receipt schema and adds no authority. Frozen
-schema-v1 through v5 histories retain their prior interpretation. The next
-recommended narrow slice threads the existing v6 lineage and shipped-resolver
-equality through the owner-private local-candidate publication runtime PEP and
-final pre-mutation replay, with exact binding readback. The publication
-request-projection inspector already replays the v6 preimage from that binding,
-so no new lineage is needed. The slice must not widen the Class 1 local-only
-effect or enable a live harness.
+These lineage slices advance only current exact-mock task bindings to schema v6;
+they change no enforcing decision-event or action-receipt schema and add no
+authority. Frozen schema-v1 through v5 histories retain their prior
+interpretation. The next recommended narrow slice is a versioned, privacy-
+bounded repository-registration contract and read-only validator for canonical
+repository identity, exact verification argv, protected and allowed paths, and
+resource and isolation limits. It must not create a worktree, invoke a command
+or worker, enable supervisor dispatch, or enable a live harness.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and

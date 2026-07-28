@@ -61,6 +61,8 @@ from .models import (
 from .shadow_authorization import resolve_task_authorization_intent
 from .task_evidence import (
     TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
+    TASK_AUTHORIZATION_INTENT_LINEAGE_KIND,
+    TASK_AUTHORIZATION_INTENT_LINEAGE_SCHEMA_VERSION,
 )
 
 
@@ -92,6 +94,26 @@ _FIXED_PERMIT_OBLIGATIONS = frozenset(
         (ObligationKind.ISOLATED_LOCAL_ONLY, "required"),
     }
 )
+_TASK_AUTHORIZATION_INTENT_LINEAGE_KEYS = frozenset(
+    {
+        "schema_version",
+        "kind",
+        "intent_source",
+        "task_definition_digest",
+        "requested_permission_class",
+        "task_authorization_intent",
+        "authorization_intent_digest",
+    }
+)
+
+# Retain the shipped controller projections for the final independent replay.
+# A patchable first-pass resolver or evaluator must never become authority for
+# the owner-private filesystem effect.
+_BUILTIN_AUTHORIZATION_EVALUATOR = AuthorizationEvaluator
+_BUILTIN_AUTHORIZATION_EVALUATE = AuthorizationEvaluator.evaluate
+_BUILTIN_RESOLVE_TASK_AUTHORIZATION_INTENT = (
+    resolve_task_authorization_intent
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +126,7 @@ class LocalCandidatePublicationAuthorization:
     task_attempt_binding_digest: str
     execution_selection_digest: str
     task_authorization_intent_digest: str
+    task_authorization_intent_lineage_digest: str
     publication_authorization_intent_digest: str
     dispatch_request_digest: str
     dispatch_decision_digest: str
@@ -131,64 +154,140 @@ class LocalCandidatePublicationAuthorization:
     def to_event_payload(self) -> dict[str, Any]:
         """Return the strict, privacy-safe decision wrapper for persistence."""
 
-        return {
-            "schema_version": LOCAL_CANDIDATE_PUBLICATION_EVENT_SCHEMA_VERSION,
-            "mode": "enforcing",
-            "action_scope": LOCAL_CANDIDATE_PUBLICATION_ACTION_SCOPE,
-            "enforcement_coverage": (
-                LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
-            ),
-            "task_attempt_binding_digest": self.task_attempt_binding_digest,
-            "execution_selection_digest": self.execution_selection_digest,
-            "task_authorization_intent_digest": (
-                self.task_authorization_intent_digest
-            ),
-            "publication_authorization_intent_digest": (
-                self.publication_authorization_intent_digest
-            ),
-            "dispatch_request_digest": self.dispatch_request_digest,
-            "dispatch_decision_digest": self.dispatch_decision_digest,
-            "dispatch_action_receipt_digest": (
-                self.dispatch_action_receipt_digest
-            ),
-            "execution_accounting_digest": self.execution_accounting_digest,
-            "billing_disposition_digest": self.billing_disposition_digest,
-            "artifact_digest": self.artifact_digest,
-            "destination_digest": self.destination_digest,
-            "artifact_metadata_digest": self.artifact_metadata_digest,
-            "requested_permission_class": int(
-                self.requested_permission_class
-            ),
-            "controller_owned_mock_runner": (
-                self.controller_owned_mock_runner
-            ),
-            "legacy_executable": self.legacy_executable,
-            "safe_publication_prerequisites": (
-                self.safe_publication_prerequisites
-            ),
-            "evaluation_accepted": self.evaluation_accepted,
-            "credential_scan_passed": self.credential_scan_passed,
-            "request": self.request.to_canonical(),
-            "request_digest": self.request.digest,
-            "policy": self.policy.to_canonical(),
-            "policy_digest": self.policy.digest,
-            "decision": self.decision.to_canonical(),
-            "decision_digest": self.decision.digest,
-            "effect": self.decision.effect.value,
-            "derived_permission_class": int(
-                self.decision.derived_permission_class
-            ),
-            "decision_current_at_evaluation": (
-                self.decision_current_at_evaluation
-            ),
-            "authority_ceiling_satisfied": (
-                self.authority_ceiling_satisfied
-            ),
-            "obligations_supported": self.obligations_supported,
-            "authorization_eligible": self.authorized_at_evaluation,
-            "block_reason_codes": list(self.block_reason_codes),
-            "evaluated_at": float(self.request.environment.evaluated_at),
-        }
+        return _local_candidate_publication_event_payload(self)
+
+
+def _local_candidate_publication_event_payload(
+    authorization: LocalCandidatePublicationAuthorization,
+) -> dict[str, Any]:
+    """Construct the durable wrapper without invoking a patchable method."""
+
+    return {
+        "schema_version": LOCAL_CANDIDATE_PUBLICATION_EVENT_SCHEMA_VERSION,
+        "mode": "enforcing",
+        "action_scope": LOCAL_CANDIDATE_PUBLICATION_ACTION_SCOPE,
+        "enforcement_coverage": (
+            LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
+        ),
+        "task_attempt_binding_digest": (
+            authorization.task_attempt_binding_digest
+        ),
+        "execution_selection_digest": (
+            authorization.execution_selection_digest
+        ),
+        "task_authorization_intent_digest": (
+            authorization.task_authorization_intent_digest
+        ),
+        "publication_authorization_intent_digest": (
+            authorization.publication_authorization_intent_digest
+        ),
+        "dispatch_request_digest": authorization.dispatch_request_digest,
+        "dispatch_decision_digest": authorization.dispatch_decision_digest,
+        "dispatch_action_receipt_digest": (
+            authorization.dispatch_action_receipt_digest
+        ),
+        "execution_accounting_digest": (
+            authorization.execution_accounting_digest
+        ),
+        "billing_disposition_digest": (
+            authorization.billing_disposition_digest
+        ),
+        "artifact_digest": authorization.artifact_digest,
+        "destination_digest": authorization.destination_digest,
+        "artifact_metadata_digest": authorization.artifact_metadata_digest,
+        "requested_permission_class": int(
+            authorization.requested_permission_class
+        ),
+        "controller_owned_mock_runner": (
+            authorization.controller_owned_mock_runner
+        ),
+        "legacy_executable": authorization.legacy_executable,
+        "safe_publication_prerequisites": (
+            authorization.safe_publication_prerequisites
+        ),
+        "evaluation_accepted": authorization.evaluation_accepted,
+        "credential_scan_passed": authorization.credential_scan_passed,
+        "request": authorization.request.to_canonical(),
+        "request_digest": authorization.request.digest,
+        "policy": authorization.policy.to_canonical(),
+        "policy_digest": authorization.policy.digest,
+        "decision": authorization.decision.to_canonical(),
+        "decision_digest": authorization.decision.digest,
+        "effect": authorization.decision.effect.value,
+        "derived_permission_class": int(
+            authorization.decision.derived_permission_class
+        ),
+        "decision_current_at_evaluation": (
+            authorization.decision_current_at_evaluation
+        ),
+        "authority_ceiling_satisfied": (
+            authorization.authority_ceiling_satisfied
+        ),
+        "obligations_supported": authorization.obligations_supported,
+        "authorization_eligible": authorization.authorized_at_evaluation,
+        "block_reason_codes": list(authorization.block_reason_codes),
+        "evaluated_at": float(
+            authorization.request.environment.evaluated_at
+        ),
+    }
+
+
+def _task_authorization_intent_lineage(
+    *,
+    contract: TaskContract,
+    requested_permission_class: PermissionClass,
+    task_intent: TaskAuthorizationIntent,
+    intent_source: str,
+) -> dict[str, Any]:
+    """Return the bounded lineage shape committed by binding schema v6."""
+
+    return {
+        "schema_version": TASK_AUTHORIZATION_INTENT_LINEAGE_SCHEMA_VERSION,
+        "kind": TASK_AUTHORIZATION_INTENT_LINEAGE_KIND,
+        "intent_source": intent_source,
+        "task_definition_digest": contract.definition_hash,
+        "requested_permission_class": int(requested_permission_class),
+        "task_authorization_intent": task_intent.to_canonical(),
+        "authorization_intent_digest": task_intent.digest,
+    }
+
+
+def _validated_task_authorization_intent_lineage(
+    *,
+    contract: TaskContract,
+    requested_permission_class: PermissionClass,
+    lineage: Mapping[str, Any],
+    lineage_digest: str,
+) -> TaskAuthorizationIntent:
+    """Require exact persisted lineage built by the shipped task resolver."""
+
+    try:
+        candidate = dict(lineage)
+        task_intent, intent_source = (
+            _BUILTIN_RESOLVE_TASK_AUTHORIZATION_INTENT(contract)
+        )
+        expected = _task_authorization_intent_lineage(
+            contract=contract,
+            requested_permission_class=requested_permission_class,
+            task_intent=task_intent,
+            intent_source=intent_source,
+        )
+        expected_digest = canonical_digest(expected)
+        exact = bool(
+            frozenset(candidate) == _TASK_AUTHORIZATION_INTENT_LINEAGE_KEYS
+            and candidate == expected
+            and canonical_digest(candidate) == lineage_digest
+            and lineage_digest == expected_digest
+        )
+    except (AttributeError, TypeError, ValueError):
+        exact = False
+        task_intent = None
+    if not exact or not isinstance(task_intent, TaskAuthorizationIntent):
+        raise ValidationError(
+            "local candidate publication task authorization intent lineage "
+            "is inconsistent"
+        )
+    return task_intent
 
 
 def evaluate_local_candidate_publication_authorization(
@@ -201,6 +300,8 @@ def evaluate_local_candidate_publication_authorization(
     controller_owned_mock_runner: bool,
     task_attempt_binding_digest: str,
     execution_selection_digest: str,
+    task_authorization_intent_lineage: Mapping[str, Any],
+    task_authorization_intent_lineage_digest: str,
     dispatch_request_digest: str,
     dispatch_decision_digest: str,
     dispatch_action_receipt_digest: str,
@@ -219,6 +320,69 @@ def evaluate_local_candidate_publication_authorization(
 ) -> LocalCandidatePublicationAuthorization:
     """Evaluate one exact local candidate create under a fixed Class 1 policy."""
 
+    return _evaluate_local_candidate_publication_authorization(
+        contract=contract,
+        request=request,
+        runner_id=runner_id,
+        profile_id=profile_id,
+        project_root=project_root,
+        controller_owned_mock_runner=controller_owned_mock_runner,
+        task_attempt_binding_digest=task_attempt_binding_digest,
+        execution_selection_digest=execution_selection_digest,
+        task_authorization_intent_lineage=(
+            task_authorization_intent_lineage
+        ),
+        task_authorization_intent_lineage_digest=(
+            task_authorization_intent_lineage_digest
+        ),
+        dispatch_request_digest=dispatch_request_digest,
+        dispatch_decision_digest=dispatch_decision_digest,
+        dispatch_action_receipt_digest=dispatch_action_receipt_digest,
+        execution_accounting_digest=execution_accounting_digest,
+        billing_disposition_digest=billing_disposition_digest,
+        artifact_digest=artifact_digest,
+        destination_digest=destination_digest,
+        artifact_metadata_digest=artifact_metadata_digest,
+        artifact_kind=artifact_kind,
+        artifact_size_bytes=artifact_size_bytes,
+        evaluation_accepted=evaluation_accepted,
+        credential_scan_passed=credential_scan_passed,
+        safe_publication_prerequisites=safe_publication_prerequisites,
+        evaluated_at=evaluated_at,
+        legacy_executable=legacy_executable,
+    )
+
+
+def _evaluate_local_candidate_publication_authorization(
+    *,
+    contract: TaskContract,
+    request: RunRequest,
+    runner_id: str,
+    profile_id: str,
+    project_root: Path,
+    controller_owned_mock_runner: bool,
+    task_attempt_binding_digest: str,
+    execution_selection_digest: str,
+    task_authorization_intent_lineage: Mapping[str, Any],
+    task_authorization_intent_lineage_digest: str,
+    dispatch_request_digest: str,
+    dispatch_decision_digest: str,
+    dispatch_action_receipt_digest: str,
+    execution_accounting_digest: str,
+    billing_disposition_digest: str,
+    artifact_digest: str,
+    destination_digest: str,
+    artifact_metadata_digest: str,
+    artifact_kind: str,
+    artifact_size_bytes: int,
+    evaluation_accepted: bool,
+    credential_scan_passed: bool,
+    safe_publication_prerequisites: bool,
+    evaluated_at: float,
+    legacy_executable: bool,
+) -> LocalCandidatePublicationAuthorization:
+    """Authoritative implementation used directly by the final PEP replay."""
+
     _validate_evaluation_inputs(
         contract=contract,
         request=request,
@@ -229,6 +393,10 @@ def evaluate_local_candidate_publication_authorization(
         digests=(
             ("task attempt binding", task_attempt_binding_digest),
             ("execution selection", execution_selection_digest),
+            (
+                "task authorization intent lineage",
+                task_authorization_intent_lineage_digest,
+            ),
             ("dispatch request", dispatch_request_digest),
             ("dispatch decision", dispatch_decision_digest),
             ("dispatch action receipt", dispatch_action_receipt_digest),
@@ -247,7 +415,12 @@ def evaluate_local_candidate_publication_authorization(
         legacy_executable=legacy_executable,
     )
 
-    task_intent, _ = resolve_task_authorization_intent(contract)
+    task_intent = _validated_task_authorization_intent_lineage(
+        contract=contract,
+        requested_permission_class=request.permission_class,
+        lineage=task_authorization_intent_lineage,
+        lineage_digest=task_authorization_intent_lineage_digest,
+    )
     publication_intent = _local_candidate_publication_intent(task_intent)
     task_intent_digest = task_intent.digest
     publication_intent_digest = publication_intent.digest
@@ -329,6 +502,9 @@ def evaluate_local_candidate_publication_authorization(
                         task_attempt_binding_digest
                     ),
                     "task_authorization_intent_digest": task_intent_digest,
+                    "task_authorization_intent_lineage_digest": (
+                        task_authorization_intent_lineage_digest
+                    ),
                     "task_definition_digest": contract.definition_hash,
                     "workspace_ref": workspace_ref,
                 }
@@ -443,6 +619,9 @@ def evaluate_local_candidate_publication_authorization(
         task_attempt_binding_digest=task_attempt_binding_digest,
         execution_selection_digest=execution_selection_digest,
         task_authorization_intent_digest=task_intent_digest,
+        task_authorization_intent_lineage_digest=(
+            task_authorization_intent_lineage_digest
+        ),
         publication_authorization_intent_digest=(
             publication_intent_digest
         ),
@@ -571,6 +750,8 @@ def assert_local_candidate_publication_authorized(
     controller_owned_mock_runner: bool,
     task_attempt_binding_digest: str,
     execution_selection_digest: str,
+    task_authorization_intent_lineage: Mapping[str, Any],
+    task_authorization_intent_lineage_digest: str,
     dispatch_request_digest: str,
     dispatch_decision_digest: str,
     dispatch_action_receipt_digest: str,
@@ -593,7 +774,7 @@ def assert_local_candidate_publication_authorized(
             "local candidate publication requires a typed authorization permit"
         )
     try:
-        rebuilt = evaluate_local_candidate_publication_authorization(
+        rebuilt = _evaluate_local_candidate_publication_authorization(
             contract=contract,
             request=request,
             runner_id=runner_id,
@@ -602,6 +783,12 @@ def assert_local_candidate_publication_authorized(
             controller_owned_mock_runner=controller_owned_mock_runner,
             task_attempt_binding_digest=task_attempt_binding_digest,
             execution_selection_digest=execution_selection_digest,
+            task_authorization_intent_lineage=(
+                task_authorization_intent_lineage
+            ),
+            task_authorization_intent_lineage_digest=(
+                task_authorization_intent_lineage_digest
+            ),
             dispatch_request_digest=dispatch_request_digest,
             dispatch_decision_digest=dispatch_decision_digest,
             dispatch_action_receipt_digest=dispatch_action_receipt_digest,
@@ -618,10 +805,10 @@ def assert_local_candidate_publication_authorized(
             evaluated_at=authorization.request.environment.evaluated_at,
             legacy_executable=legacy_executable,
         )
-        persisted = dict(persisted_payload)
         exact_binding = bool(
             authorization == rebuilt
-            and authorization.to_event_payload() == persisted
+            and _local_candidate_publication_event_payload(rebuilt)
+            == dict(persisted_payload)
         )
     except Exception:
         exact_binding = False
@@ -633,30 +820,89 @@ def assert_local_candidate_publication_authorized(
     _assert_local_candidate_publication_permit_current(
         authorization,
         action_started_at=action_started_at,
+        contract=contract,
     )
+
+
+def assert_local_candidate_publication_fresh_at_action_start(
+    authorization: LocalCandidatePublicationAuthorization,
+    *,
+    action_started_at: float,
+) -> None:
+    """Recheck immutable permit freshness at the filesystem boundary."""
+
+    if (
+        not isinstance(authorization, LocalCandidatePublicationAuthorization)
+        or not authorization.authorized_at_evaluation
+        or not authorization.decision_current_at_evaluation
+        or not _valid_timestamp(action_started_at)
+        or action_started_at < authorization.decision.issued_at
+        or action_started_at >= authorization.decision.expires_at
+    ):
+        raise AuthorizationBlocked(
+            "local candidate publication permit is not current at the action "
+            "boundary"
+        )
 
 
 def _assert_local_candidate_publication_permit_current(
     authorization: LocalCandidatePublicationAuthorization,
     *,
     action_started_at: float,
+    contract: TaskContract,
 ) -> None:
     """Independently re-evaluate policy and require a current typed permit."""
 
-    if not isinstance(authorization, LocalCandidatePublicationAuthorization):
+    if (
+        not isinstance(authorization, LocalCandidatePublicationAuthorization)
+        or not isinstance(authorization.request, AuthorizationRequest)
+        or not isinstance(authorization.policy, PolicyBundle)
+        or not isinstance(authorization.decision, AuthorizationDecision)
+        or not isinstance(contract, TaskContract)
+    ):
         raise AuthorizationBlocked(
             "local candidate publication requires a typed authorization permit"
         )
     request = authorization.request
     policy = authorization.policy
     decision = authorization.decision
-    fixed_policy = _local_candidate_publication_policy()
     try:
-        reevaluated_decision = AuthorizationEvaluator().evaluate(
+        task_intent, intent_source = (
+            _BUILTIN_RESOLVE_TASK_AUTHORIZATION_INTENT(contract)
+        )
+        expected_lineage = _task_authorization_intent_lineage(
+            contract=contract,
+            requested_permission_class=(
+                authorization.requested_permission_class
+            ),
+            task_intent=task_intent,
+            intent_source=intent_source,
+        )
+        publication_intent = _local_candidate_publication_intent(task_intent)
+        expected_consequences = ConsequenceVector(
+            confidentiality=(
+                publication_intent.consequences.confidentiality
+            ),
+            integrity=publication_intent.consequences.integrity,
+            availability=publication_intent.consequences.availability,
+            reach=Reach.LOCAL,
+            destructive=False,
+            reversible=True,
+            sensitivity=publication_intent.consequences.sensitivity,
+            blast_radius=BlastRadius.SINGLE_RESOURCE,
+        )
+        fixed_policy = _local_candidate_publication_policy()
+        reevaluated_decision = _BUILTIN_AUTHORIZATION_EVALUATE(
+            _BUILTIN_AUTHORIZATION_EVALUATOR(),
             request,
             fixed_policy,
         )
     except Exception:
+        task_intent = None
+        expected_lineage = None
+        publication_intent = None
+        expected_consequences = None
+        fixed_policy = None
         reevaluated_decision = None
     obligation_pairs = tuple(
         (obligation.kind, obligation.value)
@@ -671,8 +917,19 @@ def _assert_local_candidate_publication_permit_current(
         or not authorization.credential_scan_passed
         or not authorization.authority_ceiling_satisfied
         or not authorization.obligations_supported
+        or authorization.requested_permission_class
+        is not contract.permission_class
+        or task_intent is None
+        or publication_intent is None
+        or authorization.task_authorization_intent_digest != task_intent.digest
+        or authorization.task_authorization_intent_lineage_digest
+        != canonical_digest(expected_lineage)
+        or authorization.publication_authorization_intent_digest
+        != publication_intent.digest
         or policy != fixed_policy
         or decision != reevaluated_decision
+        or policy.bundle_id != LOCAL_CANDIDATE_PUBLICATION_POLICY_ID
+        or policy.version != LOCAL_CANDIDATE_PUBLICATION_POLICY_VERSION
         or decision.effect is not AuthorizationEffect.PERMIT
         or decision.request_id != request.request_id
         or decision.request_digest != request.digest
@@ -683,9 +940,18 @@ def _assert_local_candidate_publication_permit_current(
         or request.subject.role is not Role.IMPLEMENTER
         or request.action.verb is not ActionVerb.CREATE
         or request.action.operation != LOCAL_CANDIDATE_PUBLICATION_OPERATION
+        or request.action.intended_effect
+        != "create_isolated_local_candidate"
         or request.resource.resource_type
         != LOCAL_CANDIDATE_PUBLICATION_RESOURCE_TYPE
+        or request.resource.version != authorization.artifact_digest
         or request.resource.trust_boundary != "isolated_run_workspace"
+        or request.resource.protected
+        is not publication_intent.resource.protected
+        or request.resource.sensitivity
+        is not publication_intent.resource.sensitivity
+        or request.resource.content_digest != authorization.artifact_digest
+        or request.consequences != expected_consequences
         or request.environment.isolation_state is not IsolationState.VERIFIED
         or request.environment.network_state is not NetworkState.DISABLED
         or request.environment.billing_route is not BillingRoute.LOCAL_NON_AI
@@ -719,6 +985,7 @@ def _assert_local_candidate_publication_permit_current(
 def build_local_candidate_publication_enforcement_receipt(
     *,
     authorization: LocalCandidatePublicationAuthorization,
+    contract: TaskContract,
     action_started_at: float,
     completed_at: float,
     outcome: ReceiptOutcome,
@@ -729,6 +996,7 @@ def build_local_candidate_publication_enforcement_receipt(
     _assert_local_candidate_publication_permit_current(
         authorization,
         action_started_at=action_started_at,
+        contract=contract,
     )
     obligation_results = tuple(
         ObligationResult(
@@ -980,6 +1248,7 @@ __all__ = [
     "LOCAL_CANDIDATE_PUBLICATION_RESOURCE_TYPE",
     "LocalCandidatePublicationAuthorization",
     "assert_local_candidate_publication_authorized",
+    "assert_local_candidate_publication_fresh_at_action_start",
     "build_local_candidate_publication_enforcement_receipt",
     "build_local_candidate_publication_failure_payload",
     "evaluate_local_candidate_publication_authorization",

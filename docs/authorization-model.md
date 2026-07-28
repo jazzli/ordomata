@@ -145,15 +145,20 @@ accounting must read back exactly before publication can proceed; unprovable
 receipt persistence after the effect quarantines the attempt.
 After a succeeded, accepted, credential-clean mock result, a separate exact
 Class 1 CREATE request binds that receipt, accounting, billing disposition, and
-candidate metadata. Its decision and enforcing pre-effect record must be
-durable before a second freshness check immediately adjacent to staging, and
-the existing reconciliation chain embeds its action receipt. Non-permits and
+candidate metadata. It reuses the schema-v6 lineage, requires equality with the
+captured shipped resolver, and independently replays the shipped evaluator and
+fixed policy. Its decision and enforcing pre-effect record must read back
+exactly. Immediately before staging, the binding, decision, and pre-effect
+record read back again; the controller rebuilds the permit and checks a newly
+captured post-replay action time for freshness. The existing reconciliation
+chain embeds its action receipt. Non-permits and
 uncertain decision persistence perform no governed action. Unprofiled
 schema-v1, live or historical schema-v2, and historical schema-v3/v4/v5 histories
 remain valid under their frozen semantics, and live, comparison, supervisor,
 or general-admission paths do not inherit this authority.
-The lineage slice advances only current exact-mock attempt bindings to schema v6
-and changes no dispatch decision or receipt schema. It grants no new authority.
+The lineage slices advance only current exact-mock attempt bindings to schema v6
+and change no enforcing decision-event or action-receipt schema. They grant no
+new authority.
 For v6, read-only inspection validates the task-intent preimage, source, and
 digests from the authoritative binding and never from a shadow; v1-v5 retain
 their historical interpretation. The dispatch PEP remains limited to Class 0/1
@@ -184,13 +189,11 @@ Policy activation, Git/remote publication, deployment, and other shared effects
 remain separate unimplemented typed actions whose exact resource version and
 digest must receive fresh authorization and any required approval.
 
-The next recommended narrow slice should thread the existing v6 lineage and
-shipped-resolver equality through the owner-private local-candidate publication
-runtime PEP and final pre-mutation replay, with an exact authoritative-binding
-readback. The publication request-projection inspector already replays the v6
-preimage from that binding; the slice creates no new lineage. It must not widen
-the present local Class 1 effect or enable shared publication, promotion, live
-harnesses, or Class 2/3.
+The next recommended narrow slice is a versioned, privacy-bounded repository-
+registration contract and read-only validator for canonical repository
+identity, exact verification argv, protected and allowed paths, and resource
+and isolation limits. It must not create a worktree, invoke a command or worker,
+enable supervisor dispatch, or grant repository authority.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
@@ -503,9 +506,11 @@ violation, not an instruction to follow.
    and exactly reads back the linked action receipt and execution accounting
    before publication;
    unprovable post-effect receipt persistence quarantines the attempt.
-   Publication uses its own fixed Class 1 decision, pre-effect record,
-   staging-bound freshness check, and reconciled action receipt. These dispatch
-   changes require no schema bump and do not widen the exact profile-backed
+   Publication uses the same v6 binding lineage, captured shipped resolver and
+   evaluator replay, its own fixed Class 1 decision, exact binding/decision/pre-
+   effect readback, post-replay action-time freshness check, and reconciled
+   action receipt. These changes require no schema bump and do not widen the
+   exact profile-backed
    `MockRunner` Class 0/1 boundary; new admission remains Class 1.
    General/live/comparison/supervisor
    admission, shared publication or promotion, comparison execution,

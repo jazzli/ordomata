@@ -8,6 +8,7 @@ its own to publish an artifact.
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 import hashlib
@@ -69,6 +70,7 @@ from .publication_authorization import (
     LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
     LocalCandidatePublicationAuthorization,
     assert_local_candidate_publication_authorized,
+    assert_local_candidate_publication_fresh_at_action_start,
     build_local_candidate_publication_enforcement_receipt,
     build_local_candidate_publication_failure_payload,
     evaluate_local_candidate_publication_authorization,
@@ -129,6 +131,7 @@ from .shadow_authorization import (
 from .state import ArtifactRecord, SQLiteStateStore
 from .task_evidence import (
     TASK_ATTEMPT_AUTHORIZATION_BINDING_EVENT_TYPE,
+    TASK_ATTEMPT_AUTHORIZATION_BINDING_LINEAGE_SCHEMA_VERSION,
     TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
     TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
     artifact_record_digest,
@@ -226,11 +229,64 @@ class _LocalCandidatePublicationFreshnessBlocked(AuthorizationBlocked):
 class _LocalCandidatePublicationEnforcementContext:
     """Immutable upstream evidence for the exact mock publication PEP."""
 
+    task_attempt_binding_payload: dict[str, Any]
+    task_authorization_intent_lineage: dict[str, Any]
+    task_authorization_intent_lineage_digest: str
     execution_selection_digest: str
     mock_dispatch_request_digest: str
     mock_dispatch_decision_digest: str
     mock_dispatch_action_receipt_digest: str
     mock_dispatch_succeeded: bool
+
+
+def _validated_local_candidate_publication_lineage(
+    context: _LocalCandidatePublicationEnforcementContext,
+    *,
+    task_attempt_binding_digest: str,
+) -> tuple[dict[str, Any], str]:
+    """Bind the publication PEP inputs to the exact schema-v6 payload."""
+
+    try:
+        payload = context.task_attempt_binding_payload
+        binding = payload.get("binding")
+        lineage = (
+            binding.get("authorization_intent_lineage")
+            if isinstance(binding, Mapping)
+            else None
+        )
+        lineage_digest = (
+            binding.get("authorization_intent_lineage_digest")
+            if isinstance(binding, Mapping)
+            else None
+        )
+        exact = bool(
+            payload.get("schema_version")
+            == TASK_ATTEMPT_AUTHORIZATION_BINDING_LINEAGE_SCHEMA_VERSION
+            and isinstance(binding, Mapping)
+            and payload.get("binding_digest")
+            == task_attempt_binding_digest
+            and canonical_digest(binding) == task_attempt_binding_digest
+            and isinstance(lineage, Mapping)
+            and isinstance(lineage_digest, str)
+            and dict(lineage)
+            == context.task_authorization_intent_lineage
+            and lineage_digest
+            == context.task_authorization_intent_lineage_digest
+            and canonical_digest(lineage) == lineage_digest
+        )
+    except (AttributeError, TypeError, ValueError):
+        exact = False
+        lineage = None
+        lineage_digest = None
+    if (
+        not exact
+        or not isinstance(lineage, Mapping)
+        or not isinstance(lineage_digest, str)
+    ):
+        raise ValidationError(
+            "local candidate publication intent lineage binding is inconsistent"
+        )
+    return copy.deepcopy(dict(lineage)), lineage_digest
 
 
 @dataclass(frozen=True, slots=True)
@@ -1717,6 +1773,8 @@ async def run_chief_of_staff(
                 if (
                     mock_dispatch_authorization is None
                     or mock_dispatch_action_receipt_payload is None
+                    or task_authorization_intent_lineage is None
+                    or task_authorization_intent_lineage_digest is None
                 ):
                     raise ValidationError(
                         "mock publication enforcement context is unavailable"
@@ -1736,6 +1794,15 @@ async def run_chief_of_staff(
                     )
                 publication_enforcement_context = (
                     _LocalCandidatePublicationEnforcementContext(
+                        task_attempt_binding_payload=copy.deepcopy(
+                            task_binding
+                        ),
+                        task_authorization_intent_lineage=copy.deepcopy(
+                            dict(task_authorization_intent_lineage)
+                        ),
+                        task_authorization_intent_lineage_digest=(
+                            task_authorization_intent_lineage_digest
+                        ),
                         execution_selection_digest=(
                             mock_dispatch_authorization.execution_selection_digest
                         ),
@@ -2793,10 +2860,11 @@ def _publish_candidate_artifact(
 ) -> str:
     """Publish one local candidate with a reconciled receipt chain.
 
-    Schema-v4 exact-mock attempts require a fresh ABAC permit immediately
-    before staging, independently of the existing Class 0/1 gate.  Historical
-    paths retain their non-enforcing receipt semantics.  Neither path can
-    widen authority beyond an isolated local candidate.
+    Current schema-v6 exact-mock attempts require a fresh ABAC permit and exact
+    lineage-bound evidence immediately before staging, independently of the
+    existing Class 0/1 gate. Historical paths retain their frozen receipt
+    semantics. Neither path can widen authority beyond an isolated local
+    candidate.
     """
 
     artifact_sha256 = hashlib.sha256(content).hexdigest()
@@ -2850,11 +2918,27 @@ def _publish_candidate_artifact(
     ) = None
     publication_authorization_payload: dict[str, Any] | None = None
     publication_authorization_event_id: str | None = None
+    task_authorization_intent_lineage: dict[str, Any] | None = None
+    task_authorization_intent_lineage_digest: str | None = None
     if publication_enforcement_context is not None:
         if runner_id != "mock" or profile_id is None:
             raise ValidationError(
                 "local candidate publication enforcement requires a selected mock profile"
             )
+        _require_exact_event_readback(
+            state,
+            run_id,
+            TASK_ATTEMPT_AUTHORIZATION_BINDING_EVENT_TYPE,
+            publication_enforcement_context.task_attempt_binding_payload,
+            event_id=task_attempt_binding_digest,
+        )
+        (
+            task_authorization_intent_lineage,
+            task_authorization_intent_lineage_digest,
+        ) = _validated_local_candidate_publication_lineage(
+            publication_enforcement_context,
+            task_attempt_binding_digest=task_attempt_binding_digest,
+        )
         safe_publication_prerequisites = bool(
             publication_enforcement_context.mock_dispatch_succeeded
             and billing_matches
@@ -2887,6 +2971,12 @@ def _publish_candidate_artifact(
                     ),
                     execution_selection_digest=(
                         publication_enforcement_context.execution_selection_digest
+                    ),
+                    task_authorization_intent_lineage=(
+                        task_authorization_intent_lineage
+                    ),
+                    task_authorization_intent_lineage_digest=(
+                        task_authorization_intent_lineage_digest
                     ),
                     dispatch_request_digest=(
                         publication_enforcement_context.mock_dispatch_request_digest
@@ -3028,6 +3118,13 @@ def _publish_candidate_artifact(
                 publication_authorization_payload,
                 event_id=publication_authorization_event_id,
             )
+            _require_exact_event_readback(
+                state,
+                run_id,
+                LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+                publication_authorization_payload,
+                event_id=publication_authorization_event_id,
+            )
         except BaseException as authorization_evidence_error:
             if authorization_evaluation_error is not None:
                 raise authorization_evaluation_error from (
@@ -3070,6 +3167,14 @@ def _publish_candidate_artifact(
         pre_effect_receipt,
         event_id=pre_effect_event_id,
     )
+    if publication_authorization is not None:
+        _require_exact_event_readback(
+            state,
+            run_id,
+            TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
+            pre_effect_receipt,
+            event_id=pre_effect_event_id,
+        )
 
     stage = StagedArtifact(
         path.with_name(
@@ -3095,6 +3200,7 @@ def _publish_candidate_artifact(
             enforcement_wrapper = (
                 build_local_candidate_publication_enforcement_receipt(
                     authorization=publication_authorization,
+                    contract=contract,
                     action_started_at=effect_started_at,
                     completed_at=completed_at,
                     outcome=ReceiptOutcome(outcome),
@@ -3139,12 +3245,47 @@ def _publish_candidate_artifact(
             enforcement_receipt=enforcement_receipt,
         )
 
-    effect_started_at = time.time()
     if publication_authorization is not None:
         try:
+            if (
+                publication_enforcement_context is None
+                or publication_authorization_payload is None
+                or publication_authorization_event_id is None
+            ):
+                raise ValidationError(
+                    "local candidate publication enforcement context is unavailable"
+                )
+            _require_exact_event_readback(
+                state,
+                run_id,
+                TASK_ATTEMPT_AUTHORIZATION_BINDING_EVENT_TYPE,
+                publication_enforcement_context.task_attempt_binding_payload,
+                event_id=task_attempt_binding_digest,
+            )
+            _require_exact_event_readback(
+                state,
+                run_id,
+                LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+                publication_authorization_payload,
+                event_id=publication_authorization_event_id,
+            )
+            _require_exact_event_readback(
+                state,
+                run_id,
+                TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
+                pre_effect_receipt,
+                event_id=pre_effect_event_id,
+            )
+            (
+                task_authorization_intent_lineage,
+                task_authorization_intent_lineage_digest,
+            ) = _validated_local_candidate_publication_lineage(
+                publication_enforcement_context,
+                task_attempt_binding_digest=task_attempt_binding_digest,
+            )
             assert_local_candidate_publication_authorized(
                 publication_authorization,
-                action_started_at=effect_started_at,
+                action_started_at=time.time(),
                 persisted_payload=publication_authorization_payload,
                 contract=contract,
                 request=request,
@@ -3155,6 +3296,12 @@ def _publish_candidate_artifact(
                 task_attempt_binding_digest=task_attempt_binding_digest,
                 execution_selection_digest=(
                     publication_enforcement_context.execution_selection_digest
+                ),
+                task_authorization_intent_lineage=(
+                    task_authorization_intent_lineage
+                ),
+                task_authorization_intent_lineage_digest=(
+                    task_authorization_intent_lineage_digest
                 ),
                 dispatch_request_digest=(
                     publication_enforcement_context.mock_dispatch_request_digest
@@ -3179,10 +3326,17 @@ def _publish_candidate_artifact(
                 ),
                 legacy_executable=legacy_executable,
             )
+            effect_started_at = time.time()
+            assert_local_candidate_publication_fresh_at_action_start(
+                publication_authorization,
+                action_started_at=effect_started_at,
+            )
         except AuthorizationBlocked as freshness_error:
             raise _LocalCandidatePublicationFreshnessBlocked(
                 "local candidate publication permit was not current at effect start"
             ) from freshness_error
+    else:
+        effect_started_at = time.time()
     try:
         _stage_artifact(path, content, stage=stage)
         if stage.identity is None:

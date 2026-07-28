@@ -99,10 +99,16 @@ records.
   instance boundaries. Its
   content-addressed terminal action receipt and execution accounting also
   require exact readback before publication may proceed; an unprovable receipt
-  after execution quarantines the attempt. Accepted, credential-clean output then
-  requires a separate fixed-policy Class 1 permit immediately before the first
-  local-candidate filesystem mutation and an integrated reconciled action
-  receipt. Every non-permit, stale permit, authority-ceiling mismatch, or
+  after execution quarantines the attempt. Accepted, credential-clean output
+  then requires a separate fixed-policy Class 1 permit for the owner-private
+  local candidate. That PEP reuses the schema-v6 binding lineage, compares it
+  with the captured shipped task-intent resolver, and independently replays the
+  shipped evaluator and fixed policy. Its decision and enforcing pre-effect
+  record read back exactly; immediately before the first staging mutation, the
+  binding, decision, and pre-effect record read back again, the authorization is
+  rebuilt, and a new post-replay action time must still be fresh. The existing
+  reconciled action receipt records the result. Every non-permit, stale permit,
+  authority-ceiling mismatch, or
   uncertain required write blocks before its governed action, and only a
   validated identity-matched no-process result can receive a succeeded
   dispatch receipt, while live, comparison, supervisor, shared publication,
@@ -146,24 +152,27 @@ records.
   controller vocabulary;
 - an operator CLI and a deterministic, live-model-free test suite.
 
-The authoritative dispatch-lineage slice advances only the current built-in-
-mock attempt binding from schema v5 to v6; it changes no dispatch decision or
-receipt schema and grants no new authority. The binding carries only a strict,
+The authoritative lineage slices advance only the current built-in-mock attempt
+binding from schema v5 to v6; they change no enforcing decision-event or action-
+receipt schema and grant no new authority. The binding carries one strict,
 bounded canonical task-intent lineage; prompts, task inputs, paths, approver
-values, and credentials remain omitted. The final PEP compares that durable
-lineage and digest with the current controller-resolved intent before
-invocation, and read-only inspection replays schema-v6 dispatch without using a
-shadow preimage. Schema-v1 through v5 histories keep their frozen meanings.
-Dispatch remains limited to Class 0/1 requests for the exact profile-backed
-controller-owned `MockRunner`, new attempts still require
-the Class 1 admission permit, and no live harness path is enabled. The next
-recommended narrow slice is to thread the existing v6 lineage and
-shipped-resolver equality through the owner-private local-candidate publication
-runtime PEP and final pre-mutation replay, with an exact authoritative-binding
-readback.
-The publication request-projection inspector already replays the v6 preimage
-from that binding; this does not create another lineage or widen the effect or
-permission ceiling.
+values, and credentials remain omitted. The final dispatch and publication PEPs
+reuse that lineage, compare it with the captured shipped resolver, and replay
+the shipped evaluator and fixed policy independently of patchable entry points.
+Publication additionally requires exact binding, decision, and pre-effect
+readback before post-replay action-time freshness and the first staging
+mutation. Read-only inspection replays schema v6 without a shadow preimage.
+Schema-v1 through v5 histories keep their frozen meanings. Dispatch remains
+limited to Class 0/1 requests for the exact profile-backed controller-owned
+`MockRunner`, publication remains an owner-private Class 1 local write, and no
+live, shared, promotion, API, credit, overage, or cloud path is enabled.
+
+The next recommended narrow slice is a versioned, privacy-bounded repository-
+registration contract and read-only validator for canonical repository
+identity, exact verification argv, protected and allowed paths, and resource
+and isolation limits. It should hash and validate registration evidence without
+creating a worktree, invoking a command or worker, or enabling supervisor
+dispatch.
 
 ## Quick start
 

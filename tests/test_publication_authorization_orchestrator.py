@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import ordomata.orchestrator as orchestrator_module
 from ordomata.admission_authorization import (
     TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE,
     TASK_ADMISSION_DECISION_EVENT_TYPE,
@@ -41,6 +42,7 @@ from ordomata.shadow_authorization import (
 from ordomata.state import SQLiteStateStore
 from ordomata.task_evidence import (
     TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE,
+    TASK_ATTEMPT_AUTHORIZATION_BINDING_EVENT_TYPE,
     TASK_ATTEMPT_AUTHORIZATION_BINDING_LINEAGE_SCHEMA_VERSION,
     TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
     TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
@@ -268,6 +270,72 @@ class PublicationAuthorizationOrchestratorTests(unittest.TestCase):
                         "run_id": run_id,
                     }
                 ),
+            )
+            binding_body = binding.payload["binding"]
+            lineage_digest = binding_body[
+                "authorization_intent_lineage_digest"
+            ]
+            expected_publication_parameters = {
+                "artifact_digest": decision.payload["artifact_digest"],
+                "artifact_kind": pre_effect.payload["artifact_kind"],
+                "artifact_metadata_digest": decision.payload[
+                    "artifact_metadata_digest"
+                ],
+                "artifact_size_bytes": pre_effect.payload[
+                    "artifact_size_bytes"
+                ],
+                "billing_disposition_digest": decision.payload[
+                    "billing_disposition_digest"
+                ],
+                "controller_owned_mock_runner": True,
+                "credential_scan_passed": True,
+                "destination_digest": decision.payload[
+                    "destination_digest"
+                ],
+                "dispatch_action_receipt_digest": decision.payload[
+                    "dispatch_action_receipt_digest"
+                ],
+                "dispatch_decision_digest": decision.payload[
+                    "dispatch_decision_digest"
+                ],
+                "dispatch_request_digest": decision.payload[
+                    "dispatch_request_digest"
+                ],
+                "evaluation_accepted": True,
+                "execution_accounting_digest": decision.payload[
+                    "execution_accounting_digest"
+                ],
+                "execution_selection_digest": decision.payload[
+                    "execution_selection_digest"
+                ],
+                "legacy_permission_class": binding_body[
+                    "permission_class"
+                ],
+                "output_schema_digest": binding_body[
+                    "output_schema_digest"
+                ],
+                "profile_ref": binding_body["profile_ref"],
+                "publication_authorization_intent_digest": decision.payload[
+                    "publication_authorization_intent_digest"
+                ],
+                "repository_ref": binding_body["repository_ref"],
+                "run_ref": binding_body["run_ref"],
+                "safe_publication_prerequisites": True,
+                "task_attempt_binding_digest": binding.payload[
+                    "binding_digest"
+                ],
+                "task_authorization_intent_digest": binding_body[
+                    "authorization_intent_digest"
+                ],
+                "task_authorization_intent_lineage_digest": lineage_digest,
+                "task_definition_digest": binding_body[
+                    "task_definition_digest"
+                ],
+                "workspace_ref": binding_body["workspace_ref"],
+            }
+            self.assertEqual(
+                decision.payload["request"]["action"]["parameters_digest"],
+                canonical_digest(expected_publication_parameters),
             )
 
             self.assertEqual(pre_effect.payload["schema_version"], 3)
@@ -521,6 +589,204 @@ class PublicationAuthorizationOrchestratorTests(unittest.TestCase):
             )
             self._assert_no_publication_effect(root, run_id)
 
+    def test_effect_time_authoritative_readback_drop_never_stages(self) -> None:
+        for target_event_type in (
+            TASK_ATTEMPT_AUTHORIZATION_BINDING_EVENT_TYPE,
+            LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+            TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
+        ):
+            with (
+                self.subTest(target_event_type=target_event_type),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = self._project(temporary)
+                run_id = (
+                    "publication-effect-time-"
+                    f"{target_event_type.replace('_', '-')}-drop"
+                )
+                original_list_events = SQLiteStateStore.list_events
+                hidden = False
+
+                def hide_authoritative_event_after_pre_effect(
+                    store,
+                    observed_run_id,
+                ):
+                    nonlocal hidden
+                    events = original_list_events(store, observed_run_id)
+                    if any(
+                        event.event_type
+                        == TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE
+                        for event in events
+                    ):
+                        hidden = True
+                        return tuple(
+                            event
+                            for event in events
+                            if event.event_type != target_event_type
+                        )
+                    return events
+
+                with (
+                    patch.object(
+                        SQLiteStateStore,
+                        "list_events",
+                        new=hide_authoritative_event_after_pre_effect,
+                    ),
+                    patch(
+                        "ordomata.orchestrator._stage_artifact",
+                        side_effect=AssertionError(
+                            "publication must not stage"
+                        ),
+                    ) as stage,
+                    self.assertRaises(ConfigurationError),
+                ):
+                    asyncio.run(run_chief_of_staff(root, run_id=run_id))
+
+                self.assertTrue(hidden)
+                stage.assert_not_called()
+                events = self._events(root, run_id)
+                self._only(
+                    events,
+                    LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+                )
+                self._only(
+                    events,
+                    TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
+                )
+                self.assertFalse(
+                    any(
+                        event.event_type
+                        == TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE
+                        for event in events
+                    )
+                )
+                with SQLiteStateStore(
+                    root / ".ordomata/state.sqlite3"
+                ) as state:
+                    self.assertEqual(
+                        state.current_status(run_id),
+                        RunStatus.FAILED,
+                    )
+                self._assert_no_publication_effect(root, run_id)
+
+    def test_post_replay_expiry_blocks_and_receipt_uses_boundary_time(
+        self,
+    ) -> None:
+        for expires_before_effect in (True, False):
+            with (
+                self.subTest(expires_before_effect=expires_before_effect),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = self._project(temporary)
+                run_id = (
+                    "publication-post-replay-expired"
+                    if expires_before_effect
+                    else "publication-post-replay-current"
+                )
+                original_assert = (
+                    orchestrator_module.assert_local_candidate_publication_authorized
+                )
+                original_stage = orchestrator_module._stage_artifact
+                clock = {"now": 100.0}
+                assertion_count = 0
+                stage_count = 0
+                expected_boundary = 101.0
+
+                def fake_time() -> float:
+                    return clock["now"]
+
+                def advance_after_replay(authorization, **kwargs):
+                    nonlocal assertion_count
+                    original_assert(authorization, **kwargs)
+                    assertion_count += 1
+                    clock["now"] = (
+                        authorization.decision.expires_at + 1.0
+                        if expires_before_effect
+                        else expected_boundary
+                    )
+
+                def recording_stage(path, content, *, stage):
+                    nonlocal stage_count
+                    stage_count += 1
+                    return original_stage(path, content, stage=stage)
+
+                with (
+                    patch.object(
+                        orchestrator_module.time,
+                        "time",
+                        new=fake_time,
+                    ),
+                    patch.object(
+                        orchestrator_module,
+                        "assert_local_candidate_publication_authorized",
+                        new=advance_after_replay,
+                    ),
+                    patch.object(
+                        orchestrator_module,
+                        "_stage_artifact",
+                        new=recording_stage,
+                    ),
+                ):
+                    if expires_before_effect:
+                        with self.assertRaises(AuthorizationBlocked):
+                            asyncio.run(
+                                run_chief_of_staff(root, run_id=run_id)
+                            )
+                    else:
+                        report = asyncio.run(
+                            run_chief_of_staff(root, run_id=run_id)
+                        )
+                        self.assertEqual(report.status, RunStatus.SUCCEEDED)
+
+                self.assertEqual(assertion_count, 1)
+                events = self._events(root, run_id)
+                self._only(
+                    events,
+                    LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+                )
+                self._only(
+                    events,
+                    TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
+                )
+                if expires_before_effect:
+                    self.assertEqual(stage_count, 0)
+                    self.assertFalse(
+                        any(
+                            event.event_type
+                            == TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE
+                            for event in events
+                        )
+                    )
+                    terminal = next(
+                        event
+                        for event in events
+                        if event.status is RunStatus.BLOCKED
+                    )
+                    self.assertEqual(
+                        terminal.payload,
+                        {
+                            "phase": (
+                                "local_candidate_publication_"
+                                "authorization_freshness"
+                            )
+                        },
+                    )
+                    self._assert_no_publication_effect(root, run_id)
+                else:
+                    self.assertEqual(stage_count, 1)
+                    receipt = self._assert_enforcing_action_receipt(
+                        events,
+                        outcome="succeeded",
+                    )
+                    self.assertEqual(
+                        receipt.payload["effect_started_at"],
+                        expected_boundary,
+                    )
+                    self.assertEqual(
+                        receipt.payload["enforcement_receipt"]["started_at"],
+                        expected_boundary,
+                    )
+
     def test_cross_candidate_binding_tamper_after_decision_never_stages(
         self,
     ) -> None:
@@ -693,7 +959,7 @@ class PublicationAuthorizationOrchestratorTests(unittest.TestCase):
                     "ordomata.orchestrator._stage_artifact",
                     side_effect=AssertionError("publication must not stage"),
                 ) as stage,
-                self.assertRaises(AuthorizationBlocked),
+                self.assertRaises(ConfigurationError),
             ):
                 asyncio.run(run_chief_of_staff(root, run_id=run_id))
 
@@ -712,36 +978,27 @@ class PublicationAuthorizationOrchestratorTests(unittest.TestCase):
                 "forged in-memory publication decision",
                 decision.payload["decision"]["reason_details"],
             )
-            pre_effect = self._only(
-                events,
-                TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
-            )
-            self.assertEqual(
-                pre_effect.payload["publication_decision_digest"],
-                forged_decision_digest,
-            )
             self.assertFalse(
                 any(
                     event.event_type
-                    == TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE
+                    in {
+                        TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
+                        TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
+                    }
                     for event in events
                 )
             )
             terminal = next(
                 event
                 for event in events
-                if event.status is RunStatus.BLOCKED
+                if event.status is RunStatus.FAILED
             )
             self.assertEqual(
                 terminal.payload,
-                {
-                    "phase": (
-                        "local_candidate_publication_authorization_freshness"
-                    )
-                },
+                {"phase": "result_finalization", "artifact_observed": False},
             )
             with SQLiteStateStore(root / ".ordomata/state.sqlite3") as state:
-                self.assertEqual(state.current_status(run_id), RunStatus.BLOCKED)
+                self.assertEqual(state.current_status(run_id), RunStatus.FAILED)
             self._assert_no_publication_effect(root, run_id)
 
     def test_publication_decision_append_precommit_and_commit_then_raise(

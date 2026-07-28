@@ -105,9 +105,13 @@ runner effect, the attempt is quarantined. Only a validated identity-matched
 no-process mock result can produce a succeeded receipt. Its execution
 accounting must also read back exactly before publication. If that result is
 accepted and credential-clean, the controller constructs a second exact
-local-candidate CREATE request, persists its fixed-policy decision and
-enforcing pre-effect record, and rechecks the permit immediately before
-staging performs the first artifact-directory mutation. Its existing
+local-candidate CREATE request from the existing schema-v6 lineage. It compares
+that lineage with the captured shipped resolver, independently replays the
+shipped evaluator and fixed policy, and persists its decision and enforcing
+pre-effect record with exact readback. Immediately before staging, it exactly
+rereads the binding, decision, and pre-effect record, rebuilds the permit,
+captures a new post-replay action time, and requires that time to remain fresh.
+Its existing
 descriptor-anchored reconciliation chain carries the canonical enforcing
 action receipt. Existing
 `PermissionClass` and distributed deterministic eligibility gates remain
@@ -126,13 +130,14 @@ bindings declare dispatch enforcement; frozen schema-v4 bindings add
 local-candidate publication enforcement; schema-v5 bindings add Class 1 task-
 admission enforcement; and current schema-v6 bindings retain all three chains
 while carrying the bounded canonical task-intent lineage required for
-authoritative dispatch replay. Their enforcing decisions and action receipts
+authoritative dispatch and publication replay. Their enforcing decisions and
+action receipts
 are distinct from the shadows. Unprofiled schema-v1 bindings, live or
 historical schema-v2 bindings, historical schema-v3/v4/v5 bindings, and every
 comparison path retain their prior meaning.
-This lineage slice uses the existing dispatch decision and receipt schemas and
-advances only the current exact-mock attempt binding to schema v6; it adds no
-authority. The dispatch PEP remains
+These lineage slices use the existing enforcing decision-event and action-
+receipt schemas and advance only the current exact-mock attempt binding to
+schema v6; they add no authority. The dispatch PEP remains
 limited to Class 0/1 requests for the exact profile-backed controller-owned
 `MockRunner`, while every new attempt that reaches it still requires the Class
 1 admission permit.
@@ -392,8 +397,8 @@ private run directories that precede the binding are inert controller
 scaffolding: they cannot authorize billing, dispatch, `RUNNING`, or
 publication. The binding covers the controller-resolved typed authorization
 intent as well as immutable run inputs; schema v6 also retains its strict,
-bounded canonical preimage and source inside the binding digest so dispatch
-inspection no longer needs a shadow preimage. Dispatch binds the
+bounded canonical preimage and source inside the binding digest so dispatch and
+publication inspection no longer need a shadow preimage. Dispatch binds the
 persisted preflight billing assessment. After runner execution, schema-v2
 accounting projects the identity and billing disposition fields needed to
 recompute one sanitized billing digest. Runner-provided version text is reduced
@@ -452,28 +457,32 @@ its exact terminal phase/status and no contradictory dispatch receipt or
 downstream effect evidence.
 The third binds that succeeded dispatch receipt, content-addressed accounting,
 billing disposition, exact artifact and destination, accepted evaluation, and
-credential scan into an independent Class 1 publication request. Its required
-decision and pre-effect append must reconcile before mutation, and freshness,
-exact obligations, and both Class ceilings are rechecked immediately before
-staging. A non-permit or uncertain decision append creates no staged bytes or
-metadata. Schema-v1 unprofiled, schema-v2 selected/live, and historical
-schema-v3/v4/v5 histories remain valid with their previous semantics. For v6,
-the read-only inspector validates dispatch intent only from the authoritative
-binding lineage; shadow observations are inspected separately and cannot supply
-or repair that preimage.
+credential scan into an independent Class 1 publication request. It reuses the
+same v6 lineage, requires equality with the captured shipped resolver, and
+independently replays the shipped evaluator and fixed policy. Its required
+decision and pre-effect append read back exactly. At the final pre-mutation PEP,
+the binding, decision, and pre-effect record read back exactly again; only then
+does the controller rebuild the permit, capture the action-start time, recheck
+freshness, exact obligations, and both Class ceilings, and stage. A non-permit
+or uncertain readback creates no staged bytes or metadata. Schema-v1 unprofiled,
+schema-v2 selected/live, and historical schema-v3/v4/v5 histories remain valid
+with their previous semantics. For v6, the read-only inspector validates task
+intent for both dispatch and publication only from the authoritative binding
+lineage; shadow observations are inspected separately and cannot supply or
+repair that preimage.
 
 None of the three chains authorizes shared, remote, active-policy, promotion,
 deployment, live-harness, supervisor-worker, or Class 2/3 effects. The existing
 Class 0/1 gate remains an independent prerequisite and cannot be widened by any
 PEP.
 
-The next recommended narrow authorization slice is to thread the existing v6
-lineage and shipped-resolver equality through the owner-private local-candidate
-publication runtime PEP and final pre-mutation replay, with an exact
-authoritative-binding readback. The publication request-projection inspector
-already replays the v6 preimage from that binding, so the slice creates no new
-lineage. It must preserve the present Class 1 local-only effect and may not
-enable shared publication, promotion, live harnesses, or any Class 2/3 path.
+The next recommended narrow slice is a versioned, privacy-bounded repository-
+registration contract and read-only validator. It should canonicalize and hash
+repository identity, exact verification argv, protected and allowed paths, and
+resource and isolation limits without creating a worktree, invoking a command
+or worker, or enabling supervisor dispatch. This supplies evidence required by
+the roadmap's repository-containment phase while preserving the current Class
+0/1 ceiling and disabled worker boundary.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor
