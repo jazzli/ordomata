@@ -1,4 +1,4 @@
-"""First authoritative ABAC enforcement point for ordinary mock dispatch.
+"""Authoritative ABAC enforcement point for ordinary mock dispatch.
 
 This module is deliberately narrow.  It authorizes only a profile-backed,
 deterministic in-memory mock attempt at the exact ``runner.execute`` boundary.
@@ -41,7 +41,7 @@ from .authorization import (
     SubjectAttributes,
     canonical_digest,
 )
-from .contracts import TaskContract
+from .contracts import TaskAuthorizationIntent, TaskContract
 from .errors import AuthorizationBlocked, ValidationError
 from .models import (
     AssessmentConfidence,
@@ -53,6 +53,8 @@ from .models import (
 from .shadow_authorization import resolve_task_authorization_intent
 from .task_evidence import (
     TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
+    TASK_AUTHORIZATION_INTENT_LINEAGE_KIND,
+    TASK_AUTHORIZATION_INTENT_LINEAGE_SCHEMA_VERSION,
 )
 
 
@@ -95,12 +97,26 @@ _FIXED_PERMIT_OBLIGATIONS = frozenset(
         (ObligationKind.ISOLATED_LOCAL_ONLY, "required"),
     }
 )
+_TASK_AUTHORIZATION_INTENT_LINEAGE_KEYS = frozenset(
+    {
+        "schema_version",
+        "kind",
+        "intent_source",
+        "task_definition_digest",
+        "requested_permission_class",
+        "task_authorization_intent",
+        "authorization_intent_digest",
+    }
+)
 
 # Retain the shipped evaluator implementation for the final independent replay.
 # Runtime tests and integrations may patch the public evaluator entry point, but
 # a patchable first-pass decision must never become its own authority.
 _BUILTIN_AUTHORIZATION_EVALUATOR = AuthorizationEvaluator
 _BUILTIN_AUTHORIZATION_EVALUATE = AuthorizationEvaluator.evaluate
+_BUILTIN_RESOLVE_TASK_AUTHORIZATION_INTENT = (
+    resolve_task_authorization_intent
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +130,7 @@ class MockDispatchAuthorization:
     execution_selection_digest: str
     billing_assessment_digest: str
     task_authorization_intent_digest: str
+    task_authorization_intent_lineage_digest: str
     requested_permission_class: PermissionClass
     legacy_executable: bool
     authority_ceiling_satisfied: bool
@@ -184,6 +201,63 @@ def _mock_dispatch_event_payload(
     }
 
 
+def _task_authorization_intent_lineage(
+    *,
+    contract: TaskContract,
+    requested_permission_class: PermissionClass,
+    task_intent: TaskAuthorizationIntent,
+    intent_source: str,
+) -> dict[str, Any]:
+    """Return the fixed bounded lineage shape committed by binding schema v6."""
+
+    return {
+        "schema_version": TASK_AUTHORIZATION_INTENT_LINEAGE_SCHEMA_VERSION,
+        "kind": TASK_AUTHORIZATION_INTENT_LINEAGE_KIND,
+        "intent_source": intent_source,
+        "task_definition_digest": contract.definition_hash,
+        "requested_permission_class": int(requested_permission_class),
+        "task_authorization_intent": task_intent.to_canonical(),
+        "authorization_intent_digest": task_intent.digest,
+    }
+
+
+def _validated_task_authorization_intent_lineage(
+    *,
+    contract: TaskContract,
+    requested_permission_class: PermissionClass,
+    lineage: Mapping[str, Any],
+    lineage_digest: str,
+) -> TaskAuthorizationIntent:
+    """Require exact persisted lineage built from the shipped task resolver."""
+
+    try:
+        candidate = dict(lineage)
+        task_intent, intent_source = (
+            _BUILTIN_RESOLVE_TASK_AUTHORIZATION_INTENT(contract)
+        )
+        expected = _task_authorization_intent_lineage(
+            contract=contract,
+            requested_permission_class=requested_permission_class,
+            task_intent=task_intent,
+            intent_source=intent_source,
+        )
+        expected_digest = canonical_digest(expected)
+        exact = bool(
+            frozenset(candidate) == _TASK_AUTHORIZATION_INTENT_LINEAGE_KEYS
+            and candidate == expected
+            and canonical_digest(candidate) == lineage_digest
+            and lineage_digest == expected_digest
+        )
+    except (AttributeError, TypeError, ValueError):
+        exact = False
+        task_intent = None
+    if not exact or not isinstance(task_intent, TaskAuthorizationIntent):
+        raise ValidationError(
+            "mock dispatch task authorization intent lineage is inconsistent"
+        )
+    return task_intent
+
+
 def evaluate_mock_dispatch_authorization(
     *,
     contract: TaskContract,
@@ -198,6 +272,8 @@ def evaluate_mock_dispatch_authorization(
     billing_assessment: BillingRouteAssessment,
     billing_assessment_payload: Mapping[str, Any],
     billing_assessment_digest: str,
+    task_authorization_intent_lineage: Mapping[str, Any],
+    task_authorization_intent_lineage_digest: str,
     evaluated_at: float,
     legacy_executable: bool,
 ) -> MockDispatchAuthorization:
@@ -216,6 +292,12 @@ def evaluate_mock_dispatch_authorization(
         billing_assessment=billing_assessment,
         billing_assessment_payload=billing_assessment_payload,
         billing_assessment_digest=billing_assessment_digest,
+        task_authorization_intent_lineage=(
+            task_authorization_intent_lineage
+        ),
+        task_authorization_intent_lineage_digest=(
+            task_authorization_intent_lineage_digest
+        ),
         evaluated_at=evaluated_at,
         legacy_executable=legacy_executable,
     )
@@ -235,6 +317,8 @@ def _evaluate_mock_dispatch_authorization(
     billing_assessment: BillingRouteAssessment,
     billing_assessment_payload: Mapping[str, Any],
     billing_assessment_digest: str,
+    task_authorization_intent_lineage: Mapping[str, Any],
+    task_authorization_intent_lineage_digest: str,
     evaluated_at: float,
     legacy_executable: bool,
 ) -> MockDispatchAuthorization:
@@ -252,6 +336,10 @@ def _evaluate_mock_dispatch_authorization(
             ("context", context_digest),
             ("prompt", prompt_digest),
             ("billing assessment", billing_assessment_digest),
+            (
+                "task authorization intent lineage",
+                task_authorization_intent_lineage_digest,
+            ),
         ),
         prompt_digest=prompt_digest,
         billing_assessment=billing_assessment,
@@ -261,7 +349,12 @@ def _evaluate_mock_dispatch_authorization(
         legacy_executable=legacy_executable,
     )
 
-    task_intent, _ = resolve_task_authorization_intent(contract)
+    task_intent = _validated_task_authorization_intent_lineage(
+        contract=contract,
+        requested_permission_class=request.permission_class,
+        lineage=task_authorization_intent_lineage,
+        lineage_digest=task_authorization_intent_lineage_digest,
+    )
     task_intent_digest = task_intent.digest
     profile_ref = canonical_digest({"profile_id": profile_id})
     repository_ref = canonical_digest({"project_root": str(project_root)})
@@ -312,6 +405,9 @@ def _evaluate_mock_dispatch_authorization(
                         task_attempt_binding_digest
                     ),
                     "task_authorization_intent_digest": task_intent_digest,
+                    "task_authorization_intent_lineage_digest": (
+                        task_authorization_intent_lineage_digest
+                    ),
                     "task_definition_digest": contract.definition_hash,
                     "timeout_seconds": request.timeout_seconds,
                     "workspace_ref": workspace_ref,
@@ -420,6 +516,9 @@ def _evaluate_mock_dispatch_authorization(
         execution_selection_digest=execution_selection_digest,
         billing_assessment_digest=billing_assessment_digest,
         task_authorization_intent_digest=task_intent_digest,
+        task_authorization_intent_lineage_digest=(
+            task_authorization_intent_lineage_digest
+        ),
         requested_permission_class=request.permission_class,
         legacy_executable=legacy_executable,
         authority_ceiling_satisfied=authority_ceiling_satisfied,
@@ -492,6 +591,8 @@ def assert_mock_dispatch_authorized(
     billing_assessment: BillingRouteAssessment,
     billing_assessment_payload: Mapping[str, Any],
     billing_assessment_digest: str,
+    task_authorization_intent_lineage: Mapping[str, Any],
+    task_authorization_intent_lineage_digest: str,
     legacy_executable: bool,
 ) -> None:
     """Rebuild and require the exact persisted permit at runner invocation."""
@@ -514,6 +615,12 @@ def assert_mock_dispatch_authorized(
             billing_assessment=billing_assessment,
             billing_assessment_payload=billing_assessment_payload,
             billing_assessment_digest=billing_assessment_digest,
+            task_authorization_intent_lineage=(
+                task_authorization_intent_lineage
+            ),
+            task_authorization_intent_lineage_digest=(
+                task_authorization_intent_lineage_digest
+            ),
             evaluated_at=authorization.request.environment.evaluated_at,
             legacy_executable=legacy_executable,
         )
@@ -580,7 +687,17 @@ def _assert_mock_dispatch_permit_current(
     decision = authorization.decision
     policy = authorization.policy
     try:
-        task_intent, _ = resolve_task_authorization_intent(contract)
+        task_intent, intent_source = (
+            _BUILTIN_RESOLVE_TASK_AUTHORIZATION_INTENT(contract)
+        )
+        expected_lineage = _task_authorization_intent_lineage(
+            contract=contract,
+            requested_permission_class=(
+                authorization.requested_permission_class
+            ),
+            task_intent=task_intent,
+            intent_source=intent_source,
+        )
         expected_consequences = ConsequenceVector(
             confidentiality=task_intent.consequences.confidentiality,
             integrity=task_intent.consequences.integrity,
@@ -619,6 +736,8 @@ def _assert_mock_dispatch_permit_current(
         is not contract.permission_class
         or task_intent is None
         or authorization.task_authorization_intent_digest != task_intent.digest
+        or authorization.task_authorization_intent_lineage_digest
+        != canonical_digest(expected_lineage)
         or policy != fixed_policy
         or decision != reevaluated_decision
         or policy.bundle_id != MOCK_DISPATCH_POLICY_ID

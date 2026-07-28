@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 import unittest
 
@@ -10,8 +11,11 @@ from ordomata.errors import ValidationError
 from ordomata.models import PermissionClass, RunRequest
 from ordomata.task_evidence import (
     TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE,
+    TASK_ATTEMPT_AUTHORIZATION_BINDING_LINEAGE_SCHEMA_VERSION,
     TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
     TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
+    TASK_AUTHORIZATION_INTENT_LINEAGE_KIND,
+    TASK_AUTHORIZATION_INTENT_LINEAGE_SCHEMA_VERSION,
     build_candidate_artifact_action_receipt,
     build_candidate_artifact_pre_effect_receipt,
     build_task_attempt_binding_event,
@@ -417,6 +421,195 @@ class TaskEvidenceTests(unittest.TestCase):
             set(v5) - set(v4),
             {"admission_authorization_enforcement_coverage"},
         )
+        self.assertEqual(
+            canonical_digest(v5),
+            "sha256:60195739d16af7d557f43c759c2316459a5a1eae6f5c9a21d9b378160e6e1a50",
+        )
+
+    def test_schema_v6_adds_only_strict_dispatch_intent_lineage_to_v5(
+        self,
+    ) -> None:
+        task_intent = self.contract.authorization_intent
+        self.assertIsNotNone(task_intent)
+        assert task_intent is not None
+        lineage_kwargs = {
+            **self.binding_kwargs,
+            "authorization_intent_digest": task_intent.digest,
+        }
+        v5 = build_task_attempt_binding_event(
+            **lineage_kwargs,
+            **self.selection_kwargs,
+            enforce_mock_dispatch=True,
+            enforce_local_candidate_publication=True,
+            enforce_task_admission=True,
+        )
+        explicit_v5 = build_task_attempt_binding_event(
+            **lineage_kwargs,
+            **self.selection_kwargs,
+            enforce_mock_dispatch=True,
+            enforce_local_candidate_publication=True,
+            enforce_task_admission=True,
+            bind_dispatch_intent_lineage=False,
+        )
+        v6 = build_task_attempt_binding_event(
+            **lineage_kwargs,
+            **self.selection_kwargs,
+            enforce_mock_dispatch=True,
+            enforce_local_candidate_publication=True,
+            enforce_task_admission=True,
+            bind_dispatch_intent_lineage=True,
+        )
+
+        self.assertEqual(explicit_v5, v5)
+        self.assertEqual(v5["schema_version"], 5)
+        self.assertEqual(
+            v6["schema_version"],
+            TASK_ATTEMPT_AUTHORIZATION_BINDING_LINEAGE_SCHEMA_VERSION,
+        )
+        self.assertEqual(set(v6), set(v5))
+        self.assertEqual(set(v6["binding"]) - set(v5["binding"]), {
+            "authorization_intent_lineage",
+            "authorization_intent_lineage_digest",
+        })
+        expected_lineage = {
+            "schema_version": TASK_AUTHORIZATION_INTENT_LINEAGE_SCHEMA_VERSION,
+            "kind": TASK_AUTHORIZATION_INTENT_LINEAGE_KIND,
+            "intent_source": "task_contract",
+            "task_definition_digest": self.contract.definition_hash,
+            "requested_permission_class": int(PermissionClass.LOCAL_DRAFT),
+            "task_authorization_intent": task_intent.to_canonical(),
+            "authorization_intent_digest": task_intent.digest,
+        }
+        self.assertEqual(
+            v6["binding"]["authorization_intent_lineage"],
+            expected_lineage,
+        )
+        self.assertEqual(
+            v6["binding"]["authorization_intent_lineage_digest"],
+            canonical_digest(expected_lineage),
+        )
+        self.assertEqual(
+            v6["binding"]["authorization_intent_lineage_digest"],
+            "sha256:fb5023c8dc069f95d461dad84fc8519f5a1048dab71b897aa94f4d53ef17c49c",
+        )
+        self.assertEqual(
+            canonical_digest(v6),
+            "sha256:313e2bcd11dd5b09d76ce1e158b137565cd9e6c9caf51bd5920b24177a5639a5",
+        )
+
+    def test_schema_v6_uses_controller_legacy_intent_fallback(self) -> None:
+        fallback_contract = replace(
+            self.contract,
+            authorization_intent=None,
+            definition_hash=_digest("legacy-task-definition"),
+        )
+        fallback_intent = {
+            "action": {
+                "intended_effect": "create_isolated_local_candidate",
+                "operation": "artifact.publish_local_candidate",
+                "verb": "create",
+            },
+            "consequences": {
+                "availability": "low",
+                "blast_radius": "single_resource",
+                "confidentiality": "low",
+                "destructive": False,
+                "integrity": "low",
+                "reach": "local",
+                "reversible": True,
+                "sensitivity": "low",
+            },
+            "resource": {
+                "protected": False,
+                "resource_type": "local_candidate_artifact",
+                "sensitivity": "low",
+                "trust_boundary": "isolated_run_workspace",
+            },
+        }
+        payload = build_task_attempt_binding_event(
+            **{
+                **self.binding_kwargs,
+                "contract": fallback_contract,
+                "authorization_intent_digest": canonical_digest(
+                    fallback_intent
+                ),
+            },
+            **self.selection_kwargs,
+            enforce_mock_dispatch=True,
+            enforce_local_candidate_publication=True,
+            enforce_task_admission=True,
+            bind_dispatch_intent_lineage=True,
+        )
+
+        lineage = payload["binding"]["authorization_intent_lineage"]
+        self.assertEqual(
+            lineage["intent_source"],
+            "legacy_permission_class_fallback",
+        )
+        self.assertEqual(
+            lineage["task_authorization_intent"],
+            fallback_intent,
+        )
+        self.assertEqual(
+            lineage["authorization_intent_digest"],
+            canonical_digest(fallback_intent),
+        )
+
+    def test_dispatch_intent_lineage_requires_boolean_and_all_peps(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(ValidationError, "flag must be a boolean"):
+            build_task_attempt_binding_event(
+                **self.binding_kwargs,
+                **self.selection_kwargs,
+                enforce_mock_dispatch=True,
+                enforce_local_candidate_publication=True,
+                enforce_task_admission=True,
+                bind_dispatch_intent_lineage=1,  # type: ignore[arg-type]
+            )
+
+        for enforce_dispatch, enforce_publication, enforce_admission in (
+            (False, True, True),
+            (True, False, True),
+            (True, True, False),
+            (False, False, False),
+        ):
+            with (
+                self.subTest(
+                    enforce_mock_dispatch=enforce_dispatch,
+                    enforce_local_candidate_publication=enforce_publication,
+                    enforce_task_admission=enforce_admission,
+                ),
+                self.assertRaisesRegex(
+                    ValidationError,
+                    "requires mock dispatch, local candidate publication, "
+                    "and task admission enforcement",
+                ),
+            ):
+                build_task_attempt_binding_event(
+                    **self.binding_kwargs,
+                    **self.selection_kwargs,
+                    enforce_mock_dispatch=enforce_dispatch,
+                    enforce_local_candidate_publication=enforce_publication,
+                    enforce_task_admission=enforce_admission,
+                    bind_dispatch_intent_lineage=True,
+                )
+
+    def test_dispatch_intent_lineage_rejects_caller_digest_mismatch(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            ValidationError,
+            "does not match the controller-resolved task intent",
+        ):
+            build_task_attempt_binding_event(
+                **self.binding_kwargs,
+                **self.selection_kwargs,
+                enforce_mock_dispatch=True,
+                enforce_local_candidate_publication=True,
+                enforce_task_admission=True,
+                bind_dispatch_intent_lineage=True,
+            )
 
     def test_publication_enforcement_requires_boolean_mock_enforcement(self) -> None:
         with self.assertRaisesRegex(

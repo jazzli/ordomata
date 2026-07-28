@@ -33,6 +33,7 @@ from ordomata.models import (
     BillingRouteAssessment,
     RunRequest,
 )
+from ordomata.shadow_authorization import resolve_task_authorization_intent
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
@@ -119,6 +120,27 @@ class MockDispatchPepTests(unittest.TestCase):
             "legacy_executable": True,
         }
         values.update(overrides)
+        if "task_authorization_intent_lineage" not in overrides:
+            lineage_contract = values["contract"]
+            lineage_request = values["request"]
+            intent, intent_source = resolve_task_authorization_intent(
+                lineage_contract
+            )
+            lineage = {
+                "schema_version": 1,
+                "kind": "task_authorization_intent_lineage",
+                "intent_source": intent_source,
+                "task_definition_digest": lineage_contract.definition_hash,
+                "requested_permission_class": int(
+                    lineage_request.permission_class
+                ),
+                "task_authorization_intent": intent.to_canonical(),
+                "authorization_intent_digest": intent.digest,
+            }
+            values["task_authorization_intent_lineage"] = lineage
+            values["task_authorization_intent_lineage_digest"] = (
+                canonical_digest(lineage)
+            )
         return values
 
     @staticmethod
@@ -217,6 +239,23 @@ class MockDispatchPepTests(unittest.TestCase):
                 (
                     "selection",
                     {"execution_selection_digest": self._digest("other-selection")},
+                ),
+                (
+                    "intent-lineage",
+                    {
+                        "task_authorization_intent_lineage": {
+                            **inputs["task_authorization_intent_lineage"],
+                            "intent_source": "legacy_permission_class_fallback",
+                        },
+                    },
+                ),
+                (
+                    "intent-lineage-digest",
+                    {
+                        "task_authorization_intent_lineage_digest": self._digest(
+                            "other-intent-lineage"
+                        ),
+                    },
                 ),
                 ("context", {"context_digest": self._digest("other-context")}),
                 ("prompt", {"prompt_digest": self._digest("other-prompt")}),
@@ -512,6 +551,66 @@ class MockDispatchPepTests(unittest.TestCase):
                     completed_at=102.0,
                     outcome=ReceiptOutcome.SUCCEEDED,
                     result_digest=self._digest("result"),
+                )
+
+    def test_lineage_and_patched_lower_risk_resolver_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            assert self.contract.authorization_intent is not None
+            high_intent = replace(
+                self.contract.authorization_intent,
+                consequences=replace(
+                    self.contract.authorization_intent.consequences,
+                    confidentiality=ImpactLevel.HIGH,
+                    sensitivity=ImpactLevel.HIGH,
+                ),
+            )
+            high_contract = replace(
+                self.contract,
+                authorization_intent=high_intent,
+            )
+            inputs = self._inputs(
+                Path(temporary).resolve(),
+                contract=high_contract,
+            )
+            low_intent, low_source = resolve_task_authorization_intent(
+                self.contract
+            )
+            forged_lineage = {
+                **inputs["task_authorization_intent_lineage"],
+                "intent_source": low_source,
+                "task_authorization_intent": low_intent.to_canonical(),
+                "authorization_intent_digest": low_intent.digest,
+            }
+
+            with (
+                patch(
+                    "ordomata.dispatch_authorization."
+                    "resolve_task_authorization_intent",
+                    return_value=(low_intent, low_source),
+                ),
+                self.assertRaisesRegex(ValidationError, "lineage is inconsistent"),
+            ):
+                evaluate_mock_dispatch_authorization(
+                    **{
+                        **inputs,
+                        "task_authorization_intent_lineage": forged_lineage,
+                        "task_authorization_intent_lineage_digest": (
+                            canonical_digest(forged_lineage)
+                        ),
+                    }
+                )
+
+            with self.assertRaisesRegex(
+                ValidationError,
+                "lineage is inconsistent",
+            ):
+                evaluate_mock_dispatch_authorization(
+                    **{
+                        **inputs,
+                        "task_authorization_intent_lineage_digest": self._digest(
+                            "tampered-lineage"
+                        ),
+                    }
                 )
 
     def test_nonfinite_or_stale_action_times_and_receipt_times_are_rejected(

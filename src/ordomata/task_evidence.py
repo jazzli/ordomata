@@ -1,12 +1,14 @@
-"""Digest-only controller evidence for ordinary task attempts.
+"""Privacy-bounded controller evidence for ordinary task attempts.
 
 Bindings and publication receipts are evidence, never authorization grants.
 Schema-v3 bindings additionally declare that a separate mock-dispatch decision
 and action receipt are required.  Schema-v4 retains that exact binding shape
 and declares a second, local-candidate publication enforcement chain.
 Schema-v5 retains the v4 binding and adds a controller-owned task-admission
-enforcement chain.  In every version authority comes from typed runtime
-decisions plus the independent legacy Class 0/1 gate.
+enforcement chain.  Opt-in schema-v6 bindings retain those semantics and add
+a canonical controller-resolved task-intent lineage anchor.  In every version
+authority comes from typed runtime decisions plus the independent legacy
+Class 0/1 gate.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from .models import (
     RunRequest,
     RunnerExecutionResult,
 )
+from .shadow_authorization import resolve_task_authorization_intent
 from .state import ArtifactRecord
 
 
@@ -53,6 +56,17 @@ TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE = (
 TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE = (
     "task_attempt_admission_decision_action_receipt"
 )
+TASK_ATTEMPT_AUTHORIZATION_BINDING_LINEAGE_SCHEMA_VERSION = 6
+TASK_AUTHORIZATION_INTENT_LINEAGE_SCHEMA_VERSION = 1
+TASK_AUTHORIZATION_INTENT_LINEAGE_KIND = (
+    "task_authorization_intent_lineage"
+)
+
+# Capture the shipped controller projection so later monkey-patching of the
+# public shadow helper cannot change an authoritative binding preimage.
+_BUILTIN_RESOLVE_TASK_AUTHORIZATION_INTENT = (
+    resolve_task_authorization_intent
+)
 
 _TASK_EXECUTION_MODES = {
     "mock": "in_memory_mock",
@@ -77,6 +91,7 @@ def build_task_attempt_binding_event(
     enforce_mock_dispatch: bool = False,
     enforce_local_candidate_publication: bool = False,
     enforce_task_admission: bool = False,
+    bind_dispatch_intent_lineage: bool = False,
 ) -> dict[str, Any]:
     """Bind later evidence to immutable, controller-authored attempt inputs."""
 
@@ -101,6 +116,21 @@ def build_task_attempt_binding_event(
     if not isinstance(enforce_task_admission, bool):
         raise ValidationError(
             "task admission enforcement flag must be a boolean"
+        )
+    if not isinstance(bind_dispatch_intent_lineage, bool):
+        raise ValidationError(
+            "dispatch intent lineage binding flag must be a boolean"
+        )
+    if bind_dispatch_intent_lineage and not all(
+        (
+            enforce_mock_dispatch,
+            enforce_local_candidate_publication,
+            enforce_task_admission,
+        )
+    ):
+        raise ValidationError(
+            "dispatch intent lineage binding requires mock dispatch, local "
+            "candidate publication, and task admission enforcement"
         )
     if enforce_mock_dispatch and (not selection_bound or runner_id != "mock"):
         raise ValidationError(
@@ -185,9 +215,42 @@ def build_task_attempt_binding_event(
                 ),
             }
         )
+    if bind_dispatch_intent_lineage:
+        task_authorization_intent, intent_source = (
+            _BUILTIN_RESOLVE_TASK_AUTHORIZATION_INTENT(contract)
+        )
+        resolved_intent_digest = task_authorization_intent.digest
+        if binding["authorization_intent_digest"] != resolved_intent_digest:
+            raise ValidationError(
+                "authorization intent digest does not match the "
+                "controller-resolved task intent"
+            )
+        intent_lineage = {
+            "schema_version": (
+                TASK_AUTHORIZATION_INTENT_LINEAGE_SCHEMA_VERSION
+            ),
+            "kind": TASK_AUTHORIZATION_INTENT_LINEAGE_KIND,
+            "intent_source": intent_source,
+            "task_definition_digest": binding["task_definition_digest"],
+            "requested_permission_class": int(request.permission_class),
+            "task_authorization_intent": (
+                task_authorization_intent.to_canonical()
+            ),
+            "authorization_intent_digest": resolved_intent_digest,
+        }
+        binding.update(
+            {
+                "authorization_intent_lineage": intent_lineage,
+                "authorization_intent_lineage_digest": canonical_digest(
+                    intent_lineage
+                ),
+            }
+        )
     payload = {
         "schema_version": (
-            5
+            TASK_ATTEMPT_AUTHORIZATION_BINDING_LINEAGE_SCHEMA_VERSION
+            if bind_dispatch_intent_lineage
+            else 5
             if enforce_task_admission
             else 4
             if enforce_local_candidate_publication
@@ -1130,9 +1193,12 @@ __all__ = [
     "TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE",
     "TASK_ATTEMPT_ADMISSION_ENFORCEMENT_COVERAGE",
     "TASK_ATTEMPT_AUTHORIZATION_BINDING_EVENT_TYPE",
+    "TASK_ATTEMPT_AUTHORIZATION_BINDING_LINEAGE_SCHEMA_VERSION",
     "TASK_ATTEMPT_AUTHORIZATION_SHADOW_COVERAGE",
     "TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE",
     "TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE",
+    "TASK_AUTHORIZATION_INTENT_LINEAGE_KIND",
+    "TASK_AUTHORIZATION_INTENT_LINEAGE_SCHEMA_VERSION",
     "TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE",
     "TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE",
     "artifact_record_digest",

@@ -113,9 +113,11 @@ prove the new PDP cannot widen behavior.
 
 New profile-backed ordinary Class 1 attempts using the exact built-in
 `MockRunner` pass three narrow controller-owned PEPs at task admission,
-`runner.execute`, and owner-private local-candidate publication. A schema-v5
-attempt binding declares all three chains; frozen schema-v4 declares dispatch
-plus publication, and historical schema-v3 declares dispatch only. The run
+`runner.execute`, and owner-private local-candidate publication. A schema-v6
+attempt binding declares all three chains and commits a bounded canonical task-
+intent lineage; frozen schema-v5 declares the same chains without that self-
+contained lineage, schema-v4 declares dispatch plus publication, and historical
+schema-v3 declares dispatch only. The run
 record and private directories created before admission are inert controller
 scaffolding. After required selection and binding evidence, the controller
 builds a fixed admission CREATE request over the isolated worktree, inherits
@@ -127,8 +129,9 @@ or evidence failures stop before the admission shadow, billing, dispatch, or
 `RUNNING`. After admission and required billing evidence, the controller builds
 an exact mock-only execute request, evaluates a fixed versioned policy, and
 requires exact readback of the selection, task-attempt binding, mock billing
-assessment, and decision. Before
-`RUNNING`, the PEP rebuilds the authorization from current controller inputs,
+assessment, and decision. Before `RUNNING`, the PEP rebuilds the authorization
+from current controller inputs, requires the resolved task intent and digest to
+equal the lineage committed by the durable binding,
 independently constructs the canonical wrapper for exact comparison with the
 retained persisted payload, independently replays the fixed policy, requires
 finite current time, a derived class no greater than the persisted run class or
@@ -146,11 +149,15 @@ candidate metadata. Its decision and enforcing pre-effect record must be
 durable before a second freshness check immediately adjacent to staging, and
 the existing reconciliation chain embeds its action receipt. Non-permits and
 uncertain decision persistence perform no governed action. Unprofiled
-schema-v1, live or historical schema-v2, and historical schema-v3/v4 histories
+schema-v1, live or historical schema-v2, and historical schema-v3/v4/v5 histories
 remain valid under their frozen semantics, and live, comparison, supervisor,
 or general-admission paths do not inherit this authority.
-The hardening changes no event or attempt-binding schema and grants no new
-authority. The dispatch PEP remains limited to Class 0/1 requests for the exact
+The lineage slice advances only current exact-mock attempt bindings to schema v6
+and changes no dispatch decision or receipt schema. It grants no new authority.
+For v6, read-only inspection validates the task-intent preimage, source, and
+digests from the authoritative binding and never from a shadow; v1-v5 retain
+their historical interpretation. The dispatch PEP remains limited to Class 0/1
+requests for the exact
 profile-backed controller-owned `MockRunner`; new attempts still require the
 existing Class 1 admission permit before they can reach dispatch.
 
@@ -163,11 +170,12 @@ inherits task protection, sensitivity, and confidentiality/integrity/
 availability impact so higher impact is never relabeled as low;
 `required_before_promotion` does not apply to that private candidate write.
 New task attempts bind immutable run inputs and the controller-resolved typed
-authorization intent before admission. Schema-v5 exact-mock attempts also bind
-the separate admission enforcement coverage before the admission decision and
+authorization intent before admission. Schema-v6 exact-mock attempts also bind
+the strict canonical intent lineage and the separate admission enforcement
+coverage before the admission decision and
 receipt. Dispatch also binds the persisted
 preflight billing assessment, while schema-v2 execution accounting links to the
-schema-v5 publication shadow. On schema-v4/v5 exact-mock attempts, schema-v3
+schema-v5 publication shadow. On schema-v4/v5/v6 exact-mock attempts, schema-v3
 pre-effect/action receipts carry the enforcing decision and canonical action
 receipt; older paths retain schema-v2 non-enforcing receipts. The shadow never
 becomes authority, and the existing Class 0/1 gate remains independently
@@ -176,9 +184,13 @@ Policy activation, Git/remote publication, deployment, and other shared effects
 remain separate unimplemented typed actions whose exact resource version and
 digest must receive fresh authorization and any required approval.
 
-The next narrow authorization slice should make authoritative dispatch intent
-lineage self-contained for read-only replay without depending on
-non-authoritative shadow preimages, before any permission expansion.
+The next recommended narrow slice should thread the existing v6 lineage and
+shipped-resolver equality through the owner-private local-candidate publication
+runtime PEP and final pre-mutation replay, with an exact authoritative-binding
+readback. The publication request-projection inspector already replays the v6
+preimage from that binding; the slice creates no new lineage. It must not widen
+the present local Class 1 effect or enable shared publication, promotion, live
+harnesses, or Class 2/3.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
@@ -249,7 +261,8 @@ Class 1 admission, dispatch, and owner-private candidate publication. Those
 enforcing records are distinct from admission, dispatch-intent, and
 publication shadows. Historical ordinary and all controlled-comparison
 publication receipts remain non-enforcing; schema-v4 carries dispatch plus
-publication permits, while schema-v5 adds the admission permit and receipt:
+publication permits, schema-v5 adds the admission permit and receipt, and
+schema-v6 adds authoritative task-intent lineage without adding a permit:
 
 - decision, request, and policy identifiers and digests;
 - an effect, fixed reason codes, and matched rule identifiers;
@@ -455,8 +468,10 @@ violation, not an instruction to follow.
    and append failures are sanitized and cannot allow or block legacy work.
    Historical paths add required non-enforcing publication receipts. Frozen
    schema-v4 exact-mock attempts add a separate enforcing publication decision
-   and schema-v3 pre-effect/action receipts; new schema-v5 attempts retain that
-   chain and add an enforcing admission decision and durable succeeded receipt.
+   and schema-v3 pre-effect/action receipts; schema-v5 attempts retain that chain
+   and add an enforcing admission decision and durable succeeded receipt; current
+   schema-v6 attempts retain all three chains and add the bounded canonical task-
+   intent lineage used by the final dispatch PEP and read-only replay.
    Failure to prove those
    audit records or the exact local effect fails closed. A read-only
    inspector recomputes canonical
@@ -466,7 +481,7 @@ violation, not an instruction to follow.
    controller-event order. Class-ceiling mismatches in shadows are evidence;
    the narrow admission, dispatch, and publication PEPs enforce their
    independent ceilings.
-   Ordinary candidates add a digest-only attempt binding,
+   Ordinary candidates add a privacy-bounded attempt binding,
    receipt-bound billing accounting, and exact metadata/filesystem
    reconciliation. Controlled comparison trials add a versioned Class 0 binding,
    admission/dispatch shadows, and a separately bounded Class 1 private-

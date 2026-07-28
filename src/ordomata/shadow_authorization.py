@@ -5,7 +5,7 @@ legacy gate. This module evaluates typed task effects at Chief-of-Staff
 controller boundaries and at controlled-comparison admission, dispatch, and
 private-review publication. It returns bounded, secret-free audit payloads. A
 shadow result can neither enable nor block execution or local candidate
-publication; separate typed PEP modules own the two implemented authoritative
+publication; separate typed PEP modules own the three implemented authoritative
 decisions.
 """
 

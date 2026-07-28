@@ -76,22 +76,25 @@ non-enforcing code slice is also implemented: canonical value types, a pure
 current-stage evaluator, adversarial fixtures, typed Chief-of-Staff task-effect
 intent, three append-only boundary observations with legacy-result and
 authority-ceiling parity, and a strictly read-only parity/coverage/order
-inspector. New ordinary Chief-of-Staff attempts add a digest-only binding,
-schema-v2 accounting, and a schema-v5 publication shadow. New schema-v5 exact-
-mock attempts add Class 1 admission enforcement while retaining schema-v4's
-dispatch and publication chains, including the separate enforcing publication
-decision and schema-v3 pre-effect/action receipts with exact local effect
+inspector. New ordinary Chief-of-Staff attempts add a privacy-bounded binding,
+schema-v2 accounting, and a schema-v5 publication shadow. Current schema-v6
+exact-mock attempts retain schema-v5 Class 1 admission enforcement and schema-
+v4's dispatch and publication chains while adding a bounded canonical task-
+intent lineage to the authoritative binding. The separate enforcing publication
+decision and schema-v3 pre-effect/action receipts retain exact local effect
 reconciliation; schema-v1-v3 paths retain schema-v2 non-enforcing publication
-receipts. Controlled
-comparisons add a schema-v2 trial binding, schema-v3
-Class 0 admission/dispatch shadows, and a separate schema-v4 non-enforcing
-Class 1 private-publication shadow with schema-v2 pre-effect/action receipts.
+receipts. Controlled comparisons add a schema-v2 trial binding, schema-v3 Class
+0 admission/dispatch shadows, and a separate schema-v4 non-enforcing Class 1
+private-publication shadow with schema-v2 pre-effect/action receipts.
 
 The first three runtime ABAC enforcement points now gate only new
 profile-backed ordinary Class 1 attempts through the exact controller-owned
 in-memory mock implementation and the resulting owner-private candidate write.
-A schema-v5 binding declares admission, dispatch, and publication; frozen
-schema-v4 declares dispatch plus publication. The run record and private
+A schema-v6 binding declares admission, dispatch, and publication and commits
+the canonical task-intent preimage, its controller-owned source, and exact
+digests needed for authoritative replay; frozen schema-v5 retains the three
+chains without self-contained lineage, and schema-v4 declares dispatch plus
+publication. The run record and private
 directories before admission are inert controller scaffolding. Admission
 inherits the full task consequence vector, persists a fixed-policy decision,
 rebuilds current inputs, compares the exact persisted wrapper, independently
@@ -101,7 +104,8 @@ non-permit, stale, evaluation, or evidence failures stop pre-billing. The
 selection and task-attempt binding require exact readback. The controller then
 persists a fixed-policy dispatch
 decision after exactly reading back the mock billing evidence, then exactly
-reads back the decision. Before `RUNNING`, it rebuilds current inputs,
+reads back the decision. Before `RUNNING`, it rebuilds current inputs, requires
+the resolved task intent and digest to equal the durable schema-v6 lineage,
 independently constructs and compares the canonical persisted wrapper,
 independently replays fixed policy, checks finite freshness, exact obligations,
 the derived Class 0/1 ceiling, the independent legacy gate, and the unchanged
@@ -122,16 +126,22 @@ General/live/comparison/supervisor admission, shared publication or promotion,
 comparison execution, supervisor workers, live harnesses, approval resumption,
 and mediated commands/tools remain non-enforcing or disabled. Comparison
 publication receipts and historical ordinary receipts are migration evidence
-only; schema-v4/v5 ordinary publication is the narrow
+only; schema-v4/v5/v6 ordinary publication is the narrow
 authoritative exception and cannot grant any broader effect.
 
-The dispatch hardening uses the existing event schema and schema-v5 attempt
-binding, so it adds no schema version or authority. Dispatch remains limited to
-Class 0/1 requests for the exact profile-backed controller-owned `MockRunner`,
-while new attempts still require Class 1 admission. The next narrow
-authorization slice should make authoritative dispatch intent lineage
-self-contained for read-only replay without depending on non-authoritative
-shadow preimages, before any permission expansion.
+The dispatch-lineage slice uses the existing decision and receipt schemas and
+advances only current exact-mock attempt bindings to schema v6, so it adds no
+authority. The final PEP compares the durable canonical lineage with current
+controller-resolved intent, while read-only inspection replays v6 without a
+shadow preimage. Schema-v1 through v5 histories retain their frozen meanings.
+Dispatch remains limited to Class 0/1 requests for the exact profile-backed
+controller-owned `MockRunner`, while new attempts still require Class 1
+admission. The next recommended narrow authorization slice threads the existing
+v6 lineage and shipped-resolver equality through the owner-private
+local-candidate publication runtime PEP and final pre-mutation replay, with
+exact binding readback. The publication request-projection inspector already
+replays the v6 preimage from that binding, so no new lineage is needed. The
+slice must not widen the Class 1 local-only effect.
 
 The target semantics for Class 3 standing envelopes, irreversible actions,
 the non-delegable root-authority kernel, consequential outbox execution,
@@ -376,10 +386,13 @@ evidence payloads remain separate operational state.
   and does not change a
   current allow or deny outcome. Chief-of-Staff admission, dispatch intent, and
   local-candidate publication shadows remain observed and inspectable; new
-  schema-v5 mock attempts also carry an independent enforcing admission
-  decision/receipt plus the schema-v4 dispatch and publication chains. Their
+  schema-v6 mock attempts also carry an independent enforcing admission
+  decision/receipt plus the schema-v4 dispatch and publication chains and a
+  canonical task-intent lineage; schema-v5 retains the same three chains without
+  self-contained lineage. Their
   admission order, current-input replay, persisted wrapper, upstream,
-  artifact, and billing links are independently checked. Older histories
+  artifact, billing, and v6 lineage links are independently checked without
+  using shadow preimages for v6 dispatch. Older histories
   retain their frozen semantics. New controlled
   comparison trials have a schema-v2 digest-bound Class 0 binding, Class 0
   admission/dispatch shadows, and a separately bounded non-enforcing Class 1

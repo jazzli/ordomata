@@ -1027,6 +1027,664 @@ class AuthorizationInspectionTests(unittest.TestCase):
             """
         )
 
+    def _downgrade_mock_history_to_schema5(self, database: Path) -> None:
+        """Strip schema-v6 lineage and rebind the frozen v5 evidence chain."""
+
+        connection = sqlite3.connect(database)
+        try:
+            self._drop_run_event_mutation_triggers(connection)
+            run_row = connection.execute(
+                """
+                SELECT run_id, task_id, task_version, permission_class,
+                       run_directory
+                FROM runs
+                """
+            ).fetchone()
+            self.assertIsNotNone(run_row)
+            assert run_row is not None
+            (
+                run_id,
+                task_id,
+                task_version,
+                permission_class,
+                run_directory,
+            ) = run_row
+
+            def event(event_type: str) -> tuple[int, dict[str, object]]:
+                row = connection.execute(
+                    """
+                    SELECT sequence, payload_json
+                    FROM run_events
+                    WHERE event_type = ?
+                    """,
+                    (event_type,),
+                ).fetchone()
+                self.assertIsNotNone(row)
+                assert row is not None
+                return int(row[0]), json.loads(row[1])
+
+            def persist(
+                sequence: int,
+                event_type: str,
+                payload: dict[str, object],
+                *,
+                event_id: str | None = None,
+            ) -> None:
+                selected_event_id = (
+                    canonical_digest(
+                        {
+                            "event_type": event_type,
+                            "payload": payload,
+                            "run_id": run_id,
+                        }
+                    )
+                    if event_id is None
+                    else event_id
+                )
+                connection.execute(
+                    """
+                    UPDATE run_events
+                    SET event_id = ?, payload_json = ?
+                    WHERE sequence = ?
+                    """,
+                    (
+                        selected_event_id,
+                        json.dumps(payload, sort_keys=True),
+                        sequence,
+                    ),
+                )
+
+            def resign_request(payload: dict[str, object]) -> None:
+                request = payload["request"]
+                decision = payload["decision"]
+                self.assertIsInstance(request, dict)
+                self.assertIsInstance(decision, dict)
+                assert isinstance(request, dict)
+                assert isinstance(decision, dict)
+                evidence = request["evidence"]
+                self.assertIsInstance(evidence, list)
+                assert isinstance(evidence, list)
+                for item in evidence:
+                    self.assertIsInstance(item, dict)
+                    assert isinstance(item, dict)
+                    attribute = item.get("attribute")
+                    if isinstance(attribute, str) and attribute in request:
+                        item["value_digest"] = canonical_digest(
+                            request[attribute]
+                        )
+                request_digest = canonical_digest(request)
+                payload["request_digest"] = request_digest
+                decision["request_digest"] = request_digest
+                payload["decision_digest"] = canonical_digest(decision)
+
+            binding_sequence, binding_payload = event(
+                TASK_ATTEMPT_BINDING_EVENT_TYPE
+            )
+            self.assertEqual(binding_payload["schema_version"], 6)
+            binding = binding_payload["binding"]
+            self.assertIsInstance(binding, dict)
+            assert isinstance(binding, dict)
+            binding.pop("authorization_intent_lineage")
+            binding.pop("authorization_intent_lineage_digest")
+            binding_digest = canonical_digest(binding)
+            binding_payload["schema_version"] = 5
+            binding_payload["binding_digest"] = binding_digest
+            persist(
+                binding_sequence,
+                TASK_ATTEMPT_BINDING_EVENT_TYPE,
+                binding_payload,
+                event_id=binding_digest,
+            )
+
+            admission_sequence, admission = event(
+                TASK_ADMISSION_DECISION_EVENT_TYPE
+            )
+            admission["task_attempt_binding_digest"] = binding_digest
+            admission_request = admission["request"]
+            self.assertIsInstance(admission_request, dict)
+            assert isinstance(admission_request, dict)
+            admission_action = admission_request["action"]
+            admission_resource = admission_request["resource"]
+            self.assertIsInstance(admission_action, dict)
+            self.assertIsInstance(admission_resource, dict)
+            assert isinstance(admission_action, dict)
+            assert isinstance(admission_resource, dict)
+            admission_action["parameters_digest"] = canonical_digest(
+                {
+                    "admission_authorization_intent_digest": admission[
+                        "admission_authorization_intent_digest"
+                    ],
+                    "attempt": binding["attempt"],
+                    "context_digest": binding["context_digest"],
+                    "controller_owned_mock_runner": admission[
+                        "controller_owned_mock_runner"
+                    ],
+                    "execution_selection_digest": binding[
+                        "execution_selection_digest"
+                    ],
+                    "legacy_permission_class": permission_class,
+                    "output_schema_digest": binding[
+                        "output_schema_digest"
+                    ],
+                    "pre_run_approval_requirements_digest": binding[
+                        "pre_run_approval_requirements_digest"
+                    ],
+                    "profile_configuration_digest": binding[
+                        "profile_configuration_digest"
+                    ],
+                    "profile_ref": binding["profile_ref"],
+                    "profile_version_ref": binding[
+                        "profile_version_ref"
+                    ],
+                    "prompt_digest": binding["prompt_digest"],
+                    "repository_ref": binding["repository_ref"],
+                    "run_directory_ref": canonical_digest(
+                        {"run_directory": run_directory}
+                    ),
+                    "run_ref": binding["run_ref"],
+                    "runner_overrides_digest": binding[
+                        "runner_overrides_digest"
+                    ],
+                    "task_attempt_binding_digest": binding_digest,
+                    "task_authorization_intent_digest": binding[
+                        "authorization_intent_digest"
+                    ],
+                    "task_definition_digest": binding[
+                        "task_definition_digest"
+                    ],
+                    "timeout_seconds": binding["timeout_seconds"],
+                    "workspace_ref": binding["workspace_ref"],
+                }
+            )
+            admission_resource["identifier"] = canonical_digest(
+                {
+                    "execution_selection_digest": binding[
+                        "execution_selection_digest"
+                    ],
+                    "resource_type": admission_resource["resource_type"],
+                    "run_ref": binding["run_ref"],
+                    "task_attempt_binding_digest": binding_digest,
+                    "workspace_ref": binding["workspace_ref"],
+                }
+            )
+            resign_request(admission)
+            persist(
+                admission_sequence,
+                TASK_ADMISSION_DECISION_EVENT_TYPE,
+                admission,
+            )
+
+            admission_receipt_sequence, admission_receipt = event(
+                TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE
+            )
+            admission_result_digest = canonical_digest(
+                {
+                    "admission_state": "admitted",
+                    "execution_selection_digest": binding[
+                        "execution_selection_digest"
+                    ],
+                    "run_ref": binding["run_ref"],
+                    "task_attempt_binding_digest": binding_digest,
+                }
+            )
+            admission_receipt["task_attempt_binding_digest"] = (
+                binding_digest
+            )
+            admission_receipt["request_digest"] = admission[
+                "request_digest"
+            ]
+            admission_receipt["decision_digest"] = admission[
+                "decision_digest"
+            ]
+            admission_receipt["admission_result_digest"] = (
+                admission_result_digest
+            )
+            admission_receipt_body = admission_receipt["receipt"]
+            self.assertIsInstance(admission_receipt_body, dict)
+            assert isinstance(admission_receipt_body, dict)
+            admission_receipt_body["request_digest"] = admission[
+                "request_digest"
+            ]
+            admission_receipt_body["decision_digest"] = admission[
+                "decision_digest"
+            ]
+            admission_receipt_body["result_digest"] = (
+                admission_result_digest
+            )
+            admission_receipt_body["enforced_action_digest"] = (
+                canonical_digest(
+                    {
+                        "action": admission_action,
+                        "resource": admission_resource,
+                    }
+                )
+            )
+            admission_receipt_body["receipt_id"] = canonical_digest(
+                {
+                    "decision_digest": admission["decision_digest"],
+                    "execution_selection_digest": binding[
+                        "execution_selection_digest"
+                    ],
+                    "request_digest": admission["request_digest"],
+                    "task_attempt_binding_digest": binding_digest,
+                    "receipt_kind": "task_admission_action",
+                }
+            )
+            admission_receipt["receipt_digest"] = canonical_digest(
+                admission_receipt_body
+            )
+            persist(
+                admission_receipt_sequence,
+                TASK_ADMISSION_ACTION_RECEIPT_EVENT_TYPE,
+                admission_receipt,
+                event_id=admission_receipt_body["receipt_id"],
+            )
+
+            billing_sequence, billing = event("billing_assessment")
+            del billing_sequence
+            accounting_sequence, accounting = event("execution_accounting")
+            del accounting_sequence
+            dispatch_sequence, dispatch = event(
+                MOCK_DISPATCH_DECISION_EVENT_TYPE
+            )
+            dispatch["task_attempt_binding_digest"] = binding_digest
+            dispatch_request = dispatch["request"]
+            self.assertIsInstance(dispatch_request, dict)
+            assert isinstance(dispatch_request, dict)
+            dispatch_action = dispatch_request["action"]
+            dispatch_resource = dispatch_request["resource"]
+            self.assertIsInstance(dispatch_action, dict)
+            self.assertIsInstance(dispatch_resource, dict)
+            assert isinstance(dispatch_action, dict)
+            assert isinstance(dispatch_resource, dict)
+            dispatch_action["parameters_digest"] = canonical_digest(
+                {
+                    "attempt": binding["attempt"],
+                    "billing_assessment_digest": billing[
+                        "assessment_digest"
+                    ],
+                    "context_digest": binding["context_digest"],
+                    "execution_selection_digest": binding[
+                        "execution_selection_digest"
+                    ],
+                    "output_schema_digest": binding[
+                        "output_schema_digest"
+                    ],
+                    "profile_ref": binding["profile_ref"],
+                    "prompt_digest": binding["prompt_digest"],
+                    "run_ref": binding["run_ref"],
+                    "runner_overrides_digest": binding[
+                        "runner_overrides_digest"
+                    ],
+                    "task_attempt_binding_digest": binding_digest,
+                    "task_authorization_intent_digest": binding[
+                        "authorization_intent_digest"
+                    ],
+                    "task_definition_digest": binding[
+                        "task_definition_digest"
+                    ],
+                    "timeout_seconds": binding["timeout_seconds"],
+                    "workspace_ref": binding["workspace_ref"],
+                }
+            )
+            resign_request(dispatch)
+            persist(
+                dispatch_sequence,
+                MOCK_DISPATCH_DECISION_EVENT_TYPE,
+                dispatch,
+            )
+
+            dispatch_receipt_sequence, dispatch_receipt = event(
+                MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE
+            )
+            dispatch_receipt["task_attempt_binding_digest"] = binding_digest
+            dispatch_receipt["request_digest"] = dispatch["request_digest"]
+            dispatch_receipt["decision_digest"] = dispatch[
+                "decision_digest"
+            ]
+            receipt_body = dispatch_receipt["receipt"]
+            self.assertIsInstance(receipt_body, dict)
+            assert isinstance(receipt_body, dict)
+            receipt_body["request_digest"] = dispatch["request_digest"]
+            receipt_body["decision_digest"] = dispatch["decision_digest"]
+            receipt_body["enforced_action_digest"] = canonical_digest(
+                {
+                    "action": dispatch_action,
+                    "resource": dispatch_resource,
+                }
+            )
+            receipt_body["receipt_id"] = canonical_digest(
+                {
+                    "decision_digest": dispatch["decision_digest"],
+                    "receipt_kind": "mock_dispatch_action",
+                    "request_digest": dispatch["request_digest"],
+                    "task_attempt_binding_digest": binding_digest,
+                }
+            )
+            dispatch_receipt["receipt_digest"] = canonical_digest(
+                receipt_body
+            )
+            persist(
+                dispatch_receipt_sequence,
+                MOCK_DISPATCH_ACTION_RECEIPT_EVENT_TYPE,
+                dispatch_receipt,
+                event_id=receipt_body["receipt_id"],
+            )
+
+            pre_effect_sequence, pre_effect = event(
+                TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE
+            )
+            action_receipt_sequence, action_receipt = event(
+                TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE
+            )
+            publication_sequence, publication = event(
+                LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE
+            )
+            publication["task_attempt_binding_digest"] = binding_digest
+            publication["dispatch_request_digest"] = dispatch[
+                "request_digest"
+            ]
+            publication["dispatch_decision_digest"] = dispatch[
+                "decision_digest"
+            ]
+            publication["dispatch_action_receipt_digest"] = (
+                dispatch_receipt["receipt_digest"]
+            )
+            publication_request = publication["request"]
+            self.assertIsInstance(publication_request, dict)
+            assert isinstance(publication_request, dict)
+            publication_action = publication_request["action"]
+            publication_resource = publication_request["resource"]
+            self.assertIsInstance(publication_action, dict)
+            self.assertIsInstance(publication_resource, dict)
+            assert isinstance(publication_action, dict)
+            assert isinstance(publication_resource, dict)
+            publication_action["parameters_digest"] = canonical_digest(
+                {
+                    "artifact_digest": publication["artifact_digest"],
+                    "artifact_kind": pre_effect["artifact_kind"],
+                    "artifact_metadata_digest": publication[
+                        "artifact_metadata_digest"
+                    ],
+                    "artifact_size_bytes": pre_effect[
+                        "artifact_size_bytes"
+                    ],
+                    "billing_disposition_digest": accounting[
+                        "billing_disposition_digest"
+                    ],
+                    "controller_owned_mock_runner": True,
+                    "credential_scan_passed": True,
+                    "destination_digest": publication[
+                        "destination_digest"
+                    ],
+                    "dispatch_action_receipt_digest": dispatch_receipt[
+                        "receipt_digest"
+                    ],
+                    "dispatch_decision_digest": dispatch[
+                        "decision_digest"
+                    ],
+                    "dispatch_request_digest": dispatch["request_digest"],
+                    "evaluation_accepted": True,
+                    "execution_accounting_digest": canonical_digest(
+                        accounting
+                    ),
+                    "execution_selection_digest": binding[
+                        "execution_selection_digest"
+                    ],
+                    "legacy_permission_class": permission_class,
+                    "output_schema_digest": binding[
+                        "output_schema_digest"
+                    ],
+                    "profile_ref": binding["profile_ref"],
+                    "publication_authorization_intent_digest": publication[
+                        "publication_authorization_intent_digest"
+                    ],
+                    "repository_ref": binding["repository_ref"],
+                    "run_ref": binding["run_ref"],
+                    "safe_publication_prerequisites": True,
+                    "task_attempt_binding_digest": binding_digest,
+                    "task_authorization_intent_digest": binding[
+                        "authorization_intent_digest"
+                    ],
+                    "task_definition_digest": binding[
+                        "task_definition_digest"
+                    ],
+                    "workspace_ref": binding["workspace_ref"],
+                }
+            )
+            resign_request(publication)
+            persist(
+                publication_sequence,
+                LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+                publication,
+            )
+            publication_event_id = canonical_digest(
+                {
+                    "event_type": (
+                        LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE
+                    ),
+                    "payload": publication,
+                    "run_id": run_id,
+                }
+            )
+
+            shadow_rows = connection.execute(
+                """
+                SELECT sequence, payload_json
+                FROM run_events
+                WHERE event_type = 'authorization_shadow_decision'
+                ORDER BY sequence
+                """
+            ).fetchall()
+            publication_shadow: dict[str, object] | None = None
+            for shadow_sequence, raw_shadow in shadow_rows:
+                shadow = json.loads(raw_shadow)
+                scope = shadow["action_scope"]
+                shadow["task_attempt_binding_digest"] = binding_digest
+                shadow_request = shadow["request"]
+                self.assertIsInstance(shadow_request, dict)
+                assert isinstance(shadow_request, dict)
+                shadow_action = shadow_request["action"]
+                self.assertIsInstance(shadow_action, dict)
+                assert isinstance(shadow_action, dict)
+                if scope == ADMISSION_SCOPE:
+                    parameters = {
+                        "context_digest": binding["context_digest"],
+                        "execution_selection_digest": binding[
+                            "execution_selection_digest"
+                        ],
+                        "prompt_digest": binding["prompt_digest"],
+                        "task_attempt_binding_digest": binding_digest,
+                    }
+                elif scope == DISPATCH_SCOPE:
+                    parameters = {
+                        "attempt": binding["attempt"],
+                        "billing_assessment_digest": billing[
+                            "assessment_digest"
+                        ],
+                        "context_digest": binding["context_digest"],
+                        "execution_selection_digest": binding[
+                            "execution_selection_digest"
+                        ],
+                        "prompt_digest": binding["prompt_digest"],
+                        "runner_overrides_digest": binding[
+                            "runner_overrides_digest"
+                        ],
+                        "task_attempt_binding_digest": binding_digest,
+                        "timeout_seconds": binding["timeout_seconds"],
+                    }
+                else:
+                    billing_disposition = {
+                        "billing_disposition_digest": accounting[
+                            "billing_disposition_digest"
+                        ],
+                        "billing_matches": accounting["billing_matches"],
+                        "capacity_state": accounting["capacity_state"],
+                        "circuit_breaker_required": accounting[
+                            "billing_circuit_breaker_required"
+                        ],
+                        "identity_matches": accounting["identity_matches"],
+                        "incremental_ai_charge": accounting[
+                            "incremental_ai_charge"
+                        ],
+                        "paid_capacity_consumed": accounting[
+                            "paid_capacity_consumed"
+                        ],
+                        "quarantine_required": accounting[
+                            "billing_quarantine_required"
+                        ],
+                        "reason_codes": accounting[
+                            "billing_disposition_reason_codes"
+                        ],
+                    }
+                    parameters = {
+                        "artifact_digest": pre_effect["artifact_digest"],
+                        "artifact_kind": pre_effect["artifact_kind"],
+                        "artifact_size_bytes": pre_effect[
+                            "artifact_size_bytes"
+                        ],
+                        "billing_disposition": billing_disposition,
+                        "credential_scan_passed": pre_effect[
+                            "credential_scan_passed"
+                        ],
+                        "destination_digest": pre_effect[
+                            "destination_digest"
+                        ],
+                        "evaluation_accepted": pre_effect[
+                            "evaluation_accepted"
+                        ],
+                        "task_attempt_binding_digest": binding_digest,
+                    }
+                    publication_shadow = shadow
+                shadow_action["parameters_digest"] = canonical_digest(
+                    {
+                        "action_scope": scope,
+                        "intent_digest": shadow["intent_digest"],
+                        "intent_source": shadow["intent_source"],
+                        "legacy_permission_class": permission_class,
+                        "output_schema_digest": binding[
+                            "output_schema_digest"
+                        ],
+                        "parameters": parameters,
+                        "profile_ref": binding["profile_ref"],
+                        "runner_id": binding["runner_id"],
+                        "task_definition_digest": binding[
+                            "task_definition_digest"
+                        ],
+                        "task_id": task_id,
+                        "task_version": task_version,
+                    }
+                )
+                resign_request(shadow)
+                persist(
+                    int(shadow_sequence),
+                    "authorization_shadow_decision",
+                    shadow,
+                )
+
+            self.assertIsNotNone(publication_shadow)
+            assert publication_shadow is not None
+            pre_effect["task_attempt_binding_digest"] = binding_digest
+            pre_effect["publication_shadow_request_digest"] = (
+                publication_shadow["request_digest"]
+            )
+            pre_effect["publication_shadow_decision_digest"] = (
+                publication_shadow["decision_digest"]
+            )
+            pre_effect["publication_authorization_event_id"] = (
+                publication_event_id
+            )
+            pre_effect["publication_request_digest"] = publication[
+                "request_digest"
+            ]
+            pre_effect["publication_decision_digest"] = publication[
+                "decision_digest"
+            ]
+            pre_effect["action_digest"] = canonical_digest(
+                {
+                    "action": publication_action,
+                    "resource": publication_resource,
+                }
+            )
+            self._resign_receipt(pre_effect)
+            persist(
+                pre_effect_sequence,
+                TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
+                pre_effect,
+                event_id=pre_effect["receipt_digest"],
+            )
+
+            action_receipt["task_attempt_binding_digest"] = binding_digest
+            action_receipt["pre_effect_receipt_digest"] = pre_effect[
+                "receipt_digest"
+            ]
+            action_receipt["publication_shadow_request_digest"] = (
+                publication_shadow["request_digest"]
+            )
+            action_receipt["publication_shadow_decision_digest"] = (
+                publication_shadow["decision_digest"]
+            )
+            action_receipt["publication_authorization_event_id"] = (
+                publication_event_id
+            )
+            action_receipt["publication_request_digest"] = publication[
+                "request_digest"
+            ]
+            action_receipt["publication_decision_digest"] = publication[
+                "decision_digest"
+            ]
+            action_receipt["action_digest"] = pre_effect["action_digest"]
+            enforcement_receipt = action_receipt["enforcement_receipt"]
+            self.assertIsInstance(enforcement_receipt, dict)
+            assert isinstance(enforcement_receipt, dict)
+            enforcement_receipt["request_digest"] = publication[
+                "request_digest"
+            ]
+            enforcement_receipt["decision_digest"] = publication[
+                "decision_digest"
+            ]
+            enforcement_receipt["enforced_action_digest"] = pre_effect[
+                "action_digest"
+            ]
+            enforcement_receipt["receipt_id"] = canonical_digest(
+                {
+                    "decision_digest": publication["decision_digest"],
+                    "destination_digest": publication[
+                        "destination_digest"
+                    ],
+                    "receipt_kind": (
+                        "local_candidate_publication_action"
+                    ),
+                    "request_digest": publication["request_digest"],
+                    "task_attempt_binding_digest": binding_digest,
+                }
+            )
+            action_receipt["enforcement_receipt_digest"] = canonical_digest(
+                enforcement_receipt
+            )
+            action_receipt["receipt_id"] = canonical_digest(
+                {
+                    "destination_digest": action_receipt[
+                        "destination_digest"
+                    ],
+                    "pre_effect_receipt_digest": pre_effect[
+                        "receipt_digest"
+                    ],
+                    "task_attempt_binding_digest": binding_digest,
+                }
+            )
+            self._resign_receipt(action_receipt)
+            persist(
+                action_receipt_sequence,
+                TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
+                action_receipt,
+                event_id=action_receipt["receipt_id"],
+            )
+            self._restore_run_event_mutation_triggers(connection)
+            connection.commit()
+        finally:
+            connection.close()
+
     def _downgrade_mock_history_to_schema3(self, database: Path) -> None:
         """Reconstruct the exact pre-publication-enforcement receipt chain."""
 
@@ -1177,6 +1835,7 @@ class AuthorizationInspectionTests(unittest.TestCase):
     def _downgrade_mock_history_to_schema4(self, database: Path) -> None:
         """Reconstruct the exact pre-admission-enforcement receipt chain."""
 
+        self._downgrade_mock_history_to_schema5(database)
         connection = sqlite3.connect(database)
         try:
             self._drop_run_event_mutation_triggers(connection)
@@ -4118,6 +4777,230 @@ class AuthorizationInspectionTests(unittest.TestCase):
             self.assertNotIn(
                 str(root),
                 json.dumps(report.to_mapping(), sort_keys=True),
+            )
+
+    def test_schema_v6_enforcement_replay_does_not_use_admission_shadow_intent(
+        self,
+    ) -> None:
+        for case in ("missing", "conflicting"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                _, database = self._run_profile_backed_mock(
+                    temporary,
+                    run_id=f"inspect-v6-shadow-{case}",
+                )
+                private_marker = "private_lineage_shadow_marker"
+                connection = sqlite3.connect(database)
+                try:
+                    self._drop_run_event_mutation_triggers(connection)
+                    if case == "missing":
+                        connection.execute(
+                            """
+                            DELETE FROM run_events
+                            WHERE event_type = 'authorization_shadow_decision'
+                              AND json_extract(
+                                  payload_json,
+                                  '$.action_scope'
+                              ) = ?
+                            """,
+                            (ADMISSION_SCOPE,),
+                        )
+                    else:
+                        row = connection.execute(
+                            """
+                            SELECT sequence, payload_json
+                            FROM run_events
+                            WHERE event_type = 'authorization_shadow_decision'
+                              AND json_extract(
+                                  payload_json,
+                                  '$.action_scope'
+                              ) = ?
+                            """,
+                            (ADMISSION_SCOPE,),
+                        ).fetchone()
+                        self.assertIsNotNone(row)
+                        assert row is not None
+                        payload = json.loads(row[1])
+                        payload["task_authorization_intent"]["action"][
+                            "operation"
+                        ] = private_marker
+                        connection.execute(
+                            """
+                            UPDATE run_events
+                            SET payload_json = ?
+                            WHERE sequence = ?
+                            """,
+                            (json.dumps(payload, sort_keys=True), row[0]),
+                        )
+                    self._restore_run_event_mutation_triggers(connection)
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                report = inspect_authorization_shadows(database)
+                self.assertFalse(report.clean)
+                run = report.runs[0]
+                self.assertEqual(
+                    run.mock_dispatch_enforcement.integrity_issues,
+                    (),
+                )
+                self.assertEqual(
+                    run.local_candidate_publication_enforcement.integrity_issues,
+                    (),
+                )
+                self.assertNotIn(
+                    private_marker,
+                    json.dumps(report.to_mapping(), sort_keys=True),
+                )
+
+    def test_schema_v6_binding_lineage_tampering_is_fixed_and_redacted(
+        self,
+    ) -> None:
+        for case in (
+            "invalid-source",
+            "unhashable-source",
+            "boolean-schema",
+            "unhashable-intent-enum",
+            "intent-digest",
+        ):
+            with (
+                self.subTest(case=case),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                _, database = self._run_profile_backed_mock(
+                    temporary,
+                    run_id=f"inspect-v6-lineage-{case}",
+                )
+                private_marker = "private_lineage_source_marker"
+                connection = sqlite3.connect(database)
+                try:
+                    self._drop_run_event_mutation_triggers(connection)
+                    row = connection.execute(
+                        """
+                        SELECT sequence, payload_json
+                        FROM run_events
+                        WHERE event_type = ?
+                        """,
+                        (TASK_ATTEMPT_BINDING_EVENT_TYPE,),
+                    ).fetchone()
+                    self.assertIsNotNone(row)
+                    assert row is not None
+                    payload = json.loads(row[1])
+                    binding = payload["binding"]
+                    lineage = binding["authorization_intent_lineage"]
+                    if case == "invalid-source":
+                        lineage["intent_source"] = private_marker
+                    elif case == "unhashable-source":
+                        lineage["intent_source"] = [private_marker]
+                    elif case == "boolean-schema":
+                        lineage["schema_version"] = True
+                    elif case == "unhashable-intent-enum":
+                        lineage["task_authorization_intent"]["resource"][
+                            "sensitivity"
+                        ] = {"marker": private_marker}
+                    else:
+                        lineage["task_authorization_intent"]["resource"][
+                            "protected"
+                        ] = True
+                    binding["authorization_intent_lineage_digest"] = (
+                        canonical_digest(lineage)
+                    )
+                    payload["binding_digest"] = canonical_digest(binding)
+                    connection.execute(
+                        """
+                        UPDATE run_events
+                        SET event_id = ?, payload_json = ?
+                        WHERE sequence = ?
+                        """,
+                        (
+                            payload["binding_digest"],
+                            json.dumps(payload, sort_keys=True),
+                            row[0],
+                        ),
+                    )
+                    self._restore_run_event_mutation_triggers(connection)
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                report = inspect_authorization_shadows(database)
+                projection = json.dumps(report.to_mapping(), sort_keys=True)
+                self.assertFalse(report.clean)
+                self.assertIn(
+                    "task_binding_authorization_intent_lineage_invalid",
+                    report.runs[0].integrity_issues,
+                )
+                self.assertNotIn(private_marker, projection)
+
+    def test_unhashable_task_binding_schema_is_fixed_and_redacted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            _, database = self._run_profile_backed_mock(
+                temporary,
+                run_id="inspect-unhashable-task-binding-schema",
+            )
+            private_marker = "private_binding_schema_marker"
+            connection = sqlite3.connect(database)
+            try:
+                self._drop_run_event_mutation_triggers(connection)
+                row = connection.execute(
+                    """
+                    SELECT sequence, payload_json
+                    FROM run_events
+                    WHERE event_type = ?
+                    """,
+                    (TASK_ATTEMPT_BINDING_EVENT_TYPE,),
+                ).fetchone()
+                self.assertIsNotNone(row)
+                assert row is not None
+                payload = json.loads(row[1])
+                payload["schema_version"] = [private_marker]
+                connection.execute(
+                    """
+                    UPDATE run_events
+                    SET payload_json = ?
+                    WHERE sequence = ?
+                    """,
+                    (json.dumps(payload, sort_keys=True), row[0]),
+                )
+                self._restore_run_event_mutation_triggers(connection)
+                connection.commit()
+            finally:
+                connection.close()
+
+            report = inspect_authorization_shadows(database)
+            projection = json.dumps(report.to_mapping(), sort_keys=True)
+            self.assertFalse(report.clean)
+            self.assertIn(
+                "task_binding_payload_invalid",
+                report.runs[0].integrity_issues,
+            )
+            self.assertNotIn(private_marker, projection)
+
+    def test_schema_v5_mock_history_keeps_frozen_shadow_assisted_semantics(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            _, database = self._run_profile_backed_mock(
+                temporary,
+                run_id="inspect-historical-schema5",
+            )
+            self._downgrade_mock_history_to_schema5(database)
+
+            report = inspect_authorization_shadows(database)
+
+            self.assertTrue(report.clean, report.to_mapping())
+            run = report.runs[0]
+            self.assertTrue(run.task_admission_enforcement.required)
+            self.assertTrue(run.mock_dispatch_enforcement.required)
+            self.assertTrue(
+                run.local_candidate_publication_enforcement.required
+            )
+            self.assertEqual(
+                run.mock_dispatch_enforcement.integrity_issues,
+                (),
+            )
+            self.assertEqual(
+                run.local_candidate_publication_enforcement.integrity_issues,
+                (),
             )
 
     def test_task_admission_decision_and_receipt_cardinality_is_enforced(

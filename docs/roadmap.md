@@ -46,8 +46,9 @@ of Staff task contract has explicit typed action/resource/consequence intent,
 and the run path records non-authoritative observations at admission, dispatch
 intent, and local-candidate publication. A read-only inspector recomputes
 digests, authenticated evidence freshness, legacy and authority-ceiling parity,
-and boundary coverage/order. New schema-v5 exact-mock attempts add admission
-enforcement while retaining schema-v4's dispatch and publication chains,
+and boundary coverage/order. Current schema-v6 exact-mock attempts retain
+schema-v5 admission enforcement and schema-v4's dispatch and publication chains
+while adding bounded canonical task-intent lineage to the authoritative binding,
 including schema-v2 execution accounting, a schema-v5 publication shadow, a
 separate publication decision, and schema-v3 enforcing pre-effect/action
 receipts. Schema-v1-v3 paths retain schema-v2 non-enforcing publication
@@ -57,7 +58,8 @@ binding, schema-v3 Class 0 admission/dispatch shadows, and a separate schema-v4
 Class 1 private-publication shadow with schema-v2 pre-effect/action receipts.
 Profile-backed ordinary attempts also append a required, content-addressed
 execution-selection event before their task binding. New exact built-in-mock
-attempts use schema v5; frozen schema v4 means dispatch plus publication,
+attempts use schema v6; frozen schema v5 retains all three enforcement chains
+without self-contained lineage, schema v4 means dispatch plus publication,
 historical dispatch-only mock attempts use schema v3, and live or historical
 selected attempts use schema v2.
 It fixes the
@@ -87,9 +89,12 @@ attempt. The
 publication PEP independently binds the succeeded dispatch and accounting,
 persists its own decision and pre-effect record, rechecks at the first staging
 mutation, and uses the reconciled filesystem receipt as its action receipt.
-This uses the existing event and schema-v5 binding formats: dispatch remains
-limited to Class 0/1 requests for the exact profile-backed controller-owned
-`MockRunner`, and new attempts still require Class 1 admission.
+Schema v6 now commits a bounded canonical task-intent lineage in the binding.
+The final dispatch PEP requires exact equality with the current resolved intent,
+and read-only inspection replays v6 without a shadow preimage. The decision and
+receipt schemas remain unchanged: dispatch remains limited to Class 0/1 requests
+for the exact profile-backed controller-owned `MockRunner`, and new attempts
+still require Class 1 admission.
 General runtime ABAC enforcement is not implemented. This phase remains a
 prerequisite for adding a worker-dispatch path or repository worker with new
 mediated capabilities. A
@@ -100,9 +105,14 @@ parallel because it cannot exercise worker authority.
   resources, mediated commands/tools, and controller bookkeeping actions.
 - Extend the implemented deterministic shadow evaluator from its focused Class
   0/1/adversarial fixtures to parity with every current allow and deny path.
-- Make authoritative dispatch intent lineage self-contained for read-only
-  replay without depending on non-authoritative shadow preimages, before any
-  permission expansion.
+- Preserve the implemented schema-v6 authoritative dispatch intent lineage and
+  its shadow-independent read-only replay; schema-v1 through v5 histories retain
+  their frozen meanings.
+- Next, thread the existing v6 lineage and shipped-resolver equality through the
+  owner-private local-candidate publication runtime PEP and final pre-mutation
+  replay, with exact binding readback. The publication request-projection
+  inspector already replays that preimage from the binding; do not create
+  another lineage or widen the Class 1 local-only effect.
 - Extend the three durable enforcing decision/action-receipt chains beyond the
   narrow profile-backed built-in-mock admission, dispatch, and publication
   boundaries only after semantics and parity stabilize.

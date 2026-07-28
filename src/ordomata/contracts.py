@@ -158,7 +158,7 @@ class TaskResourceIntent:
 
 @dataclass(frozen=True, slots=True)
 class TaskAuthorizationIntent:
-    """Explicit task-effect attributes consumed by the shadow ABAC bridge.
+    """Explicit task-effect attributes consumed by controller ABAC projections.
 
     Exact identifiers, versions, content digests, environment evidence, and
     enforcement-point scope remain controller-owned runtime facts.
