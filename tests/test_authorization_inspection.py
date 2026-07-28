@@ -17,7 +17,12 @@ from ordomata.authorization_inspection import (
     COMPARISON_FULL_SHADOW_COVERAGE,
     COMPARISON_REVIEW_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
     DISPATCH_SCOPE,
+    LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
     PUBLICATION_SCOPE,
+    TASK_ATTEMPT_BINDING_EVENT_TYPE,
+    TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
+    TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
+    TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
     _task_billing_policy_consistent,
     inspect_authorization_shadows,
 )
@@ -929,6 +934,179 @@ class AuthorizationInspectionTests(unittest.TestCase):
     def _resign_receipt(payload: dict[str, object]) -> None:
         payload.pop("receipt_digest", None)
         payload["receipt_digest"] = canonical_digest(payload)
+
+    @staticmethod
+    def _drop_run_event_mutation_triggers(
+        connection: sqlite3.Connection,
+    ) -> None:
+        connection.execute("DROP TRIGGER run_events_no_update")
+        connection.execute("DROP TRIGGER run_events_no_delete")
+
+    @staticmethod
+    def _restore_run_event_mutation_triggers(
+        connection: sqlite3.Connection,
+    ) -> None:
+        connection.execute(
+            """
+            CREATE TRIGGER run_events_no_update
+            BEFORE UPDATE ON run_events BEGIN
+                SELECT RAISE(ABORT, 'run events are append-only');
+            END
+            """
+        )
+        connection.execute(
+            """
+            CREATE TRIGGER run_events_no_delete
+            BEFORE DELETE ON run_events BEGIN
+                SELECT RAISE(ABORT, 'run events are append-only');
+            END
+            """
+        )
+
+    def _downgrade_mock_history_to_schema3(self, database: Path) -> None:
+        """Reconstruct the exact pre-publication-enforcement receipt chain."""
+
+        connection = sqlite3.connect(database)
+        try:
+            self._drop_run_event_mutation_triggers(connection)
+            binding_row = connection.execute(
+                "SELECT payload_json FROM run_events WHERE event_type = ?",
+                (TASK_ATTEMPT_BINDING_EVENT_TYPE,),
+            ).fetchone()
+            self.assertIsNotNone(binding_row)
+            binding_payload = json.loads(binding_row[0])
+            binding_payload["schema_version"] = 3
+            binding_payload.pop(
+                "publication_authorization_enforcement_coverage"
+            )
+            connection.execute(
+                "UPDATE run_events SET payload_json = ? WHERE event_type = ?",
+                (
+                    json.dumps(binding_payload, sort_keys=True),
+                    TASK_ATTEMPT_BINDING_EVENT_TYPE,
+                ),
+            )
+
+            shadow_row = connection.execute(
+                """
+                SELECT payload_json
+                FROM run_events
+                WHERE event_type = 'authorization_shadow_decision'
+                  AND json_extract(payload_json, '$.action_scope') = ?
+                """,
+                (PUBLICATION_SCOPE,),
+            ).fetchone()
+            self.assertIsNotNone(shadow_row)
+            shadow = json.loads(shadow_row[0])
+            shadow_request = shadow["request"]
+            shadow_decision = shadow["decision"]
+            shadow_action_digest = canonical_digest(
+                {
+                    "action": shadow_request["action"],
+                    "resource": shadow_request["resource"],
+                }
+            )
+
+            pre_row = connection.execute(
+                "SELECT payload_json FROM run_events WHERE event_type = ?",
+                (TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,),
+            ).fetchone()
+            action_row = connection.execute(
+                "SELECT payload_json FROM run_events WHERE event_type = ?",
+                (TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,),
+            ).fetchone()
+            self.assertIsNotNone(pre_row)
+            self.assertIsNotNone(action_row)
+            pre_effect = json.loads(pre_row[0])
+            action_receipt = json.loads(action_row[0])
+            for payload in (pre_effect, action_receipt):
+                payload["schema_version"] = 2
+                payload["mode"] = "shadow"
+                payload["authorization_enforced"] = False
+                payload["authority_basis"] = "legacy_permission_class_gate"
+                payload["publication_request_digest"] = shadow[
+                    "request_digest"
+                ]
+                payload["publication_decision_digest"] = shadow[
+                    "decision_digest"
+                ]
+                payload["action_digest"] = shadow_action_digest
+                for key in (
+                    "publication_authorization_event_id",
+                    "publication_enforcement_coverage",
+                    "publication_shadow_decision_digest",
+                    "publication_shadow_request_digest",
+                ):
+                    payload.pop(key)
+
+            self._resign_receipt(pre_effect)
+            action_receipt["pre_effect_receipt_digest"] = pre_effect[
+                "receipt_digest"
+            ]
+            action_receipt.pop("effect_started_at")
+            action_receipt.pop("enforcement_receipt")
+            action_receipt.pop("enforcement_receipt_digest")
+            obligation_results = [
+                {
+                    "kind": obligation["kind"],
+                    "satisfied": True,
+                    "value_digest": canonical_digest(
+                        {"value": obligation["value"]}
+                    ),
+                }
+                for obligation in shadow_decision["obligations"]
+            ]
+            obligation_results.sort(
+                key=lambda item: (item["kind"], item["value_digest"])
+            )
+            action_receipt["obligation_results"] = obligation_results
+            action_receipt["receipt_id"] = canonical_digest(
+                {
+                    "destination_digest": action_receipt[
+                        "destination_digest"
+                    ],
+                    "pre_effect_receipt_digest": pre_effect[
+                        "receipt_digest"
+                    ],
+                    "task_attempt_binding_digest": action_receipt[
+                        "task_attempt_binding_digest"
+                    ],
+                }
+            )
+            self._resign_receipt(action_receipt)
+
+            connection.execute(
+                """
+                UPDATE run_events
+                SET event_id = ?, payload_json = ?
+                WHERE event_type = ?
+                """,
+                (
+                    pre_effect["receipt_digest"],
+                    json.dumps(pre_effect, sort_keys=True),
+                    TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE run_events
+                SET event_id = ?, payload_json = ?
+                WHERE event_type = ?
+                """,
+                (
+                    action_receipt["receipt_id"],
+                    json.dumps(action_receipt, sort_keys=True),
+                    TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
+                ),
+            )
+            connection.execute(
+                "DELETE FROM run_events WHERE event_type = ?",
+                (LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,),
+            )
+            self._restore_run_event_mutation_triggers(connection)
+            connection.commit()
+        finally:
+            connection.close()
 
     def _resign_publication_chain(
         self,
@@ -3790,7 +3968,7 @@ class AuthorizationInspectionTests(unittest.TestCase):
             report = inspect_authorization_shadows(database)
             self.assertTrue(report.clean, report.to_mapping())
             self.assertEqual(len(report.runs), 1)
-            self.assertEqual(report.inspected_event_count, 5)
+            self.assertEqual(report.inspected_event_count, 6)
             run = report.runs[0]
             self.assertEqual(
                 run.authorization_enforcement_coverage,
@@ -3806,9 +3984,548 @@ class AuthorizationInspectionTests(unittest.TestCase):
             self.assertEqual(enforcement.action_receipt_outcome, "succeeded")
             self.assertTrue(enforcement.permit_current_at_action_start)
             self.assertEqual(enforcement.integrity_issues, ())
+            self.assertEqual(
+                run.publication_authorization_enforcement_coverage,
+                TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
+            )
+            publication = run.local_candidate_publication_enforcement
+            self.assertTrue(publication.required)
+            self.assertTrue(publication.boundary_observed)
+            self.assertTrue(publication.decision_observed)
+            self.assertEqual(publication.effect, "permit")
+            self.assertTrue(publication.authorization_eligible)
+            self.assertTrue(publication.decision_current_at_evaluation)
+            self.assertTrue(publication.pre_effect_observed)
+            self.assertTrue(publication.action_receipt_observed)
+            self.assertEqual(publication.action_receipt_outcome, "succeeded")
+            self.assertTrue(publication.permit_current_at_effect_start)
+            self.assertEqual(publication.integrity_issues, ())
             self.assertNotIn(
                 str(root),
                 json.dumps(report.to_mapping(), sort_keys=True),
+            )
+
+    def test_schema_v3_mock_history_remains_clean_without_publication_gate(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            _, database = self._run_profile_backed_mock(
+                temporary,
+                run_id="inspect-historical-schema3",
+            )
+            connection = sqlite3.connect(database)
+            try:
+                decision_row = connection.execute(
+                    """
+                    SELECT run_id, payload_json, occurred_at
+                    FROM run_events
+                    WHERE event_type = ?
+                    """,
+                    (LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,),
+                ).fetchone()
+                self.assertIsNotNone(decision_row)
+            finally:
+                connection.close()
+            self._downgrade_mock_history_to_schema3(database)
+
+            report = inspect_authorization_shadows(database)
+
+            self.assertTrue(report.clean, report.to_mapping())
+            self.assertEqual(report.inspected_event_count, 5)
+            run = report.runs[0]
+            self.assertIsNone(
+                run.publication_authorization_enforcement_coverage
+            )
+            publication = run.local_candidate_publication_enforcement
+            self.assertFalse(publication.required)
+            self.assertFalse(publication.decision_observed)
+            self.assertTrue(publication.pre_effect_observed)
+            self.assertTrue(publication.action_receipt_observed)
+            self.assertEqual(publication.integrity_issues, ())
+
+            connection = sqlite3.connect(database)
+            try:
+                decision_payload = json.loads(decision_row[1])
+                connection.execute(
+                    """
+                    INSERT INTO run_events (
+                        event_id,
+                        run_id,
+                        event_type,
+                        status,
+                        payload_json,
+                        occurred_at
+                    ) VALUES (?, ?, ?, NULL, ?, ?)
+                    """,
+                    (
+                        canonical_digest(
+                            {
+                                "event_type": (
+                                    LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE
+                                ),
+                                "payload": decision_payload,
+                                "run_id": decision_row[0],
+                            }
+                        ),
+                        decision_row[0],
+                        LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+                        decision_row[1],
+                        decision_row[2],
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            report = inspect_authorization_shadows(database)
+            self.assertFalse(report.clean)
+            self.assertIn(
+                "local_candidate_publication_decision_unexpected",
+                report.runs[0].integrity_issues,
+            )
+
+    def test_schema_v4_publication_shadow_is_optional_but_bound_if_present(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            _, database = self._run_profile_backed_mock(
+                temporary,
+                run_id="inspect-publication-shadow-optional",
+            )
+            connection = sqlite3.connect(database)
+            try:
+                self._drop_run_event_mutation_triggers(connection)
+                connection.execute(
+                    """
+                    DELETE FROM run_events
+                    WHERE event_type = 'authorization_shadow_decision'
+                      AND json_extract(payload_json, '$.action_scope') = ?
+                    """,
+                    (PUBLICATION_SCOPE,),
+                )
+                pre_row = connection.execute(
+                    "SELECT payload_json FROM run_events WHERE event_type = ?",
+                    (TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,),
+                ).fetchone()
+                action_row = connection.execute(
+                    "SELECT payload_json FROM run_events WHERE event_type = ?",
+                    (TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,),
+                ).fetchone()
+                self.assertIsNotNone(pre_row)
+                self.assertIsNotNone(action_row)
+                pre_effect = json.loads(pre_row[0])
+                action_receipt = json.loads(action_row[0])
+                pre_effect["publication_shadow_persisted"] = False
+                self._resign_receipt(pre_effect)
+                action_receipt["publication_shadow_persisted"] = False
+                action_receipt["pre_effect_receipt_digest"] = pre_effect[
+                    "receipt_digest"
+                ]
+                action_receipt["receipt_id"] = canonical_digest(
+                    {
+                        "destination_digest": action_receipt[
+                            "destination_digest"
+                        ],
+                        "pre_effect_receipt_digest": pre_effect[
+                            "receipt_digest"
+                        ],
+                        "task_attempt_binding_digest": action_receipt[
+                            "task_attempt_binding_digest"
+                        ],
+                    }
+                )
+                self._resign_receipt(action_receipt)
+                connection.execute(
+                    """
+                    UPDATE run_events
+                    SET event_id = ?, payload_json = ?
+                    WHERE event_type = ?
+                    """,
+                    (
+                        pre_effect["receipt_digest"],
+                        json.dumps(pre_effect, sort_keys=True),
+                        TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE,
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE run_events
+                    SET event_id = ?, payload_json = ?
+                    WHERE event_type = ?
+                    """,
+                    (
+                        action_receipt["receipt_id"],
+                        json.dumps(action_receipt, sort_keys=True),
+                        TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
+                    ),
+                )
+                self._restore_run_event_mutation_triggers(connection)
+                connection.commit()
+            finally:
+                connection.close()
+
+            report = inspect_authorization_shadows(database)
+            self.assertTrue(report.clean, report.to_mapping())
+            run = report.runs[0]
+            self.assertNotIn(PUBLICATION_SCOPE, run.expected_scopes)
+            self.assertNotIn(PUBLICATION_SCOPE, run.observed_scopes)
+            self.assertEqual(
+                run.local_candidate_publication_enforcement.integrity_issues,
+                (),
+            )
+
+    def test_publication_decision_cardinality_is_enforced(self) -> None:
+        for case, expected_issue in (
+            (
+                "missing",
+                "local_candidate_publication_decision_missing",
+            ),
+            (
+                "duplicate",
+                "local_candidate_publication_decision_duplicate",
+            ),
+        ):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                _, database = self._run_profile_backed_mock(
+                    temporary,
+                    run_id=f"inspect-publication-{case}",
+                )
+                connection = sqlite3.connect(database)
+                try:
+                    row = connection.execute(
+                        """
+                        SELECT run_id, payload_json, occurred_at
+                        FROM run_events
+                        WHERE event_type = ?
+                        """,
+                        (LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,),
+                    ).fetchone()
+                    self.assertIsNotNone(row)
+                    if case == "missing":
+                        self._drop_run_event_mutation_triggers(connection)
+                        connection.execute(
+                            "DELETE FROM run_events WHERE event_type = ?",
+                            (
+                                LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+                            ),
+                        )
+                    else:
+                        connection.execute(
+                            """
+                            INSERT INTO run_events (
+                                event_id,
+                                run_id,
+                                event_type,
+                                status,
+                                payload_json,
+                                occurred_at
+                            ) VALUES (?, ?, ?, NULL, ?, ?)
+                            """,
+                            (
+                                canonical_digest(
+                                    {"duplicate_publication": case}
+                                ),
+                                row[0],
+                                LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+                                row[1],
+                                row[2],
+                            ),
+                        )
+                    if case == "missing":
+                        self._restore_run_event_mutation_triggers(connection)
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                report = inspect_authorization_shadows(database)
+                self.assertFalse(report.clean)
+                self.assertIn(
+                    expected_issue,
+                    report.runs[0].integrity_issues,
+                )
+
+    def test_publication_decision_semantic_tampering_is_redacted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            _, database = self._run_profile_backed_mock(
+                temporary,
+                run_id="inspect-publication-semantic-tamper",
+            )
+            private_marker = "private-publication-owner-marker"
+            connection = sqlite3.connect(database)
+            try:
+                self._drop_run_event_mutation_triggers(connection)
+                row = connection.execute(
+                    """
+                    SELECT run_id, payload_json
+                    FROM run_events
+                    WHERE event_type = ?
+                    """,
+                    (LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,),
+                ).fetchone()
+                self.assertIsNotNone(row)
+                payload = json.loads(row[1])
+                payload["request"]["resource"]["owner"] = private_marker
+                payload["request_digest"] = canonical_digest(
+                    payload["request"]
+                )
+                payload["decision"]["request_digest"] = payload[
+                    "request_digest"
+                ]
+                payload["decision_digest"] = canonical_digest(
+                    payload["decision"]
+                )
+                event_id = canonical_digest(
+                    {
+                        "event_type": (
+                            LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE
+                        ),
+                        "payload": payload,
+                        "run_id": row[0],
+                    }
+                )
+                connection.execute(
+                    """
+                    UPDATE run_events
+                    SET event_id = ?, payload_json = ?
+                    WHERE event_type = ?
+                    """,
+                    (
+                        event_id,
+                        json.dumps(payload, sort_keys=True),
+                        LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+                    ),
+                )
+                self._restore_run_event_mutation_triggers(connection)
+                connection.commit()
+            finally:
+                connection.close()
+
+            report = inspect_authorization_shadows(database)
+            projection = json.dumps(report.to_mapping(), sort_keys=True)
+            self.assertFalse(report.clean)
+            self.assertIn(
+                "local_candidate_publication_request_binding_mismatch",
+                report.runs[0].integrity_issues,
+            )
+            self.assertNotIn(private_marker, projection)
+
+    def test_publication_decision_order_and_upstream_links_are_enforced(
+        self,
+    ) -> None:
+        for case, expected_issue in (
+            (
+                "order",
+                "local_candidate_publication_decision_order_invalid",
+            ),
+            (
+                "accounting",
+                "local_candidate_publication_decision_binding_mismatch",
+            ),
+        ):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                _, database = self._run_profile_backed_mock(
+                    temporary,
+                    run_id=f"inspect-publication-{case}",
+                )
+                connection = sqlite3.connect(database)
+                try:
+                    self._drop_run_event_mutation_triggers(connection)
+                    if case == "order":
+                        row = connection.execute(
+                            """
+                            SELECT event_id, run_id, payload_json, occurred_at
+                            FROM run_events
+                            WHERE event_type = ?
+                            """,
+                            (
+                                LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+                            ),
+                        ).fetchone()
+                        self.assertIsNotNone(row)
+                        connection.execute(
+                            "DELETE FROM run_events WHERE event_type = ?",
+                            (
+                                LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+                            ),
+                        )
+                        connection.execute(
+                            """
+                            INSERT INTO run_events (
+                                event_id,
+                                run_id,
+                                event_type,
+                                status,
+                                payload_json,
+                                occurred_at
+                            ) VALUES (?, ?, ?, NULL, ?, ?)
+                            """,
+                            (
+                                row[0],
+                                row[1],
+                                LOCAL_CANDIDATE_PUBLICATION_DECISION_EVENT_TYPE,
+                                row[2],
+                                row[3],
+                            ),
+                        )
+                    else:
+                        row = connection.execute(
+                            """
+                            SELECT run_id, payload_json
+                            FROM run_events
+                            WHERE event_type = 'execution_accounting'
+                            """
+                        ).fetchone()
+                        self.assertIsNotNone(row)
+                        payload = json.loads(row[1])
+                        payload["wall_seconds"] += 1.0
+                        event_id = canonical_digest(
+                            {
+                                "event_type": "execution_accounting",
+                                "payload": payload,
+                                "run_id": row[0],
+                            }
+                        )
+                        connection.execute(
+                            """
+                            UPDATE run_events
+                            SET event_id = ?, payload_json = ?
+                            WHERE event_type = 'execution_accounting'
+                            """,
+                            (event_id, json.dumps(payload, sort_keys=True)),
+                        )
+                    self._restore_run_event_mutation_triggers(connection)
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                report = inspect_authorization_shadows(database)
+                self.assertFalse(report.clean)
+                self.assertIn(
+                    expected_issue,
+                    report.runs[0].integrity_issues,
+                )
+
+    def test_publication_enforcement_receipt_tampering_is_redacted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            _, database = self._run_profile_backed_mock(
+                temporary,
+                run_id="inspect-publication-receipt-tamper",
+            )
+            private_marker = "private-publication-executor-marker"
+            connection = sqlite3.connect(database)
+            try:
+                self._drop_run_event_mutation_triggers(connection)
+                row = connection.execute(
+                    "SELECT payload_json FROM run_events WHERE event_type = ?",
+                    (TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,),
+                ).fetchone()
+                self.assertIsNotNone(row)
+                payload = json.loads(row[0])
+                payload["enforcement_receipt"]["executor_id"] = (
+                    private_marker
+                )
+                payload["enforcement_receipt_digest"] = canonical_digest(
+                    payload["enforcement_receipt"]
+                )
+                self._resign_receipt(payload)
+                connection.execute(
+                    "UPDATE run_events SET payload_json = ? WHERE event_type = ?",
+                    (
+                        json.dumps(payload, sort_keys=True),
+                        TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE,
+                    ),
+                )
+                self._restore_run_event_mutation_triggers(connection)
+                connection.commit()
+            finally:
+                connection.close()
+
+            report = inspect_authorization_shadows(database)
+            projection = json.dumps(report.to_mapping(), sort_keys=True)
+            self.assertFalse(report.clean)
+            self.assertIn(
+                "task_publication_enforcement_receipt_invalid",
+                report.runs[0].integrity_issues,
+            )
+            self.assertNotIn(private_marker, projection)
+
+    def test_publication_freshness_stop_can_omit_action_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._profile_backed_mock_project(temporary)
+            database = root / ".ordomata" / "state.sqlite3"
+            with (
+                patch(
+                    "ordomata.orchestrator."
+                    "assert_local_candidate_publication_authorized",
+                    side_effect=AuthorizationBlocked(
+                        "fixed publication freshness rejection"
+                    ),
+                ),
+                self.assertRaises(AuthorizationBlocked),
+            ):
+                asyncio.run(
+                    run_chief_of_staff(
+                        root,
+                        run_id="inspect-publication-freshness",
+                    )
+                )
+
+            report = inspect_authorization_shadows(database)
+            self.assertTrue(report.clean, report.to_mapping())
+            publication = (
+                report.runs[0].local_candidate_publication_enforcement
+            )
+            self.assertTrue(publication.decision_observed)
+            self.assertTrue(publication.pre_effect_observed)
+            self.assertFalse(publication.action_receipt_observed)
+            self.assertEqual(publication.integrity_issues, ())
+
+            # The missing action is clean only for the exact controller-owned
+            # freshness stop; a generic authorization stop must fail closed.
+            connection = sqlite3.connect(database)
+            try:
+                self._drop_run_event_mutation_triggers(connection)
+                row = connection.execute(
+                    """
+                    SELECT run_id
+                    FROM run_events
+                    WHERE event_type = 'status' AND status = 'blocked'
+                    """
+                ).fetchone()
+                self.assertIsNotNone(row)
+                payload = {
+                    "phase": "local_candidate_publication_authorization"
+                }
+                event_id = canonical_digest(
+                    {
+                        "event_type": "status",
+                        "payload": payload,
+                        "run_id": row[0],
+                        "status": RunStatus.BLOCKED.value,
+                    }
+                )
+                connection.execute(
+                    """
+                    UPDATE run_events
+                    SET event_id = ?, status = ?, payload_json = ?
+                    WHERE event_type = 'status' AND status = 'blocked'
+                    """,
+                    (
+                        event_id,
+                        RunStatus.BLOCKED.value,
+                        json.dumps(payload, sort_keys=True),
+                    ),
+                )
+                self._restore_run_event_mutation_triggers(connection)
+                connection.commit()
+            finally:
+                connection.close()
+
+            report = inspect_authorization_shadows(database)
+            self.assertFalse(report.clean)
+            self.assertIn(
+                "task_publication_action_receipt_missing",
+                report.runs[0].integrity_issues,
             )
 
     def test_mock_dispatch_semantic_tampering_is_fixed_and_redacted(

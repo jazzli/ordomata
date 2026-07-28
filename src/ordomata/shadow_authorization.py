@@ -1,10 +1,12 @@
 """Non-authoritative ABAC observations for the Phase 1C migration.
 
-The current :class:`~ordomata.approval.ApprovalPolicy` remains authoritative.
-This module evaluates typed task effects at Chief-of-Staff controller
-boundaries and at controlled-comparison admission, dispatch, and private-review
-publication. It returns bounded, secret-free audit payloads. A shadow result
-can neither enable nor block execution or local candidate publication.
+The current :class:`~ordomata.approval.ApprovalPolicy` remains an independent
+legacy gate. This module evaluates typed task effects at Chief-of-Staff
+controller boundaries and at controlled-comparison admission, dispatch, and
+private-review publication. It returns bounded, secret-free audit payloads. A
+shadow result can neither enable nor block execution or local candidate
+publication; separate typed PEP modules own the two implemented authoritative
+decisions.
 """
 
 from __future__ import annotations

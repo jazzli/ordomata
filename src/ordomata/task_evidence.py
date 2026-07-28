@@ -2,13 +2,16 @@
 
 Bindings and publication receipts are evidence, never authorization grants.
 Schema-v3 bindings additionally declare that a separate mock-dispatch decision
-and action receipt are required; authority still comes from the typed runtime
-decision plus the independent legacy Class 0/1 gate.
+and action receipt are required.  Schema-v4 retains that exact binding shape
+and declares a second, local-candidate publication enforcement chain.  In both
+cases authority comes from the typed runtime decision plus the independent
+legacy Class 0/1 gate.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+import math
 from typing import Any
 
 from .authorization import canonical_digest
@@ -43,6 +46,9 @@ TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE = (
 TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE = (
     "task_attempt_mock_dispatch_decision_action_receipt"
 )
+TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE = (
+    "task_attempt_local_candidate_publication_decision_action_receipt"
+)
 
 _TASK_EXECUTION_MODES = {
     "mock": "in_memory_mock",
@@ -65,6 +71,7 @@ def build_task_attempt_binding_event(
     profile_version_ref: str | None = None,
     profile_configuration_digest: str | None = None,
     enforce_mock_dispatch: bool = False,
+    enforce_local_candidate_publication: bool = False,
 ) -> dict[str, Any]:
     """Bind later evidence to immutable, controller-authored attempt inputs."""
 
@@ -82,9 +89,17 @@ def build_task_attempt_binding_event(
         raise ValidationError("execution selection requires a named profile")
     if not isinstance(enforce_mock_dispatch, bool):
         raise ValidationError("mock dispatch enforcement flag must be a boolean")
+    if not isinstance(enforce_local_candidate_publication, bool):
+        raise ValidationError(
+            "local candidate publication enforcement flag must be a boolean"
+        )
     if enforce_mock_dispatch and (not selection_bound or runner_id != "mock"):
         raise ValidationError(
             "mock dispatch enforcement requires a selected mock profile"
+        )
+    if enforce_local_candidate_publication and not enforce_mock_dispatch:
+        raise ValidationError(
+            "local candidate publication enforcement requires mock dispatch enforcement"
         )
 
     binding: dict[str, Any] = {
@@ -156,7 +171,13 @@ def build_task_attempt_binding_event(
         )
     payload = {
         "schema_version": (
-            3 if enforce_mock_dispatch else 2 if selection_bound else 1
+            4
+            if enforce_local_candidate_publication
+            else 3
+            if enforce_mock_dispatch
+            else 2
+            if selection_bound
+            else 1
         ),
         "authorization_shadow_coverage": (
             TASK_ATTEMPT_AUTHORIZATION_SHADOW_COVERAGE
@@ -170,6 +191,10 @@ def build_task_attempt_binding_event(
     if enforce_mock_dispatch:
         payload["authorization_enforcement_coverage"] = (
             TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE
+        )
+    if enforce_local_candidate_publication:
+        payload["publication_authorization_enforcement_coverage"] = (
+            TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
         )
     return payload
 
@@ -331,7 +356,74 @@ def build_candidate_artifact_pre_effect_receipt(
     artifact_metadata_digest: str,
     billing_disposition_digest: str,
     started_at: float,
+    publication_authorization: Mapping[str, Any] | None = None,
+    publication_authorization_event_id: str | None = None,
 ) -> dict[str, Any]:
+    enforcement = _publication_authorization_links(
+        publication_authorization,
+        publication_authorization_event_id,
+    )
+    if enforcement is not None:
+        request_digest, decision_digest, action_digest, _ = enforcement
+        if (
+            not isinstance(publication_shadow_persisted, bool)
+            or not isinstance(requested_permission_class, PermissionClass)
+            or not isinstance(artifact_kind, str)
+            or not artifact_kind
+            or not _is_digest(task_attempt_binding_digest)
+            or not _is_digest(destination_digest)
+            or not _is_digest(artifact_digest)
+            or not isinstance(artifact_size_bytes, int)
+            or isinstance(artifact_size_bytes, bool)
+            or artifact_size_bytes <= 0
+            or not _is_digest(artifact_metadata_digest)
+            or not _is_digest(billing_disposition_digest)
+            or not _is_timestamp(started_at)
+        ):
+            raise ValidationError(
+                "candidate enforcing pre-effect inputs are invalid"
+            )
+        payload = {
+            "schema_version": 3,
+            "mode": "enforcing",
+            "receipt_kind": "pre_effect",
+            "authorization_enforced": True,
+            "authority_basis": (
+                "abac_exact_permit_and_legacy_permission_class_gate"
+            ),
+            "task_attempt_binding_digest": task_attempt_binding_digest,
+            "publication_shadow_persisted": publication_shadow_persisted,
+            "publication_shadow_request_digest": _shadow_link_digest(
+                publication_shadow,
+                "request_digest",
+            ),
+            "publication_shadow_decision_digest": _shadow_link_digest(
+                publication_shadow,
+                "decision_digest",
+            ),
+            "publication_authorization_event_id": (
+                publication_authorization_event_id
+            ),
+            "publication_enforcement_coverage": (
+                TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
+            ),
+            "publication_request_digest": request_digest,
+            "publication_decision_digest": decision_digest,
+            "action_digest": action_digest,
+            "requested_permission_class": int(requested_permission_class),
+            "artifact_kind": artifact_kind,
+            "destination_digest": destination_digest,
+            "artifact_digest": artifact_digest,
+            "artifact_size_bytes": artifact_size_bytes,
+            "artifact_record_digest": artifact_metadata_digest,
+            "billing_disposition_digest": billing_disposition_digest,
+            "evaluation_accepted": True,
+            "credential_scan_passed": True,
+            "started_at": started_at,
+        }
+        payload["receipt_digest"] = canonical_digest(payload)
+        return payload
+
     payload: dict[str, Any] = {
         "schema_version": 2,
         "mode": "shadow",
@@ -383,10 +475,156 @@ def build_candidate_artifact_action_receipt(
     result_digest: str | None,
     observed_artifact_size_bytes: int | None,
     failure_code: str | None,
+    publication_authorization: Mapping[str, Any] | None = None,
+    publication_authorization_event_id: str | None = None,
+    effect_started_at: float | None = None,
+    enforcement_receipt: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     pre_effect_receipt_digest = pre_effect_receipt.get("receipt_digest")
     if not isinstance(pre_effect_receipt_digest, str):
         raise ValidationError("candidate pre-effect receipt digest is missing")
+    enforcement = _publication_authorization_links(
+        publication_authorization,
+        publication_authorization_event_id,
+    )
+    enforcing_action = any(
+        value is not None
+        for value in (
+            publication_authorization,
+            publication_authorization_event_id,
+            effect_started_at,
+            enforcement_receipt,
+        )
+    )
+    if enforcing_action:
+        if (
+            enforcement is None
+            or effect_started_at is None
+            or enforcement_receipt is None
+        ):
+            raise ValidationError(
+                "candidate enforcing receipt inputs must be provided together"
+            )
+        request_digest, decision_digest, action_digest, obligations = (
+            enforcement
+        )
+        _validate_enforcing_artifact_outcome(
+            started_at=started_at,
+            effect_started_at=effect_started_at,
+            completed_at=completed_at,
+            outcome=outcome,
+            intended_artifact_digest=intended_artifact_digest,
+            intended_artifact_size_bytes=intended_artifact_size_bytes,
+            result_digest=result_digest,
+            observed_artifact_size_bytes=observed_artifact_size_bytes,
+            failure_code=failure_code,
+        )
+        _validate_enforcing_pre_effect_receipt(
+            pre_effect_receipt,
+            task_attempt_binding_digest=task_attempt_binding_digest,
+            publication_authorization_event_id=(
+                publication_authorization_event_id
+            ),
+            publication_shadow_persisted=publication_shadow_persisted,
+            publication_shadow_request_digest=_shadow_link_digest(
+                publication_shadow,
+                "request_digest",
+            ),
+            publication_shadow_decision_digest=_shadow_link_digest(
+                publication_shadow,
+                "decision_digest",
+            ),
+            request_digest=request_digest,
+            decision_digest=decision_digest,
+            action_digest=action_digest,
+            requested_permission_class=requested_permission_class,
+            artifact_kind=artifact_kind,
+            destination_digest=destination_digest,
+            intended_artifact_digest=intended_artifact_digest,
+            intended_artifact_size_bytes=intended_artifact_size_bytes,
+            artifact_metadata_digest=artifact_metadata_digest,
+            billing_disposition_digest=billing_disposition_digest,
+            started_at=started_at,
+        )
+        enforcement_receipt_mapping = dict(enforcement_receipt)
+        _validate_enforcement_action_receipt(
+            enforcement_receipt_mapping,
+            task_attempt_binding_digest=task_attempt_binding_digest,
+            destination_digest=destination_digest,
+            request_digest=request_digest,
+            decision_digest=decision_digest,
+            action_digest=action_digest,
+            obligations=obligations,
+            effect_started_at=effect_started_at,
+            completed_at=completed_at,
+            outcome=outcome,
+            result_digest=result_digest,
+        )
+        payload = {
+            "schema_version": 3,
+            "mode": "enforcing",
+            "receipt_kind": "action",
+            "authorization_enforced": True,
+            "authority_basis": (
+                "abac_exact_permit_and_legacy_permission_class_gate"
+            ),
+            "receipt_id": canonical_digest(
+                {
+                    "task_attempt_binding_digest": (
+                        task_attempt_binding_digest
+                    ),
+                    "destination_digest": destination_digest,
+                    "pre_effect_receipt_digest": pre_effect_receipt_digest,
+                }
+            ),
+            "task_attempt_binding_digest": task_attempt_binding_digest,
+            "pre_effect_receipt_digest": pre_effect_receipt_digest,
+            "publication_shadow_persisted": publication_shadow_persisted,
+            "publication_shadow_request_digest": _shadow_link_digest(
+                publication_shadow,
+                "request_digest",
+            ),
+            "publication_shadow_decision_digest": _shadow_link_digest(
+                publication_shadow,
+                "decision_digest",
+            ),
+            "publication_authorization_event_id": (
+                publication_authorization_event_id
+            ),
+            "publication_enforcement_coverage": (
+                TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
+            ),
+            "publication_request_digest": request_digest,
+            "publication_decision_digest": decision_digest,
+            "action_digest": action_digest,
+            "executor_id": "ordomata:local-controller",
+            "started_at": started_at,
+            "effect_started_at": effect_started_at,
+            "completed_at": completed_at,
+            "outcome": outcome,
+            "obligation_results": _obligation_result_projection(
+                obligations
+            ),
+            "requested_permission_class": int(requested_permission_class),
+            "artifact_kind": artifact_kind,
+            "destination_digest": destination_digest,
+            "intended_artifact_digest": intended_artifact_digest,
+            "intended_artifact_size_bytes": intended_artifact_size_bytes,
+            "artifact_record_digest": artifact_metadata_digest,
+            "billing_disposition_digest": billing_disposition_digest,
+            "evaluation_accepted": True,
+            "credential_scan_passed": True,
+            "result_digest": result_digest,
+            "observed_artifact_size_bytes": observed_artifact_size_bytes,
+            "failure_code": failure_code,
+            "enforcement_receipt": enforcement_receipt_mapping,
+            "enforcement_receipt_digest": canonical_digest(
+                enforcement_receipt_mapping
+            ),
+        }
+        payload["receipt_digest"] = canonical_digest(payload)
+        return payload
+
     payload: dict[str, Any] = {
         "schema_version": 2,
         "mode": "shadow",
@@ -434,6 +672,363 @@ def build_candidate_artifact_action_receipt(
     }
     payload["receipt_digest"] = canonical_digest(payload)
     return payload
+
+
+def _publication_authorization_links(
+    publication_authorization: Mapping[str, Any] | None,
+    publication_authorization_event_id: str | None,
+) -> tuple[
+    str,
+    str,
+    str,
+    tuple[tuple[str, str], ...],
+] | None:
+    supplied = (
+        publication_authorization is not None,
+        publication_authorization_event_id is not None,
+    )
+    if not any(supplied):
+        return None
+    if not all(supplied) or not isinstance(publication_authorization, Mapping):
+        raise ValidationError(
+            "candidate publication authorization inputs must be provided together"
+        )
+    if not _is_digest(publication_authorization_event_id):
+        raise ValidationError(
+            "candidate publication authorization event identifier is invalid"
+        )
+    if (
+        publication_authorization.get("mode") != "enforcing"
+        or publication_authorization.get("enforcement_coverage")
+        != TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
+        or publication_authorization.get("effect") != "permit"
+        or publication_authorization.get("authorization_eligible") is not True
+    ):
+        raise ValidationError(
+            "candidate publication authorization is not an exact permit"
+        )
+    request = publication_authorization.get("request")
+    decision = publication_authorization.get("decision")
+    request_digest = publication_authorization.get("request_digest")
+    decision_digest = publication_authorization.get("decision_digest")
+    if (
+        not isinstance(request, Mapping)
+        or not isinstance(decision, Mapping)
+        or set(request)
+        != {
+            "action",
+            "consequences",
+            "environment",
+            "evidence",
+            "request_id",
+            "resource",
+            "subject",
+        }
+        or set(decision)
+        != {
+            "derived_permission_class",
+            "effect",
+            "evidence_refs",
+            "expires_at",
+            "issued_at",
+            "matched_rule_ids",
+            "obligations",
+            "policy_bundle_id",
+            "policy_digest",
+            "policy_version",
+            "reason_codes",
+            "reason_details",
+            "request_digest",
+            "request_id",
+        }
+        or not _is_digest(request_digest)
+        or not _is_digest(decision_digest)
+        or request_digest != canonical_digest(request)
+        or decision_digest != canonical_digest(decision)
+        or decision.get("effect") != "permit"
+        or decision.get("request_digest") != request_digest
+    ):
+        raise ValidationError(
+            "candidate publication authorization digests are inconsistent"
+        )
+    action = request.get("action")
+    resource = request.get("resource")
+    if (
+        not isinstance(action, Mapping)
+        or not isinstance(resource, Mapping)
+        or action.get("verb") != "create"
+        or action.get("operation") != "artifact.publish_local_candidate"
+        or resource.get("resource_type") != "local_candidate_artifact"
+        or resource.get("trust_boundary") != "isolated_run_workspace"
+    ):
+        raise ValidationError(
+            "candidate publication authorization action is invalid"
+        )
+    obligations = decision.get("obligations")
+    if not isinstance(obligations, list) or not obligations:
+        raise ValidationError(
+            "candidate publication authorization obligations are invalid"
+        )
+    obligation_pairs: list[tuple[str, str]] = []
+    for obligation in obligations:
+        if not isinstance(obligation, Mapping):
+            raise ValidationError(
+                "candidate publication authorization obligations are invalid"
+            )
+        kind = obligation.get("kind")
+        value = obligation.get("value")
+        if (
+            not isinstance(kind, str)
+            or not kind
+            or not isinstance(value, str)
+            or not value
+        ):
+            raise ValidationError(
+                "candidate publication authorization obligations are invalid"
+            )
+        obligation_pairs.append((kind, value))
+    if (
+        obligation_pairs != sorted(obligation_pairs)
+        or len(obligation_pairs) != len(set(obligation_pairs))
+    ):
+        raise ValidationError(
+            "candidate publication authorization obligations are invalid"
+        )
+    return (
+        request_digest,
+        decision_digest,
+        canonical_digest({"action": action, "resource": resource}),
+        tuple(obligation_pairs),
+    )
+
+
+def _validate_enforcing_pre_effect_receipt(
+    payload: Mapping[str, Any],
+    *,
+    task_attempt_binding_digest: str,
+    publication_authorization_event_id: str | None,
+    publication_shadow_persisted: bool,
+    publication_shadow_request_digest: str | None,
+    publication_shadow_decision_digest: str | None,
+    request_digest: str,
+    decision_digest: str,
+    action_digest: str,
+    requested_permission_class: PermissionClass,
+    artifact_kind: str,
+    destination_digest: str,
+    intended_artifact_digest: str,
+    intended_artifact_size_bytes: int,
+    artifact_metadata_digest: str,
+    billing_disposition_digest: str,
+    started_at: float,
+) -> None:
+    expected_keys = {
+        "action_digest",
+        "artifact_digest",
+        "artifact_kind",
+        "artifact_record_digest",
+        "artifact_size_bytes",
+        "authority_basis",
+        "authorization_enforced",
+        "billing_disposition_digest",
+        "credential_scan_passed",
+        "destination_digest",
+        "evaluation_accepted",
+        "mode",
+        "publication_authorization_event_id",
+        "publication_decision_digest",
+        "publication_enforcement_coverage",
+        "publication_request_digest",
+        "publication_shadow_decision_digest",
+        "publication_shadow_persisted",
+        "publication_shadow_request_digest",
+        "receipt_digest",
+        "receipt_kind",
+        "requested_permission_class",
+        "schema_version",
+        "started_at",
+        "task_attempt_binding_digest",
+    }
+    receipt_digest = payload.get("receipt_digest")
+    receipt_body = dict(payload)
+    receipt_body.pop("receipt_digest", None)
+    if (
+        set(payload) != expected_keys
+        or not _is_digest(receipt_digest)
+        or receipt_digest != canonical_digest(receipt_body)
+        or payload.get("schema_version") != 3
+        or payload.get("mode") != "enforcing"
+        or payload.get("receipt_kind") != "pre_effect"
+        or payload.get("authorization_enforced") is not True
+        or payload.get("authority_basis")
+        != "abac_exact_permit_and_legacy_permission_class_gate"
+        or payload.get("publication_enforcement_coverage")
+        != TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE
+        or payload.get("task_attempt_binding_digest")
+        != task_attempt_binding_digest
+        or payload.get("publication_authorization_event_id")
+        != publication_authorization_event_id
+        or payload.get("publication_shadow_persisted")
+        is not publication_shadow_persisted
+        or payload.get("publication_shadow_request_digest")
+        != publication_shadow_request_digest
+        or payload.get("publication_shadow_decision_digest")
+        != publication_shadow_decision_digest
+        or payload.get("publication_request_digest") != request_digest
+        or payload.get("publication_decision_digest") != decision_digest
+        or payload.get("action_digest") != action_digest
+        or payload.get("requested_permission_class")
+        != int(requested_permission_class)
+        or payload.get("artifact_kind") != artifact_kind
+        or payload.get("destination_digest") != destination_digest
+        or payload.get("artifact_digest") != intended_artifact_digest
+        or payload.get("artifact_size_bytes")
+        != intended_artifact_size_bytes
+        or payload.get("artifact_record_digest")
+        != artifact_metadata_digest
+        or payload.get("billing_disposition_digest")
+        != billing_disposition_digest
+        or payload.get("evaluation_accepted") is not True
+        or payload.get("credential_scan_passed") is not True
+        or payload.get("started_at") != started_at
+    ):
+        raise ValidationError(
+            "candidate enforcing pre-effect receipt is inconsistent"
+        )
+
+
+def _validate_enforcement_action_receipt(
+    receipt: Mapping[str, Any],
+    *,
+    task_attempt_binding_digest: str,
+    destination_digest: str,
+    request_digest: str,
+    decision_digest: str,
+    action_digest: str,
+    obligations: tuple[tuple[str, str], ...],
+    effect_started_at: float,
+    completed_at: float,
+    outcome: str,
+    result_digest: str | None,
+) -> None:
+    expected_keys = {
+        "completed_at",
+        "decision_digest",
+        "enforced_action_digest",
+        "executor_id",
+        "obligation_results",
+        "outcome",
+        "receipt_id",
+        "request_digest",
+        "result_digest",
+        "started_at",
+    }
+    obligation_results = receipt.get("obligation_results")
+    expected_obligation_results = [
+        {"kind": kind, "satisfied": True, "value": value}
+        for kind, value in obligations
+    ]
+    expected_receipt_id = canonical_digest(
+        {
+            "decision_digest": decision_digest,
+            "destination_digest": destination_digest,
+            "request_digest": request_digest,
+            "task_attempt_binding_digest": task_attempt_binding_digest,
+            "receipt_kind": "local_candidate_publication_action",
+        }
+    )
+    if (
+        set(receipt) != expected_keys
+        or receipt.get("receipt_id") != expected_receipt_id
+        or receipt.get("request_digest") != request_digest
+        or receipt.get("decision_digest") != decision_digest
+        or receipt.get("enforced_action_digest") != action_digest
+        or receipt.get("executor_id") != "ordomata:local-controller"
+        or receipt.get("started_at") != effect_started_at
+        or receipt.get("completed_at") != completed_at
+        or receipt.get("outcome") != outcome
+        or receipt.get("result_digest") != result_digest
+        or obligation_results != expected_obligation_results
+        or not _is_timestamp(effect_started_at)
+        or not _is_timestamp(completed_at)
+        or completed_at < effect_started_at
+    ):
+        raise ValidationError(
+            "candidate publication enforcement receipt is inconsistent"
+        )
+
+
+def _validate_enforcing_artifact_outcome(
+    *,
+    started_at: float,
+    effect_started_at: float,
+    completed_at: float,
+    outcome: str,
+    intended_artifact_digest: str,
+    intended_artifact_size_bytes: int,
+    result_digest: str | None,
+    observed_artifact_size_bytes: int | None,
+    failure_code: str | None,
+) -> None:
+    timestamps_valid = (
+        _is_timestamp(started_at)
+        and _is_timestamp(effect_started_at)
+        and _is_timestamp(completed_at)
+        and started_at <= effect_started_at <= completed_at
+    )
+    if outcome == "succeeded":
+        outcome_valid = (
+            failure_code is None
+            and result_digest == intended_artifact_digest
+            and observed_artifact_size_bytes == intended_artifact_size_bytes
+        )
+    else:
+        failure_codes = {
+            "failed": "artifact_persistence_failed",
+            "cancelled": "artifact_persistence_interrupted",
+            "unknown": "artifact_publication_outcome_unknown",
+        }
+        outcome_valid = (
+            outcome in failure_codes
+            and failure_code == failure_codes.get(outcome)
+            and result_digest is None
+            and observed_artifact_size_bytes is None
+        )
+    if not timestamps_valid or not outcome_valid:
+        raise ValidationError(
+            "candidate enforcing artifact outcome is inconsistent"
+        )
+
+
+def _obligation_result_projection(
+    obligations: tuple[tuple[str, str], ...],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "kind": kind,
+            "satisfied": True,
+            "value_digest": canonical_digest({"value": value}),
+        }
+        for kind, value in obligations
+    ]
+
+
+def _is_digest(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 71
+        and value.startswith("sha256:")
+        and all(character in "0123456789abcdef" for character in value[7:])
+    )
+
+
+def _is_timestamp(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+        and value >= 0
+    )
 
 
 def _normalized_digest(value: str, field_name: str) -> str:
@@ -513,6 +1108,7 @@ __all__ = [
     "TASK_ATTEMPT_ACTION_RECEIPT_COVERAGE",
     "TASK_ATTEMPT_AUTHORIZATION_BINDING_EVENT_TYPE",
     "TASK_ATTEMPT_AUTHORIZATION_SHADOW_COVERAGE",
+    "TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE",
     "TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE",
     "TASK_CANDIDATE_ARTIFACT_ACTION_RECEIPT_EVENT_TYPE",
     "TASK_CANDIDATE_ARTIFACT_INTENT_EVENT_TYPE",

@@ -78,24 +78,29 @@ records.
 - optional typed task-effect authorization intent, independent of the legacy
   numeric class, plus three non-enforcing Chief-of-Staff shadow decisions at
   admission, runner/model dispatch intent, and local-candidate publication;
-- the first authoritative ABAC enforcement point: new profile-backed ordinary
+- the first two authoritative ABAC enforcement points: new profile-backed ordinary
   attempts using the exact controller-owned in-memory `MockRunner`
   implementation require a fixed-policy permit for the exact mock
   `runner.execute` action before `RUNNING`, a freshness recheck immediately at
-  invocation, and a content-addressed terminal action receipt; every non-permit,
+  invocation, and a content-addressed terminal action receipt; accepted,
+  credential-clean output then requires a separate fixed-policy Class 1 permit
+  immediately before the first local-candidate filesystem mutation and an
+  integrated reconciled action receipt; every non-permit,
   stale permit, authority-ceiling mismatch, or uncertain decision write blocks
-  before invocation, and only a validated identity-matched no-process result
-  can receive a succeeded receipt, while live, comparison, supervisor, and
-  publication paths remain non-enforcing;
+  before its action, and only a validated identity-matched no-process result
+  can receive a succeeded dispatch receipt, while live, comparison, supervisor,
+  shared publication, and promotion paths remain non-enforcing or disabled;
 - digest-only ordinary task-attempt bindings that cover the typed authorization
   intent and, for profile-backed attempts, the immutable execution selection,
-  profile version, and configuration; new enforced mock attempts declare that
-  coverage with a schema-v3 binding while unprofiled schema-v1 and live or
-  historical schema-v2 histories retain their shadow-only meaning; schema-v2
-  execution accounting,
-  billing-bound dispatch, and schema-v2 pre-effect/action receipts around
-  schema-v5 local-candidate publication, with exact metadata, filesystem, and
-  receipt reconciliation;
+  profile version, and configuration; new enforced mock attempts use one
+  schema-v4 binding that declares both dispatch and local-candidate publication
+  coverage, historical schema-v3 bindings declare dispatch only, and unprofiled
+  schema-v1 plus live or historical schema-v2 histories retain their prior
+  meaning;
+  schema-v2 execution accounting, billing-bound dispatch, and schema-v3
+  enforcing pre-effect/action receipts around schema-v5 local-candidate
+  publication for the v4 path, with exact metadata, filesystem, and receipt
+  reconciliation; historical paths retain schema-v2 non-enforcing receipts;
 - append-only schema-v2 Class 0 comparison-trial bindings, lifecycle/accounting
   evidence, schema-v3 admission/dispatch shadows, and a separate schema-v4
   non-enforcing Class 1 private review-artifact publication shadow with
@@ -132,12 +137,13 @@ PYTHONPATH=src python3 -m ordomata auth-inspect
 
 The demo does not invoke a model. It writes its accepted artifact and append-only state under `.ordomata/`, which is ignored by Git.
 
-For new demo attempts, the local candidate write is bracketed by a required
-digest-only intent and action-receipt chain. The controller retains verified
-parent-directory and inode descriptors through receipt reconciliation, checks
-that only the expected hard link exists, reconciles commit-then-raise metadata
-and receipt writes, and quarantines any unprovable final effect. These records
-audit the existing Class 0/1 decision; they do not authorize it.
+For new demo attempts, the local candidate write requires a separate exact
+Class 1 ABAC permit in addition to the existing Class 0/1 gate, then is
+bracketed by a digest-only pre-effect and enforcing action-receipt chain. The
+controller retains verified parent-directory and inode descriptors through
+receipt reconciliation, checks that only the expected hard link exists,
+reconciles commit-then-raise metadata and receipt writes, and quarantines any
+unprovable final effect. The non-enforcing shadow remains audit evidence only.
 
 `auth-inspect` never initializes or changes the state database. With no state it
 returns a clean empty report without creating `.ordomata`; after a run it can
@@ -314,8 +320,9 @@ See [architecture](docs/architecture.md), [runtime authorization model](docs/aut
 
 The v1 design interview is decision-complete. The pure Phase 1C ABAC evaluator
 has distinct `permit`, `defer`, `deny`, and `indeterminate` outcomes, and its
-first narrow authoritative consumer now gates only profile-backed ordinary
-in-memory mock dispatch.
+first narrow authoritative enforcement slice now gates profile-backed ordinary
+in-memory mock dispatch and the resulting owner-private local-candidate
+publication.
 The current task contract now carries explicit action, resource, and
 consequence intent, while `PermissionClass` remains an independent runtime
 ceiling and defense-in-depth gate.
@@ -341,10 +348,11 @@ claims about commands available today.
 - no repository worktree maintenance workflow yet;
 - no automatic outcome-to-router learning or retry/failover controller yet;
 - no general runtime ABAC coverage yet: only profile-backed, controller-owned
-  in-memory mock dispatch has an authoritative decision and action receipt;
-  Chief-of-Staff admission and publication, all live/comparison paths, mediated
-  tools, and supervisor admission/claim/control/cancellation remain shadow-only
-  or disabled, while current Class 0/1 and deterministic eligibility gates stay
+  in-memory mock dispatch and its owner-private local-candidate publication have
+  authoritative decisions and action receipts; Chief-of-Staff admission, all
+  live/comparison paths, shared publication or promotion, mediated tools, and
+  supervisor admission/claim/control/cancellation remain shadow-only or
+  disabled, while current Class 0/1 and deterministic eligibility gates stay
   authoritative defense in depth;
 - no standing-envelope evaluator, worker-cell shell/egress backend,
   consequential-action outbox/executor, trusted-memory promotion, or adaptive

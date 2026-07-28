@@ -124,7 +124,7 @@ class CLITests(unittest.TestCase):
             self.assertEqual(status, 0, errors)
             report = json.loads(output)
             self.assertTrue(report["clean"])
-            self.assertEqual(report["inspected_event_count"], 5)
+            self.assertEqual(report["inspected_event_count"], 6)
             self.assertEqual(report["coverage_gap_count"], 0)
             self.assertEqual(report["parity_mismatch_count"], 0)
             self.assertEqual(report["authority_ceiling_mismatch_count"], 0)
@@ -133,6 +133,12 @@ class CLITests(unittest.TestCase):
             self.assertEqual(
                 inspected_run["authorization_enforcement_coverage"],
                 "task_attempt_mock_dispatch_decision_action_receipt",
+            )
+            self.assertEqual(
+                inspected_run[
+                    "publication_authorization_enforcement_coverage"
+                ],
+                "task_attempt_local_candidate_publication_decision_action_receipt",
             )
             self.assertTrue(
                 inspected_run["mock_dispatch_enforcement"][
@@ -143,6 +149,16 @@ class CLITests(unittest.TestCase):
                 inspected_run["mock_dispatch_enforcement"][
                     "action_receipt_observed"
                 ]
+            )
+            self.assertTrue(
+                inspected_run[
+                    "local_candidate_publication_enforcement"
+                ]["authorization_eligible"]
+            )
+            self.assertTrue(
+                inspected_run[
+                    "local_candidate_publication_enforcement"
+                ]["action_receipt_observed"]
             )
 
     def test_auth_inspect_returns_one_for_recomputed_mismatch(self) -> None:

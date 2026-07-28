@@ -52,6 +52,7 @@ from ordomata.runners.mock import MockRunner
 from ordomata.shadow_authorization import task_authorization_intent_digest
 from ordomata.state import SQLiteStateStore
 from ordomata.task_evidence import (
+    TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
     TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
     TASK_EXECUTION_SELECTION_EVENT_TYPE,
 )
@@ -373,10 +374,16 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
             self.assertLess(selection_event.sequence, binding.sequence)
             self.assertLess(selection_event.sequence, billing.sequence)
             self.assertLess(selection_event.sequence, running.sequence)
-            self.assertEqual(binding.payload["schema_version"], 3)
+            self.assertEqual(binding.payload["schema_version"], 4)
             self.assertEqual(
                 binding.payload["authorization_enforcement_coverage"],
                 TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
+            )
+            self.assertEqual(
+                binding.payload[
+                    "publication_authorization_enforcement_coverage"
+                ],
+                TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
             )
             self.assertEqual(
                 binding.payload["binding"]["execution_selection_digest"],
@@ -514,10 +521,16 @@ class ExecutionSelectionOrchestratorTests(unittest.TestCase):
                 for event in events
                 if event.event_type == "task_attempt_authorization_binding"
             )
-            self.assertEqual(binding.payload["schema_version"], 3)
+            self.assertEqual(binding.payload["schema_version"], 4)
             self.assertEqual(
                 binding.payload["authorization_enforcement_coverage"],
                 TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
+            )
+            self.assertEqual(
+                binding.payload[
+                    "publication_authorization_enforcement_coverage"
+                ],
+                TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
             )
             self.assertEqual(
                 binding.payload["binding"]["execution_selection_digest"],

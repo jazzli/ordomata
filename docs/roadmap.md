@@ -46,25 +46,32 @@ of Staff task contract has explicit typed action/resource/consequence intent,
 and the run path records non-authoritative observations at admission, dispatch
 intent, and local-candidate publication. A read-only inspector recomputes
 digests, authenticated evidence freshness, legacy and authority-ceiling parity,
-and boundary coverage/order. New ordinary attempts also bind schema-v2
-execution accounting to a schema-v5 publication shadow and schema-v2
-pre-effect/action receipts; unresolved local publication state is quarantined.
+and boundary coverage/order. New schema-v4 exact-mock attempts also bind
+schema-v2 execution accounting to a schema-v5 publication shadow, a separate
+publication decision, and schema-v3 enforcing pre-effect/action receipts;
+older paths retain schema-v2 non-enforcing receipts, and unresolved local
+publication state is quarantined.
 Controlled comparisons add a schema-v2 trial
 binding, schema-v3 Class 0 admission/dispatch shadows, and a separate schema-v4
 Class 1 private-publication shadow with schema-v2 pre-effect/action receipts.
 Profile-backed ordinary attempts also append a required, content-addressed
 execution-selection event before their task binding. New exact built-in-mock
-attempts use schema v3; live and historical selected attempts use schema v2.
+attempts use schema v4; historical dispatch-only mock attempts use schema v3,
+and live or historical selected attempts use schema v2.
 It fixes the
 policy clock, task features, candidate set, fixed rejection codes, metric
 sources/scores/rank, and selected profile/version/configuration/overrides refs;
 the inspector independently recomputes those semantics and their binding and
 dispatch order. Raw model/settings/account/diagnostic values remain private.
-The first authoritative PEP now gates only profile-backed ordinary attempts
-through the exact controller-owned in-memory mock implementation. It persists
+The first two authoritative PEPs now gate only profile-backed ordinary attempts
+through the exact controller-owned in-memory mock implementation and their
+owner-private candidate publication. The dispatch PEP persists
 a fixed-policy decision before `RUNNING`, rechecks freshness, exact
 obligations, and the independent Class 0/1 ceiling immediately before
-invocation, and requires a linked action receipt once invocation begins.
+invocation, and requires a linked action receipt once invocation begins. The
+publication PEP independently binds the succeeded dispatch and accounting,
+persists its own decision and pre-effect record, rechecks at the first staging
+mutation, and uses the reconciled filesystem receipt as its action receipt.
 General runtime ABAC enforcement is not implemented. This phase remains a
 prerequisite for adding a worker-dispatch path or repository worker with new
 mediated capabilities. A
@@ -75,15 +82,15 @@ parallel because it cannot exercise worker authority.
   resources, mediated commands/tools, and controller bookkeeping actions.
 - Extend the implemented deterministic shadow evaluator from its focused Class
   0/1/adversarial fixtures to parity with every current allow and deny path.
-- Extend the first durable enforcing decision/action-receipt chain beyond the
-  narrow profile-backed built-in-mock boundary only after semantics and parity
-  stabilize.
+- Extend the two durable enforcing decision/action-receipt chains beyond the
+  narrow profile-backed built-in-mock dispatch and publication boundaries only
+  after semantics and parity stabilize.
 - Preserve the implemented distinct `permit`, `defer`, `deny`, and
   `indeterminate` effects; add durable waiting/resumption so satisfying a
   digest-bound defer condition always creates a fresh decision.
-- Convert the existing Chief-of-Staff admission, dispatch-intent, and local-
-  candidate shadow observations into enforcement points only after parity;
-  the separate exact built-in-mock execute boundary is already enforced;
+- Convert the remaining Chief-of-Staff admission and dispatch-intent shadow
+  observations into enforcement points only after parity; the separate exact
+  built-in-mock execute and local-candidate boundaries are already enforced;
   the comparison trial's separate Class 1 review-artifact boundary is complete
   as non-enforcing audit evidence, while each mediated command or tool
   invocation remains to be added. Comparison admission, dispatch, publication,

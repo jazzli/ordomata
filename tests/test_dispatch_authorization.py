@@ -54,6 +54,7 @@ from ordomata.shadow_authorization import (
 )
 from ordomata.state import SQLiteStateStore
 from ordomata.task_evidence import (
+    TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
     TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
     build_task_attempt_binding_event,
 )
@@ -204,10 +205,16 @@ class DispatchAuthorizationTests(unittest.TestCase):
             and event.payload.get("action_scope") == DISPATCH_ACTION_SCOPE
         )
 
-        self.assertEqual(binding.payload["schema_version"], 3)
+        self.assertEqual(binding.payload["schema_version"], 4)
         self.assertEqual(
             binding.payload["authorization_enforcement_coverage"],
             TASK_ATTEMPT_MOCK_DISPATCH_ENFORCEMENT_COVERAGE,
+        )
+        self.assertEqual(
+            binding.payload[
+                "publication_authorization_enforcement_coverage"
+            ],
+            TASK_ATTEMPT_LOCAL_CANDIDATE_PUBLICATION_ENFORCEMENT_COVERAGE,
         )
         self.assertEqual(
             decision.payload["enforcement_coverage"],
