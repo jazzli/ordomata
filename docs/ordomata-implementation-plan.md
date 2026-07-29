@@ -260,10 +260,26 @@ worktree, Git/command/process invocation, worker/supervisor dispatch,
 route/profile choice, billing/capacity/circuit fact, harness/network action, or
 live eligibility. Raw identifiers/paths, argv, registration/proposal content,
 SQLite diagnostics, workspace/run-directory values, and artifact content do
-not enter the result. The next recommended bounded slice is a separate,
-library-only verifier for an untrusted returned admission-shadow mapping that
-emits only fixed privacy-safe replay findings and still adds no authority,
-persistence, repair, enforcement, worker enablement, or effect.
+not enter the result.
+
+The fifth Phase 3 slice is the library-only
+`ordomata.repository_proposal_admission_verification` API
+`verify_repository_proposal_admission_shadow_mapping(value)`. It accepts only
+an exact built-in `dict`, takes a bounded detached JSON snapshot, and
+independently mirrors the inspection contract. Evaluated inputs replay the
+Class 0/1 request, policy, manual expected decision, and captured evaluator;
+inert inputs must match an exact state-machine branch, and a reported replay
+failure must retain a constructible replay boundary. It emits only fixed
+value-free findings. `contract_valid` means internal consistency only, not
+authenticity, durable reinspection or source truth, current freshness, or
+authority. A coherent forgery or replay remains indistinguishable without a
+trusted anchor. The verifier persists or repairs nothing, enforces or authorizes
+nothing, and creates no worker, repository, command, route, billing, network,
+harness, dispatch, or live effect.
+
+The next recommended bounded slice is pure schema/validator support for
+generated/vendor exclusions in repository registrations, still with no
+execution or worker enablement.
 
 The target semantics for Class 3 standing envelopes, irreversible actions,
 the non-delegable root-authority kernel, consequential outbox execution,
@@ -701,8 +717,8 @@ satisfied.
 ## Phase 3 - Repository registrations and isolated worker cells
 
 **Implementation checkpoint — read-only registration, proposal evidence,
-single-run inspection, and inert admission shadow, not worker-cell
-enablement:** standalone
+single-run inspection, inert admission shadow, and independent shadow-contract
+verification, not worker-cell enablement:** standalone
 `schemas/repository-registration.schema.json` schema v1 and the pure
 `ordomata.repository_registration` validator implement the initial contract
 boundary. They validate a controller-supplied ordinary Git root and stable
@@ -737,10 +753,18 @@ inspector, evaluates only its exact clean and complete Class 0/1 evidence, and
 uses a fixed class-specific Class 0 `READ` or Class 1 `CREATE` local projection
 with privacy-safe digest binding and exact built-in replay. A nonclean result is
 indeterminate and not evaluated; an exact permit is still non-authoritative,
-non-persistent, and no-effect. Baseline results and generated/vendor exclusions
-remain deferred, as do bare executable resolution and content attestation,
-future `shell=False` action-boundary execution, and every worker-cell
-deliverable below.
+non-persistent, and no-effect. The library-only verifier takes one untrusted
+exact built-in `dict` shadow mapping, snapshots it as bounded detached JSON, and
+checks an independent mirror of the inspection contract, evaluated-input Class
+0/1 manual-decision and captured-evaluator replay, and exact inert branches. A
+reported replay failure still requires a constructible replay boundary. Its
+fixed value-free findings and `contract_valid` establish internal consistency only;
+without a trusted anchor, coherent forgery or replay remains indistinguishable.
+It performs no durable reinspection, freshness proof, persistence, repair,
+enforcement, authorization, or action. Baseline results and generated/vendor
+exclusions remain deferred, as do bare executable resolution and content
+attestation, future `shell=False` action-boundary execution, and every worker-
+cell deliverable below.
 
 ### Deliverables
 

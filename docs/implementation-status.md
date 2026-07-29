@@ -269,10 +269,26 @@ worktree, Git/command/process invocation, worker/supervisor dispatch,
 route/profile selection, billing/capacity/circuit fact, harness/network action,
 or live eligibility, and no raw path/identifier, argv, registration/proposal
 content, SQLite diagnostic, workspace/run-directory value, or artifact content
-is exposed. The next recommended bounded slice is an independent,
-library-only verifier for an untrusted returned admission-shadow mapping. It
-should return only fixed privacy-safe replay findings and add no authority,
-persistence, repair, enforcement, worker enablement, or effect.
+is exposed.
+
+The fifth repository-proposal slice is the library-only
+`ordomata.repository_proposal_admission_verification` API
+`verify_repository_proposal_admission_shadow_mapping(value)`. It requires an
+exact built-in `dict`, takes a bounded detached JSON snapshot, and independently
+mirrors the inspection contract. Evaluated inputs replay the Class 0/1 request,
+policy, manual expected decision, and captured evaluator; inert inputs must
+match an exact state-machine branch, and a reported replay failure must retain a
+constructible replay boundary. Every finding is fixed and value-free.
+`contract_valid` reports internal consistency only; it proves neither
+authenticity, durable reinspection or source truth, current freshness, nor
+authority. Coherent forgery or replay remains indistinguishable without a
+trusted anchor. The verifier has no persistence, repair, enforcement,
+authorization, worker, repository, command, route, billing, network, harness,
+dispatch, or live effect.
+
+The next recommended bounded slice is pure schema/validator support for
+generated/vendor exclusions in repository registrations, still with no
+execution or worker enablement.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and
@@ -437,6 +453,12 @@ specific authorization enforcement, and soak evidence remain planned.
   observation under fixed class-specific policy; nonclean evidence remains
   indeterminate and even an exact shadow permit grants no authority, persists
   nothing, and performs no action.
+- `ordomata.repository_proposal_admission_verification.verify_repository_proposal_admission_shadow_mapping`:
+  library-only, bounded detached verification of an untrusted exact-dict shadow
+  mapping through an independent contract mirror, evaluated-input manual
+  decision/evaluator replay, and exact inert-branch validation; fixed findings
+  and `contract_valid` establish internal consistency only, not authenticity,
+  freshness, authority, or durable truth.
 - `ordomata auth-inspect`: source-preserving, SQLite read-only inspection of
   baseline schema/history and frozen migration-ledger integrity, authorization
   shadow integrity, authenticated freshness, legacy and authority-ceiling

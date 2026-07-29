@@ -626,10 +626,27 @@ Git/command/process invocation,
 worker or supervisor dispatch, profile choice, billing/capacity/circuit fact,
 harness/network action, or live eligibility. Raw paths and identifiers, argv,
 registration/proposal content, workspace/run-directory values, SQLite
-diagnostics, and artifact content do not enter the shadow mapping. The next
-recommended bounded slice is an independent, library-only verifier for an
-untrusted returned shadow mapping that emits only fixed privacy-safe replay
-findings and continues to provide no persistence, repair, authority, or effect.
+diagnostics, and artifact content do not enter the shadow mapping.
+
+The fifth slice is the library-only
+`ordomata.repository_proposal_admission_verification` API
+`verify_repository_proposal_admission_shadow_mapping(value)`. Its sole input
+must be an exact built-in `dict`; the verifier takes a bounded detached JSON
+snapshot and independently mirrors the inspection contract. Evaluated inputs
+replay the Class 0/1 request, policy, manual expected decision, and captured
+built-in evaluator; inert inputs must match an exact state-machine branch, and
+a reported replay failure must still have a constructible replay boundary. Its
+findings are fixed and value-free. `contract_valid` means only that the
+supplied snapshot is internally consistent: the verifier supplies no
+authenticity, durable reinspection or source truth, current freshness, or
+authority, and a coherent forgery or replay is indistinguishable without a
+trusted anchor. It persists and repairs nothing, enforces and authorizes
+nothing, and has no worker, repository, command, route, billing, network,
+harness, dispatch, or live effect.
+
+The next recommended bounded slice is pure schema/validator support for
+generated/vendor exclusions in repository registrations, still with no
+execution or worker enablement.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor

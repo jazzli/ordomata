@@ -225,11 +225,26 @@ evidence persistence, repair, dispatch, route selection, billing assessment,
 and obligation enforcement to false. The API persists nothing and creates no
 source state, event, durable decision/receipt, worktree, Git/command/process
 invocation, worker/supervisor dispatch, profile selection,
-billing/capacity/circuit fact, harness/network action, or live eligibility. The
-next recommended bounded slice is a separate library-only verifier for an
-untrusted returned shadow mapping that emits fixed privacy-safe replay findings
-and continues to grant no authority, persistence, repair, routing, dispatch,
-worker enablement, or effect.
+billing/capacity/circuit fact, harness/network action, or live eligibility.
+
+The fifth slice is the library-only
+`ordomata.repository_proposal_admission_verification` API
+`verify_repository_proposal_admission_shadow_mapping(value)`. It accepts only
+an exact built-in `dict`, snapshots it as bounded detached JSON, and
+independently mirrors the inspection contract. Evaluated inputs replay the
+Class 0/1 request, policy, manual expected decision, and captured evaluator;
+inert inputs must match an exact state-machine branch, and a reported replay
+failure must retain a constructible replay boundary. It emits fixed value-free
+findings. `contract_valid` establishes internal consistency only, not
+authenticity, durable reinspection or source truth, current freshness, route or
+dispatch eligibility, or authority. A coherent forgery or replay is
+indistinguishable without a trusted anchor. The verifier persists or repairs
+nothing, enforces or authorizes nothing, and has no worker, repository, command,
+route, billing, network, harness, dispatch, or live effect.
+
+The next recommended bounded slice is pure schema/validator support for
+generated/vendor exclusions in repository registrations, still with no
+execution or worker enablement.
 
 ## Adaptive promoted-profile routing (target)
 
