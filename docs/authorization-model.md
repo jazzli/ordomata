@@ -231,10 +231,50 @@ process invocation, worker or supervisor dispatch, route/profile selection,
 billing/capacity/circuit fact, harness call, or live eligibility. Baseline
 command results and generated/vendor exclusions remain deferred.
 
-The next recommended bounded slice is an independent read-only repository-
-proposal evidence inspector for one-and-only-one coverage, order, digest and
-linkage replay, fixed disabled semantics, and privacy-safe reporting, with no
-repair, worktree, command, worker, authorization, or dispatch.
+The third slice is the library-only `ordomata.repository_proposal_inspection`
+API `inspect_repository_proposal_evidence(database_path, *, run_id)`. It
+returns a privacy-bounded `RepositoryProposalInspectionReport` with fixed
+`inspection_scope: "single_run"`, `run_ref`, permission class, current status,
+`clean`, `coverage`, `truncated`, capped event count, optional independently
+validated proposal/registration/repository references and version, optional
+selection/binding digests and sequences, and bounded fixed-code
+`RepositoryProposalInspectionFinding` objects. Incomplete coverage is limited
+to an exact protocol-recoverable `CREATED`-only or
+`CREATED`-plus-selection evidence prefix. The
+mapping also fixes read-only inspection/validation, no repair, disabled
+dispatch, and no granted authority, and reports `evidence_complete` and finding
+count. Complete coverage requires the exact clean three-event chain; every other
+history is invalid. A clean result is complete, untruncated, and finding-free.
+More than four events sets `truncated` because the capped inspection cannot
+cover the history.
+This is proof about one caller-named run, not whole-database coverage.
+
+The inspector independently replays the durable run, event/payload digests,
+cardinality/order, proposal and registration-component links, and fixed Class
+0/1, runner, `CREATED`, read-only, dispatch-disabled, and no-authority facts
+from one read-only, query-only SQLite snapshot. The exact signed main file and
+optional WAL are staged into owner-private temporary storage under a fixed
+controller-owned 512 MiB combined ceiling; oversized state fails before copy.
+A no-WAL snapshot opens through an immutable read-only URI, while an in-budget
+WAL pair opens read-only. SQLite opens only the staged identity, and
+before/after source signatures detect concurrent changes. The inspector never
+instantiates `SQLiteStateStore`, creates source schema or sidecars, repairs
+evidence, or revalidates the registration against the live filesystem. Fixed
+findings and errors expose no raw identifiers, SQLite diagnostics, paths, argv,
+registration documents, proposal content, workspace/run-directory values, or
+artifact content. A clean report is PIP integrity evidence only: it is not a
+PDP decision, permit, obligation result, PEP, pre-effect record, action receipt,
+external tamper anchor, or authority grant.
+
+Inspection creates no source database/schema/sidecar or migration and persists
+no run, status, event, or authorization evidence. It creates no worktree and
+performs no Git/command/process invocation, worker or supervisor dispatch,
+route/profile selection, billing/capacity/circuit change, harness/network
+action, or live eligibility. The next recommended bounded slice is a
+controller-owned, non-enforcing repository-proposal admission ABAC shadow that
+binds only clean, complete inspection evidence to fixed Class 0/1 attributes
+and policy while granting no authority or repository, command, worker, route,
+billing, or dispatch effect.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
@@ -566,8 +606,9 @@ violation, not an instruction to follow.
    no-authority validation evidence. Controller-owned durable repository-
    registration selection and proposal-attempt binding are now implemented as
    two content-addressed, statusless PIP events for the fixed dispatch-disabled
-   sentinel run. Independent inspection, profile-resource authorization,
-   command, and tool coverage remain planned. Shadow mismatches are recorded
+   sentinel run. Independent single-run inspection is implemented;
+   profile-resource authorization, command, and tool coverage remain planned.
+   Shadow mismatches are recorded
    rather than rejected because the legacy class is still authoritative. Once
    enforcement migrates, derive the compatibility class from the request and
    mediate exact commands and tools at their point of use.

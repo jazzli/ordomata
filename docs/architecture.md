@@ -313,6 +313,17 @@ types, payloads, order, durable run linkage, and current status. This proves
 local evidence persistence, not authorization, an effect receipt, dispatch, or
 an external tamper anchor.
 
+Independent proposal inspection stages the exact signed main file and optional
+WAL into owner-private temporary storage under a fixed controller-owned 512 MiB
+combined ceiling; oversized state fails before copying. A no-WAL snapshot opens
+through an immutable read-only URI, while an in-budget WAL pair opens read-only.
+SQLite opens only the staged identity, and before/after source signatures detect
+concurrent changes. One query-only SQLite snapshot then covers the immutable run
+and ordered events. It
+never opens the mutating state-store abstraction, creates source schema or
+sidecars, repairs history, or claims that one caller-named run proves whole-
+database integrity.
+
 A run is successful only when all of the following hold:
 
 1. the process exits successfully;
@@ -543,13 +554,45 @@ worktree, Git or command execution, process, worker or supervisor dispatch,
 model/profile route,
 billing/capacity/circuit change, harness call, or live eligibility.
 
-The next recommended bounded slice is an independent read-only repository-
-proposal evidence inspector. From one consistent SQLite snapshot it should
-verify exactly-one selection/binding coverage, `created < selection < binding`
-ordering, content-addressed event identifiers, durable `RunRecord` and
-registration-component linkage, replayed fixed disabled semantics, and
-privacy-safe bounded findings without repair, mutation, worktree, command,
-worker, authorization, or dispatch.
+The third slice is the library-only `ordomata.repository_proposal_inspection`
+API `inspect_repository_proposal_evidence(database_path, *, run_id)`. It
+returns one `RepositoryProposalInspectionReport` with fixed
+`inspection_scope: "single_run"`, privacy-safe `run_ref`, permission class,
+current status, capped inspected-event count, optional validated proposal,
+registration, repository, selection, and binding references, digests, versions,
+and sequences, plus a bounded tuple of fixed-code
+`RepositoryProposalInspectionFinding` objects. `coverage: "incomplete"` means
+only an exact protocol-recoverable `CREATED`-only or
+`CREATED`-plus-selection evidence prefix.
+The mapping also fixes read-only inspection/validation, no repair, disabled
+dispatch, and no authority, and reports `evidence_complete` and finding count.
+`coverage: "complete"` requires the exact clean
+`CREATED < repository_registration_selection <
+repository_proposal_attempt_binding` chain; every other history is `invalid`.
+`clean` requires complete, untruncated evidence with no findings, and
+`truncated` is set when more than four events exist and the capped inspection
+cannot cover the history.
+The result proves exactly one caller-named run, not whole-state coverage.
+
+From that one read-only, query-only SQLite snapshot the inspector independently
+replays exact cardinality/order, content-addressed event identifiers, canonical
+payload digests, durable `RunRecord` and registration-component linkage, the
+repeated proposal digest, and the fixed Class 0/1, runner, `CREATED`, read-only,
+dispatch-disabled, and no-authority semantics. It never instantiates
+`SQLiteStateStore`, creates source schema or WAL/SHM sidecars, repairs state, or
+revalidates the registration against the live filesystem. Fixed findings and
+errors expose no raw identifiers, SQLite diagnostics, paths, argv,
+registration documents, proposal content, workspace/run-directory values, or
+artifact content.
+
+Inspection creates no run, status, event, authorization decision, action
+receipt, worktree, Git/command/process invocation, worker or supervisor
+dispatch, route/profile selection, billing/capacity/circuit change,
+harness/network action, or live eligibility. The next recommended bounded
+slice is a controller-owned, non-enforcing repository-proposal admission ABAC
+shadow that binds only clean, complete inspection evidence to fixed Class 0/1
+attributes and policy while granting no authority or repository, command,
+worker, route, billing, or dispatch effect.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor

@@ -191,11 +191,56 @@ call, or live eligibility. Baseline command results, generated/vendor
 exclusions, bare executable resolution/content attestation, and future
 `shell=False` execution remain deferred.
 
-The next recommended bounded slice is an independent read-only repository-
-proposal evidence inspector for exact cardinality, ordering, digest/replay,
-durable-run and registration-component linkage, fixed disabled semantics, and
-privacy-safe bounded findings, with no repair, worktree, command, worker,
-authorization, or dispatch.
+The third slice is the library-only `ordomata.repository_proposal_inspection`
+API `inspect_repository_proposal_evidence(database_path, *, run_id)`. It proves
+one caller-named durable run and returns a privacy-bounded
+`RepositoryProposalInspectionReport` with fixed
+`inspection_scope: "single_run"`, `run_ref`, permission class, current status,
+`clean`, `coverage`, `truncated`, a capped inspected-event count, optional
+validated proposal/registration/repository references and version, optional
+selection/binding digests and sequences, and bounded
+`RepositoryProposalInspectionFinding` objects containing fixed codes only.
+Its mapping also fixes read-only inspection/validation, no repair, disabled
+dispatch, and no granted authority, and reports `evidence_complete` and finding
+count.
+`coverage: "incomplete"` is limited to an exact protocol-recoverable
+`CREATED`-only or `CREATED`-plus-selection evidence prefix. The exact clean
+three-event chain is
+`complete`; every other history is `invalid`. `clean` requires complete,
+untruncated, finding-free evidence. More than four events sets `truncated`
+because the capped inspection cannot cover the history. This does not claim
+whole-database coverage.
+
+The inspector stages the exact signed main file and optional WAL into owner-
+private temporary storage under a fixed controller-owned 512 MiB combined
+ceiling; oversized state fails before copy. A no-WAL snapshot opens through an
+immutable read-only URI, while an in-budget WAL pair opens read-only. SQLite
+opens only the staged identity, and before/after source signatures detect
+concurrent changes. One query-only SQLite
+snapshot then covers the immutable run and ordered events. It independently
+replays exact cardinality/order, content-addressed event and canonical payload
+digests, durable-run, proposal, and registration-component linkage, and fixed Class 0/1,
+runner, `CREATED`, read-only, dispatch-disabled, and no-authority semantics. It
+never instantiates `SQLiteStateStore`, creates source schema or sidecars,
+repairs state, or revalidates the registration against the live filesystem.
+Fixed findings and errors expose no raw identifiers, SQLite diagnostics, paths,
+argv, registration documents, proposal content, workspace/run-directory
+values, or artifact content. It is not an external tamper anchor.
+
+A missing database or caller-named run raises fixed `RecordNotFoundError`;
+invalid run input raises fixed `ValidationError`; and unreadable, malformed,
+schema-incompatible, or concurrently changed state raises fixed
+`ConfigurationError`. Rejected values and SQLite diagnostics are never echoed.
+
+Inspection creates no source database/schema/sidecar or migration and persists
+no run, status, event, authorization decision, or action receipt. It creates no
+worktree and performs no Git/command/process invocation, worker or supervisor
+dispatch, route/profile selection, billing/capacity/circuit change,
+harness/network action, or live eligibility. The next recommended bounded
+slice is a controller-owned, non-enforcing repository-proposal admission ABAC
+shadow bound only to clean, complete inspection evidence and fixed Class 0/1
+attributes/policy, with no authority or repository, command, worker, route,
+billing, or dispatch effect.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and
@@ -350,6 +395,11 @@ specific authorization enforcement, and soak evidence remain planned.
   repository registration plus explicit canonical proposal digest to an
   existing `CREATED` dispatch-disabled sentinel run; it appends exactly two
   statusless content-addressed events and does not execute or authorize work.
+- `ordomata.repository_proposal_inspection.inspect_repository_proposal_evidence`:
+  library-only, source-preserving proof of one caller-named proposal run from
+  one read-only SQLite snapshot; the bounded report distinguishes exact
+  protocol-recoverable prefixes, a complete three-event chain, and every invalid
+  history with fixed privacy-safe finding codes and no repair or authority.
 - `ordomata auth-inspect`: source-preserving, SQLite read-only inspection of
   baseline schema/history and frozen migration-ledger integrity, authorization
   shadow integrity, authenticated freshness, legacy and authority-ceiling

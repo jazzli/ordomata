@@ -165,10 +165,48 @@ identity, paid-continuation, environment, isolation, circuit, or explicit live-
 gate prerequisites. Baseline results and generated/vendor exclusions remain
 deferred.
 
-The next recommended bounded slice is an independent read-only repository-
-proposal evidence inspector for exact cardinality/order, digest/replay and
-durable-run/component linkage, fixed disabled semantics, and privacy-safe
-findings, still with no repair, worktree, command, worker, authorization,
+The third slice is the library-only `ordomata.repository_proposal_inspection`
+API `inspect_repository_proposal_evidence(database_path, *, run_id)`. Its
+privacy-bounded `RepositoryProposalInspectionReport` fixes
+`inspection_scope: "single_run"` and returns `run_ref`, permission class,
+current status, `clean`, `coverage`, `truncated`, capped event count, optional
+validated proposal/registration/repository references and version, optional
+selection/binding digests and sequences, and bounded fixed-code findings. Its
+mapping also fixes read-only inspection/validation, no repair, disabled
+dispatch, and no granted authority, and reports evidence completeness and
+finding count. An exact protocol-recoverable `CREATED`-only or
+`CREATED`-plus-selection evidence prefix is incomplete; only the exact clean three-event
+chain is complete; every other history is invalid. `clean` requires complete,
+untruncated, finding-free
+evidence. More than four events sets `truncated` because the capped inspection
+cannot cover the history. One result proves only its caller-named run, never
+the whole database.
+
+The exact signed main file and optional WAL are staged into owner-private
+temporary storage under a fixed controller-owned 512 MiB combined ceiling;
+oversized state fails before copy. A no-WAL snapshot opens through an immutable
+read-only URI, while an in-budget WAL pair opens read-only. SQLite opens only
+the staged identity, and before/after source signatures detect concurrent
+changes. One query-only SQLite snapshot independently replays
+cardinality/order, event and payload digests, durable-run, proposal,
+registration-component linkage, and fixed Class 0/1, runner, `CREATED`,
+read-only, dispatch-disabled, and no-authority semantics. It never instantiates
+`SQLiteStateStore`, creates source schema or sidecars, repairs state,
+revalidates registration against the live filesystem, or provides an external
+tamper anchor. Fixed findings and errors expose no raw identifiers, SQLite
+diagnostics, paths, argv, registration/proposal content, workspace/run-directory
+values, or artifact content.
+
+Inspection creates no source database/schema/sidecar or migration and persists
+no run/status/event or authorization evidence. It creates no worktree and
+performs no Git/command/process invocation, worker/supervisor dispatch,
+route/profile selection, billing assessment, capacity/circuit event,
+harness/network action, or live eligibility. A clean report cannot satisfy
+route, capacity, identity, paid-continuation, environment, isolation, circuit,
+or explicit live-gate prerequisites. The next recommended bounded slice is a
+controller-owned, non-enforcing repository-proposal admission ABAC shadow bound
+only to clean, complete inspection evidence and fixed Class 0/1
+attributes/policy, still with no authority or repository, command, worker,
 billing, route, or dispatch effect.
 
 `compare-run` is an opt-in execution workflow, not a bypass. It requires the same live gate and current evidence for every selected profile before creating comparison records. Trials use one immutable sanitized Class 0 snapshot, randomized repetition blocks, fresh sessions and workspaces, no shared outputs, and no external actions. Reports expose raw automated dimensions and separate human-review fields; they do not declare a winner or auto-promote a profile.

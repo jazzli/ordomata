@@ -67,6 +67,10 @@ records.
   `repository-proposal-disabled` run, and exactly reads back one content-
   addressed `repository_registration_selection` event followed by one
   `repository_proposal_attempt_binding` event while the run remains `CREATED`;
+- independent, library-only repository-proposal inspection: the
+  `inspect_repository_proposal_evidence` API proves one caller-named run from a
+  single read-only SQLite snapshot and returns only bounded, privacy-safe
+  coverage, linkage, digest, sequence, and fixed-code findings;
 - isolated per-run workspaces, wall timeouts, terminal-event checks, and output validation;
 - append-only SQLite runs, events, artifacts, capacity observations, billing circuits, scheduler claims, and expiring leases, with capacity checked inside the atomic dispatch reservation; baseline creation and exact legacy adoption are transactional, and every ordinary open verifies the frozen, contiguous v1-v4 migration prefix before use;
 - a versioned additive SQLite migration for a durable supervisor control-plane
@@ -220,10 +224,57 @@ live eligibility. Baseline command results, generated/vendor exclusions, bare
 executable resolution and content attestation, and any future `shell=False`
 action-boundary execution remain deferred.
 
-The next recommended bounded slice is an independent read-only repository-
-proposal evidence inspector for exact cardinality, order, digest/replay,
-durable-run linkage, fixed disabled semantics, and privacy-safe reporting,
-still with no repair, worktree, command, worker, authorization, or dispatch.
+The third slice is the library-only `ordomata.repository_proposal_inspection`
+API `inspect_repository_proposal_evidence(database_path, *, run_id)`. It
+independently inspects one caller-named durable proposal run and returns a
+`RepositoryProposalInspectionReport` with
+fixed `inspection_scope: "single_run"`, privacy-safe `run_ref`, `clean`,
+`coverage`, `truncated`, a capped inspected-event count, permission class and
+current status, optional validated proposal/registration/repository references
+and version, optional selection/binding digests and sequences, and a bounded
+tuple of `RepositoryProposalInspectionFinding` objects containing fixed codes
+only. Its mapping also fixes read-only inspection/validation, no repair,
+disabled dispatch, and no granted authority, and reports `evidence_complete`
+and the finding count. This is an exact single-run proof, never a claim of
+whole-database coverage. `coverage: "incomplete"` is reserved for an otherwise
+exact, protocol-recoverable `CREATED`-only or `CREATED`-plus-selection evidence
+prefix;
+`coverage: "complete"` requires the exact clean three-event chain; every other
+history is `invalid`. `clean` requires complete, untruncated evidence with no
+findings. Inspection sets `truncated` when more than four events exist and its
+capped read cannot cover the history.
+
+The inspector stages the exact signed main file and optional WAL into owner-
+private temporary storage under a fixed controller-owned 512 MiB combined
+ceiling; oversized state fails before copying. A no-WAL snapshot opens through
+an immutable read-only URI, while an in-budget WAL pair opens read-only. SQLite
+opens only the staged identity, and before/after source signatures detect
+concurrent changes. One query-only snapshot then covers the immutable run and
+ordered events. It never instantiates `SQLiteStateStore`,
+creates source schema or sidecars, or repairs state. It
+independently replays event cardinality and order, content-addressed identifiers
+and canonical payload digests, durable-run and registration-component links,
+the repeated proposal digest, and fixed Class 0/1, runner, `CREATED`, read-only,
+dispatch-disabled, and no-authority semantics. It does not revalidate the
+registration against the live filesystem. Its fixed findings and errors expose
+no raw identifiers, SQLite diagnostics, paths, argv, registration documents,
+proposal content, workspace/run-directory values, or artifact content. The
+proof is not an external tamper anchor.
+
+A missing database or caller-named run raises a fixed `RecordNotFoundError`;
+an invalid run request raises a fixed `ValidationError`; and unreadable,
+malformed, schema-incompatible, or concurrently changed state raises a fixed
+`ConfigurationError`. None includes the rejected value or SQLite diagnostic.
+
+Inspection has no CLI, creates no source database/schema/sidecar or migration,
+persists no run, status, event, authorization decision, or action receipt, and
+creates no worktree. It performs no Git/subprocess call, worker or supervisor
+dispatch, profile route, billing/capacity/circuit change, harness/network
+action, or live eligibility. The next recommended bounded slice is a
+controller-owned, non-enforcing repository-proposal admission ABAC
+shadow that binds only clean, complete inspection evidence to fixed Class 0/1
+attributes and policy while still granting no authority or repository,
+command, worker, route, billing, or dispatch effect.
 
 ## Quick start
 

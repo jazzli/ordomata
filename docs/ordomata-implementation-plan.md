@@ -55,6 +55,10 @@ The repository already provides the foundation this plan extends:
   `CREATED` `repository-proposal-disabled` run receives exactly two statusless,
   content-addressed events after fresh registration validation and an explicit
   canonical proposal digest, with exact readback and no dispatch or authority;
+- library-only, source-preserving inspection that proves one caller-named
+  repository-proposal run from one read-only SQLite snapshot and returns only
+  bounded single-run coverage, validated linkage, and fixed privacy-safe
+  findings without repair or authority;
 - a versioned additive SQLite supervisor migration with immutable mock-only
   flow admission, append-only optimistic control/flow/attempt revisions, sticky
   cancellation, fenced multi-resource claim APIs, and an internal local
@@ -180,10 +184,49 @@ command/process/worker/supervisor dispatch, routing, billing, harness, or live-
 route effect. Baseline command results and generated/vendor exclusions remain
 deferred.
 
-The next recommended bounded slice is an independent read-only repository-
-proposal evidence inspector for cardinality, ordering, digest/replay, durable-
-run and component linkage, fixed disabled semantics, and privacy-safe bounded
-findings, with no repair, worktree, command, worker, authorization, or dispatch.
+The third Phase 3 slice is the library-only
+`ordomata.repository_proposal_inspection` API
+`inspect_repository_proposal_evidence(database_path, *, run_id)`. It returns a
+privacy-bounded `RepositoryProposalInspectionReport` for exactly one
+caller-named run with fixed `inspection_scope: "single_run"`, `run_ref`,
+permission class/current
+status, `clean`, `coverage`, `truncated`, capped inspected-event count, optional
+validated proposal/registration/repository references and version, optional
+selection/binding digests and sequences, and bounded fixed-code findings. The
+mapping also fixes read-only inspection/validation, no repair, disabled
+dispatch, and no granted authority, and reports evidence completeness and
+finding count. An exact protocol-recoverable `CREATED`-only or
+`CREATED`-plus-selection evidence prefix is incomplete; only the exact clean three-event
+chain is complete; every other history is invalid. `clean` requires complete,
+untruncated, finding-free
+evidence. More than four events sets `truncated` because the capped inspection
+cannot cover the history; the result never claims whole-database coverage.
+
+The exact signed main file and optional WAL are staged into owner-private
+temporary storage under a fixed controller-owned 512 MiB combined ceiling;
+oversized state fails before copy. A no-WAL snapshot opens through an immutable
+read-only URI, while an in-budget WAL pair opens read-only. SQLite opens only
+the staged identity, and before/after source signatures detect concurrent
+changes. One query-only SQLite snapshot covers the immutable run and
+ordered events. The inspector independently replays cardinality/order,
+content-addressed event and canonical payload digests, durable-run, proposal,
+and registration-component linkage, and fixed Class 0/1, runner, `CREATED`,
+read-only, dispatch-disabled, and no-authority semantics. It never instantiates
+`SQLiteStateStore`, creates source schema or sidecars, repairs evidence, or
+revalidates the registration against the live filesystem. Its fixed findings
+and errors expose no raw identifiers, SQLite diagnostics, paths, argv,
+registration documents, proposal content, workspace/run-directory values, or
+artifact content, and it is not an external tamper anchor.
+
+Inspection creates no source database/schema/sidecar or migration and persists
+no run, status, event, authorization decision, or action receipt. It creates no
+worktree and performs no Git/command/process invocation, worker or supervisor
+dispatch, route/profile selection, billing/capacity/circuit change,
+harness/network action, or live eligibility. The next recommended bounded
+slice is a controller-owned, non-enforcing repository-proposal admission ABAC
+shadow bound only to clean, complete inspection evidence and fixed Class 0/1
+attributes/policy, with no authority or repository, command, worker, route,
+billing, or dispatch effect.
 
 The target semantics for Class 3 standing envelopes, irreversible actions,
 the non-delegable root-authority kernel, consequential outbox execution,
@@ -620,8 +663,8 @@ satisfied.
 
 ## Phase 3 - Repository registrations and isolated worker cells
 
-**Implementation checkpoint — read-only registration and proposal evidence,
-not worker-cell enablement:** standalone
+**Implementation checkpoint — read-only registration, proposal evidence, and
+single-run inspection, not worker-cell enablement:** standalone
 `schemas/repository-registration.schema.json` schema v1 and the pure
 `ordomata.repository_registration` validator implement the initial contract
 boundary. They validate a controller-supplied ordinary Git root and stable
@@ -646,10 +689,15 @@ predecessor event IDs, then requires exact readback from one consistent SQLite
 snapshot. Only privacy-bounded digest/version and attempt-control metadata is
 stored. It creates no run or status transition and adds no SQLite migration,
 authorization, worktree, command, process, worker, dispatch, route, billing, or
-live capability. Independent read-only inspection is the next slice. Baseline
-results and generated/vendor exclusions remain deferred, as do bare executable
-resolution and content attestation, future `shell=False` action-boundary
-execution, and every worker-cell deliverable below.
+live capability. The implemented library-only inspector now proves one
+caller-named run from one read-only SQLite snapshot, distinguishes exact
+protocol-recoverable prefixes from the complete three-event chain and invalid history,
+and emits only bounded fixed-code findings. It makes no whole-database or
+external-tamper-anchor claim and does not revalidate registration against the
+live filesystem. Baseline results and generated/vendor exclusions remain
+deferred, as do bare executable resolution and content attestation, future
+`shell=False` action-boundary execution, and every worker-cell deliverable
+below.
 
 ### Deliverables
 
@@ -664,9 +712,9 @@ execution, and every worker-cell deliverable below.
   - resource, timeout, network, and artifact limits;
   - required isolation backend;
   - review-only branch/patch policy.
-- Continue from the implemented path resolution and digest-bound registration
-  selection/proposal-attempt linkage by adding independent read-only evidence
-  inspection before any worktree or command path.
+- Preserve the implemented independent, single-run, read-only evidence
+  inspection as a mandatory proof boundary before any future worktree or
+  command path; a clean report alone still grants no authority.
 - Create one disposable detached Git worktree per Class 1 job. Never modify the operator's primary checkout or create a branch.
 - Keep the base repository read-only from the worker's perspective and expose only the job worktree plus bounded temporary storage.
 - Keep the repository's shared Git directory, refs, config, hooks, indexes, and credentials controller-only. Hide the worktree's `.git` pointer and do not mount the common Git directory into the worker cell. A worker edits only materialized source files without Git authority; the controller owns worktree lifecycle and computes the resulting patch.
