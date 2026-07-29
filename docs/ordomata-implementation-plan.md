@@ -50,11 +50,14 @@ The repository already provides the foundation this plan extends:
 - isolated per-run directories and read-only/tool-disabled synthesis runs;
 - append-only SQLite runs, events, artifacts, schedule claims, and leases, with
   transactional baseline initialization and frozen migration-ledger integrity;
-- pure, version-dispatched validation for frozen repository-registration schema
-  v1 and separate schemas v2/v3, including generated/vendor exclusions and
-  aggregate-only controller-supplied baseline results, plus library-only,
-  controller-owned repository-proposal selection and binding pinned to v1
-  evidence: an existing `CREATED`
+- pure, version-dispatched validation for frozen repository-registration
+  schemas v1 through v4, including generated/vendor exclusions, aggregate-only
+  controller-supplied baseline results, and opaque executable/toolchain claims;
+  a separate library-only schema-v1 direct-executable resolver returns bounded
+  sequential evidence after fresh exact-v4 revalidation without claiming an
+  atomic snapshot, freshness, authority, or execution; and library-only,
+  controller-owned repository-proposal selection and binding remains pinned to
+  v1 evidence: an existing `CREATED`
   `repository-proposal-disabled` run receives exactly two statusless, content-
   addressed events after fresh registration validation and an explicit canonical
   proposal digest, with exact readback and no dispatch or authority;
@@ -224,6 +227,31 @@ dynamic-loader, package, or version inspection and executes nothing. Existing
 registration root and repository-relative path/executable safety checks are
 unchanged.
 
+The ninth slice adds the separate library-only schema-v1 receipt in
+`ordomata.repository_executable_resolution`. It rejects schemas v1 through v3
+before resolution inspection and freshly revalidates exact schema v4. Under
+fixed `controller_measured` / `posix_nofollow_v1` semantics, bare names use
+only bounded, ordered, controller-supplied absolute search directories; no
+ambient `PATH`, relative/empty entry, implicit cwd, or suffix expansion is
+accepted. Slash-containing `argv[0]` initially requires `cwd: "."` and resolves
+from the registered repository root. Pinned directory descriptors, no-follow
+descriptor-relative lookup, complete direct-file hashing, metadata/namespace/
+precedence rechecks, and final registration revalidation reject symlinks,
+special or sparse files, missing execute bits, and detected drift/races. Each
+unique file is limited to 64 MiB and the aggregate to 256 MiB.
+
+The receipt binds the registration, repository, verification-command,
+baseline, schema-v4 opaque-identity aggregate, and resolution-context digests.
+Its evidence is aggregate-only and bounded. This is a point-in-time,
+non-reusable direct-file observation: current freshness, provenance,
+invocability, interpreter/dependency identity, complete toolchain,
+snapshot/baseline correspondence, and future execution correspondence remain
+false. The receipt grants no authority or dispatch, is not an action receipt,
+route/billing/capacity fact, or live eligibility, and adds no CLI, persistence,
+subprocess, or execution path. Evidence fixes
+`sequential_resolution_measurement_complete: true` and
+`atomic_snapshot_verified: false`; no atomic filesystem snapshot is claimed.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -241,8 +269,10 @@ not. The events reuse existing `run_events` and add no migration, run creation
 or status transition, authorization decision or action receipt, worktree,
 command/process/worker/supervisor dispatch, routing, billing, harness, or live-
 route effect. This chain remains pinned to frozen registration evidence v1 and
-rejects v2 through v4 before any event append. Trusted executable resolution,
-content and completeness attestation, and execution receipts remain deferred.
+rejects v2 through v4 before any event append. The separate executable-
+resolution receipt is not proposal evidence and does not widen that chain.
+Complete interpreter/dependency/toolchain attestation and execution receipts
+remain deferred.
 Only Class 0/1 effects remain enabled.
 
 The third Phase 3 slice is the library-only
@@ -353,9 +383,16 @@ lookup, resolution, or inspection and no execution, persistence, repair,
 worker, route, billing, network, harness, dispatch, authorization, or live
 effect. Frozen schemas v1 through v3
 retain their exact canonical/evidence meanings, and proposal lineage remains
-v1-only. Trusted controller-owned resolution and content-manifest receipts
-remain a separate future boundary before execution or proposal-lineage
-widening.
+v1-only.
+
+The ninth bounded Phase 3 slice is the separate schema-v1 direct-executable
+receipt described above. Exact schema-v4 revalidation plus bounded descriptor-
+based `controller_measured` / `posix_nofollow_v1` lookup measures only direct
+`argv[0]` bytes and emits aggregate-only, point-in-time, non-reusable evidence.
+It changes no registration schema or proposal lineage and adds no persistence,
+authority, dispatch, action receipt, routing, billing, live eligibility, or
+execution. Complete interpreter/dependency manifests, action-time
+remeasurement, and execution remain future boundaries.
 
 The target semantics for Class 3 standing envelopes, irreversible actions,
 the non-delegable root-authority kernel, consequential outbox execution,
@@ -871,10 +908,11 @@ fixed value-free findings and `contract_valid` establish internal consistency on
 without a trusted anchor, coherent forgery or replay remains indistinguishable.
 It performs no durable reinspection, freshness proof, persistence, repair,
 enforcement, authorization, or action. The proposal chain remains registration-
-evidence-v1-only, so v2 through v4 fail before an event append. Trusted
-executable resolution, content and toolchain-completeness receipts, future
-`shell=False` action-boundary execution, and every worker-cell deliverable
-below remain deferred. Only Class 0/1 effects remain enabled.
+evidence-v1-only, so v2 through v4 fail before an event append. The separate
+point-in-time direct-executable receipt is implemented but is not proposal
+evidence or execution authority. Complete interpreter/dependency/toolchain
+receipts, future `shell=False` action-boundary execution, and every worker-cell
+deliverable below remain deferred. Only Class 0/1 effects remain enabled.
 
 ### Deliverables
 
@@ -886,8 +924,11 @@ below remain deferred. Only Class 0/1 effects remain enabled.
   - baseline command results (schema v3 validation implemented; authenticated
     provenance and operational consumption remain deferred);
   - opaque executable/toolchain identity claims (schema v4 validation
-    implemented; trusted resolution, content, completeness, provenance, and
-    operational consumption remain deferred);
+    implemented; their opaque values remain unverified and unconsumed);
+  - controller-measured direct-executable resolution (separate schema-v1
+    receipt implemented; current freshness, provenance, invocability,
+    interpreter/dependency coverage, completeness, and operational consumption
+    remain deferred);
   - protected and allowed paths;
   - generated/vendor exclusions (schema v2 validation implemented; operational
     consumption remains deferred);

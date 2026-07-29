@@ -248,6 +248,32 @@ executable safety checks are unchanged. These facts cannot satisfy an ABAC
 attribute, authorization, command PEP, action receipt, or Class 2/3 effect;
 only Class 0/1 remains enabled.
 
+The separate library-only schema-v1 receipt in
+`ordomata.repository_executable_resolution` is a bounded Class 0 PIP
+measurement, not a new registration schema or executable PEP. It rejects
+schemas v1 through v3 before resolution inspection, freshly revalidates exact
+schema v4, and binds the registration, repository, commands, baseline,
+schema-v4 opaque-identity aggregate, and resolution context. Under the fixed
+`controller_measured` / `posix_nofollow_v1` profile, bare names use only
+bounded controller-supplied absolute search directories. Slash-containing
+declarations initially require repository-root `cwd: "."`. Pinned directory
+descriptors, no-follow descriptor-relative traversal, complete direct-file
+hashing, metadata and namespace rechecks, and final registration revalidation
+fail closed on symlinks, special or sparse files, missing execute bits, and
+detected drift/races. The limits are 64 MiB per unique file and 256 MiB total.
+
+Its outward evidence is aggregate-only and fixes
+`sequential_resolution_measurement_complete: true` plus
+`atomic_snapshot_verified: false`. The receipt is explicitly a sequential,
+point-in-time, non-reusable measurement, not an atomic filesystem snapshot. It
+does not verify current freshness, executable
+authenticity/provenance, effective invocability, interpreter, launcher,
+dependency or environment identity, toolchain completeness, repository-
+snapshot or baseline correspondence, or future execution correspondence.
+Those false facts cannot satisfy authorization, dispatch, action-receipt,
+routing, billing/capacity, or live-run predicates. The API adds no CLI,
+persistence, subprocess, execution, or proposal-lineage consumption.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -278,8 +304,9 @@ process invocation, worker or supervisor dispatch, route/profile selection,
 billing/capacity/circuit fact, harness call, or live eligibility. The frozen
 registration schema-v1 evidence meaning remains the only version accepted by
 this proposal chain. Schema-v2 through schema-v4 registrations fail before any
-event append. Trusted executable resolution, content and completeness
-attestation, and execution receipts remain deferred.
+event append. The separate direct-executable measurement receipt is not
+proposal evidence and does not widen this chain. Complete interpreter,
+dependency, and toolchain attestation plus execution receipts remain deferred.
 
 The third slice is the library-only `ordomata.repository_proposal_inspection`
 API `inspect_repository_proposal_evidence(database_path, *, run_id)`. It
@@ -395,9 +422,15 @@ identity-claim contract described above. It establishes no authenticated
 identity, current freshness, resolution, content, complete toolchain,
 execution fact, ABAC attribute, permission, or effect. Frozen schemas v1
 through v3 retain their exact canonical and evidence meanings, and proposal
-evidence remains v1-only. Trusted controller-owned resolution and content-
-manifest receipts remain a separate future boundary before execution or
-proposal-lineage widening.
+evidence remains v1-only.
+
+The ninth bounded Phase 3 slice adds the separate schema-v1 direct-executable
+receipt described above. Exact schema-v4 revalidation and bounded descriptor-
+based measurement establish only a point-in-time direct-file observation.
+Aggregate evidence grants no ABAC attribute, permission, dispatch, action
+receipt, persistence, route, billing, live eligibility, or execution effect;
+proposal lineage remains v1-only. Complete interpreter/dependency manifests,
+action-time remeasurement, and execution remain future boundaries.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and

@@ -61,6 +61,9 @@ FROZEN_REGISTRATION_SCHEMA_V2_SHA256 = (
 FROZEN_REGISTRATION_SCHEMA_V3_SHA256 = (
     "9b9f8175de30eb56086526fbf7e885c2616088f470f73b8e8872e073ea48f1cb"
 )
+FROZEN_REGISTRATION_SCHEMA_V4_SHA256 = (
+    "b341b4b0a8d0144ee6537f84fc5c78242b156058654ea0c8fa555e0b9c4b6123"
+)
 LEGACY_REGISTRATION_CANONICAL_KEYS = {
     "isolation_requirements",
     "kind",
@@ -518,6 +521,10 @@ class RepositoryRegistrationTests(unittest.TestCase):
         self.assertEqual(
             hashlib.sha256(REGISTRATION_SCHEMA_V3.read_bytes()).hexdigest(),
             FROZEN_REGISTRATION_SCHEMA_V3_SHA256,
+        )
+        self.assertEqual(
+            hashlib.sha256(REGISTRATION_SCHEMA_V4.read_bytes()).hexdigest(),
+            FROZEN_REGISTRATION_SCHEMA_V4_SHA256,
         )
         schema_v1 = json.loads(REGISTRATION_SCHEMA.read_text(encoding="utf-8"))
         schema_v2 = json.loads(

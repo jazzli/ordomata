@@ -249,9 +249,25 @@ parallel because it cannot exercise worker authority.
   prior meanings. It adds no trusted resolution, content or completeness fact,
   execution, persistence, dispatch, eligibility, or authority. Only Class 0/1
   effects remain enabled.
-- Trusted controller-owned executable resolution and content-manifest receipts
-  remain a separate future boundary before command execution or proposal-
-  lineage widening.
+- The ninth bounded Phase 3 slice implements a separate library-only schema-v1
+  direct-executable receipt for freshly revalidated exact schema-v4
+  registrations. Its fixed `controller_measured` / `posix_nofollow_v1`
+  resolver uses at most 32 explicit absolute search directories for bare names
+  and initially requires `cwd: "."` for repository-root-relative executables.
+  Descriptor-pinned no-follow lookup hashes the complete direct file, rejects
+  symlinks, special/sparse/non-executable entries and detected drift/races, and
+  caps unique files at 64 MiB each and 256 MiB total. Aggregate-only evidence
+  fixes `sequential_resolution_measurement_complete: true` and
+  `atomic_snapshot_verified: false`; it is point-in-time and non-reusable, not
+  an atomic filesystem snapshot. Current freshness, provenance/authenticity, effective
+  invocability, interpreter/dependency coverage, toolchain completeness,
+  snapshot/baseline and future-execution correspondence, authority, dispatch,
+  action-receipt status, routing/billing/capacity facts, and live eligibility
+  remain false. It adds no schema change, proposal lineage, CLI, persistence,
+  subprocess, or execution path.
+- Complete interpreter/dependency/toolchain manifests, action-time
+  remeasurement, and command execution remain future boundaries before any
+  proposal-lineage or operational widening.
 - Extend the three durable enforcing decision/action-receipt chains beyond the
   narrow profile-backed built-in-mock admission, dispatch, and publication
   boundaries only after semantics and parity stabilize.

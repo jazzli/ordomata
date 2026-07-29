@@ -173,6 +173,31 @@ launcher/module/plugin/dynamic-loader/package/version inspection, or execution.
 Existing registration root and repository-relative path/executable safety
 checks are unchanged.
 
+The separate library-only `ordomata.repository_executable_resolution`
+schema-v1 receipt accepts only a freshly revalidated exact schema-v4
+registration. Under fixed `controller_measured` / `posix_nofollow_v1`
+semantics it searches bare names only in at most 32 explicit controller-
+supplied absolute directories; ambient `PATH`, empty or relative entries,
+implicit cwd, and suffix expansion are absent. Slash-containing declarations
+initially require `cwd: "."` and resolve from the registered repository root.
+Pinned descriptors, no-follow descriptor-relative lookup, complete direct-file
+hashing, metadata/namespace/precedence rechecks, and final registration
+revalidation reject symlinks, special or sparse files, missing execute bits,
+and detected drift/races. The bounds are 64 MiB per unique file and 256 MiB
+total.
+
+Its evidence exposes only aggregate digests and bounded counts. The receipt is
+point-in-time and non-reusable and keeps current freshness,
+authenticity/provenance, effective invocability, interpreter/dependency
+coverage, toolchain completeness, repository-snapshot or baseline
+correspondence, and future execution correspondence false. It supplies no
+subscription identity, paid-continuation protection, capacity, billing route,
+circuit, live-gate, authorization, dispatch, action receipt, or live
+eligibility and adds no CLI, persistence, subprocess, or execution path.
+Evidence fixes `sequential_resolution_measurement_complete: true` and
+`atomic_snapshot_verified: false`; completion is sequential and does not prove
+an atomic filesystem snapshot.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration and binds it plus an explicit canonical
 `proposal_digest` to an existing immutable Class 0/1
@@ -309,9 +334,16 @@ identity-claim contract described above. It creates no trusted identity,
 resolution, content, completeness, execution, subscription, billing, capacity,
 route, or live-gate evidence. Frozen schemas v1 through v3 retain their prior
 meanings, frozen schema v1 remains the only proposal-lineage version, and only
-Class 0/1 effects remain enabled. Trusted controller-owned resolution and
-content-manifest receipts remain a separate future boundary before execution or
-proposal-lineage widening.
+Class 0/1 effects remain enabled.
+
+The ninth bounded Phase 3 slice adds the separate schema-v1 direct-executable
+receipt described above. Fresh schema-v4 revalidation and bounded descriptor-
+based measurement produce only aggregate, point-in-time, non-reusable local
+evidence. It cannot satisfy any subscription-only gate and changes no
+registration schema, proposal lineage, persistence, authority, route, billing,
+capacity, circuit, live eligibility, or execution path. Complete interpreter/
+dependency manifests, action-time remeasurement, and execution remain future
+boundaries.
 
 `compare-run` is an opt-in execution workflow, not a bypass. It requires the same live gate and current evidence for every selected profile before creating comparison records. Trials use one immutable sanitized Class 0 snapshot, randomized repetition blocks, fresh sessions and workspaces, no shared outputs, and no external actions. Reports expose raw automated dimensions and separate human-review fields; they do not declare a winner or auto-promote a profile.
 
