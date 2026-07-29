@@ -128,11 +128,21 @@ Selection evidence never grants authority and never makes stale or unsafe billin
 evidence eligible. The `route` command remains a read-only preview, and an
 explicit profile rejected before run creation intentionally leaves no event.
 
-The next recommended narrow slice is a versioned, privacy-bounded repository-
-registration contract and read-only validator for canonical repository
-identity, exact verification argv, protected and allowed paths, and resource
-and isolation limits. It must not create a worktree, invoke a command or worker,
-enable supervisor dispatch, or enable a live route.
+The standalone schema-v1 repository-registration contract and pure read-only
+validator are implemented. They validate a controller-supplied ordinary Git
+root, stable repository/filesystem references, exact verification argv-array
+(not shell-text) declarations, canonical protected/allowed paths, bounded
+resource limits, fixed local-
+container/network-disabled isolation, and patch-only review policy, then return
+digest-only evidence that declares `dispatch_enabled: false` and
+`authority_granted: false`. They do not participate in profile selection,
+create routing or run evidence, invoke Git, a subprocess, or a worker, enable
+supervisor dispatch, or change live-route eligibility. Baseline results and
+generated/vendor exclusions remain deferred.
+
+The next recommended bounded slice is controller-owned registration selection
+and digest-only attempt binding for a dispatch-disabled repository proposal,
+with exact durable readback but still no worktree, command, worker, or authority.
 
 ## Adaptive promoted-profile routing (target)
 

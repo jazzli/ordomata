@@ -132,11 +132,21 @@ billing route, or live gate; invoke no harness; and enable no credit, overage,
 API, cloud, comparison, supervisor, or external-action fallback. Schema-v1
 through v5 histories retain their prior billing and authorization meanings.
 
-The next narrow repository-registration slice is deterministic and read-only.
-It may validate and hash canonical repository identity, exact verification
-argv, protected and allowed paths, and resource and isolation limits, but it
-must not create a worktree, invoke a command or worker, enable supervisor
-dispatch, or change billing or live-route eligibility.
+The standalone schema-v1 repository-registration contract and pure validator
+now deterministically validate and hash a controller-supplied ordinary Git
+identity, stable filesystem reference, exact verification argv-array (not
+shell-text) declarations, canonical protected/allowed paths, bounded resource
+limits, fixed local-
+container/network-disabled isolation, and patch-only review policy. Their
+digest-only evidence explicitly declares read-only use, disabled dispatch, and
+no granted authority. They invoke no Git command, subprocess, worker, harness,
+or network service; create no worktree, state/event record, or attempt binding;
+and change no authorization, billing gate, circuit, capacity, or live-route
+eligibility. Baseline results and generated/vendor exclusions remain deferred.
+
+The next recommended bounded slice is controller-owned registration selection
+and digest-only attempt binding for a dispatch-disabled repository proposal,
+with exact durable readback but still no worktree, command, worker, or authority.
 
 `compare-run` is an opt-in execution workflow, not a bypass. It requires the same live gate and current evidence for every selected profile before creating comparison records. Trials use one immutable sanitized Class 0 snapshot, randomized repetition blocks, fresh sessions and workspaces, no shared outputs, and no external actions. Reports expose raw automated dimensions and separate human-review fields; they do not declare a winner or auto-promote a profile.
 

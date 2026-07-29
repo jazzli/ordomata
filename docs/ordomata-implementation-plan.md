@@ -143,11 +143,23 @@ effect record before post-replay action-time freshness and staging. Schema-v1
 through v5 histories retain their frozen meanings. Dispatch remains limited to
 Class 0/1 requests for the exact profile-backed controller-owned `MockRunner`,
 while new attempts still require Class 1 admission and publication remains an
-owner-private Class 1 local effect. The next recommended narrow slice is a
-versioned, privacy-bounded repository-registration contract and read-only
-validator for canonical repository identity, exact verification argv,
-protected and allowed paths, and resource and isolation limits. It must not
-create a worktree, invoke a command or worker, or enable supervisor dispatch.
+owner-private Class 1 local effect.
+
+The first Phase 3 repository-registration slice is implemented as a standalone
+schema-v1 contract and pure read-only validator. It reduces a strict controller-
+supplied ordinary Git root to stable repository/filesystem references; validates
+exact verification argv-array (not shell-text) declarations, canonical
+protected/allowed paths, bounded resource limits, fixed local-container/network-
+disabled isolation, and patch-only review policy; and returns digest-only
+evidence declaring read-only use,
+disabled dispatch, and no granted authority. Git and Ordomata state paths are
+always protected, while traversal and symlink escapes fail closed. It has no
+CLI, persistence, attempt binding, worktree, command, worker, authorization,
+supervisor-dispatch, billing, or live-route effect. Baseline command results and
+generated/vendor exclusions remain deferred. The next recommended bounded slice
+is controller-owned registration selection and digest-only attempt binding for
+a dispatch-disabled repository proposal, with exact durable readback but still
+no worktree, command, worker, or authority.
 
 The target semantics for Class 3 standing envelopes, irreversible actions,
 the non-delegable root-authority kernel, consequential outbox execution,
@@ -341,9 +353,10 @@ Planned logical records:
 The current additive schema migration implements only the bounded Phase 2
 control-plane subset: mock-only immutable flow records, append-only control/
 flow/attempt events, sticky cancellation requests, fenced leases/claims, and
-the internal local completion outbox/delivery receipts. Authorization records,
-repository registrations, worker execution, and consequential-action delivery
-remain planned.
+the internal local completion outbox/delivery receipts. The standalone
+repository-registration schema and validator do not persist registrations;
+authorization records, durable repository selection/binding, worker execution,
+and consequential-action delivery remain planned.
 
 Historical run, event, attempt, artifact, authorization request/decision,
 action receipt, outbox intent/outcome, approval, policy activation, context
@@ -577,9 +590,31 @@ satisfied.
 
 ## Phase 3 - Repository registrations and isolated worker cells
 
+**Implementation checkpoint — read-only registration contract, not worker-cell
+enablement:** standalone `schemas/repository-registration.schema.json` schema v1
+and the pure `ordomata.repository_registration` validator implement the initial
+contract boundary. They validate a controller-supplied ordinary Git root and
+stable repository/filesystem references; format, lint, type-check, test, and
+build as exact argv-array (not shell-text) declarations; canonical protected and
+allowed POSIX paths with mandatory `.git`, `.ordomata`, and `.agentops`
+protection; bounded
+CPU, memory, process, workspace, output, artifact, wall, and idle limits; fixed
+local-container/network-disabled isolation; and patch-only/no-Git-publication
+review policy. Case-insensitive aliases of controller-owned paths, traversal,
+and symlink escapes fail closed. Registration versions are bounded canonical
+SemVer; credential/billing option names, known shell launchers, and protected
+relative executables are rejected. The result is digest-only evidence with
+fixed read-only, dispatch-disabled, and no-authority facts.
+It creates no state or event, task/attempt binding, worktree, command, worker,
+authorization, dispatch, billing, or live-route capability. Baseline results
+and generated/vendor exclusions remain deferred, as do bare executable
+resolution and content attestation, future `shell=False` action-boundary
+execution, and every worker-cell deliverable below. The validator authorizes
+and executes nothing.
+
 ### Deliverables
 
-- Add a versioned repository-registration contract containing:
+- Complete the versioned repository-registration contract containing:
   - canonical repository path and identity;
   - authoritative format, lint, type-check, test, and build argv arrays;
   - baseline command results;

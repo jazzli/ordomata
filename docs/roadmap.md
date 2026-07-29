@@ -112,11 +112,22 @@ parallel because it cannot exercise worker authority.
 - Preserve the implemented schema-v6 authoritative task-intent lineage and its
   shadow-independent dispatch and publication replay; schema-v1 through v5
   histories retain their frozen meanings.
-- Next, add a versioned, privacy-bounded repository-registration contract and
-  read-only validator for canonical repository identity, exact verification
-  argv, protected and allowed paths, and resource and isolation limits. Hash the
-  registration evidence without creating a worktree, invoking a command or
-  worker, or enabling supervisor dispatch.
+- The standalone schema-v1 repository-registration contract and pure read-only
+  validator are implemented. They derive stable repository/filesystem
+  references from a controller-supplied ordinary Git root; validate exact argv-array
+  (not shell-text) verification declarations, canonical protected/allowed
+  paths, bounded resource
+  limits, fixed local-container/network-disabled isolation, and patch-only
+  review policy; and return digest-only evidence that explicitly grants no
+  authority or dispatch. Mandatory `.git`, `.ordomata`, and `.agentops`
+  protection plus traversal/symlink rejection fail closed. There is no CLI,
+  persistence, attempt binding, worktree, command, worker, supervisor dispatch,
+  billing change, or live-route change. Baselines and generated/vendor
+  exclusions remain deferred.
+- The next recommended bounded slice is controller-owned registration selection
+  and digest-only attempt binding for a dispatch-disabled repository proposal,
+  with exact durable readback but still no worktree, command, worker, or
+  authority.
 - Extend the three durable enforcing decision/action-receipt chains beyond the
   narrow profile-backed built-in-mock admission, dispatch, and publication
   boundaries only after semantics and parity stabilize.

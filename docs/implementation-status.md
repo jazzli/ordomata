@@ -142,11 +142,34 @@ publication, tools, commands, or external effects.
 These lineage slices advance only current exact-mock task bindings to schema v6;
 they change no enforcing decision-event or action-receipt schema and add no
 authority. Frozen schema-v1 through v5 histories retain their prior
-interpretation. The next recommended narrow slice is a versioned, privacy-
-bounded repository-registration contract and read-only validator for canonical
-repository identity, exact verification argv, protected and allowed paths, and
-resource and isolation limits. It must not create a worktree, invoke a command
-or worker, enable supervisor dispatch, or enable a live harness.
+interpretation.
+
+The first repository-registration slice is implemented as standalone
+`schemas/repository-registration.schema.json` schema v1 plus the pure
+`ordomata.repository_registration` validator. A strict controller-supplied
+ordinary Git root is reduced to stable repository/filesystem references. The
+validator accepts exact argv-array (not shell-text) declarations for format,
+lint, type-check, test, and build; canonical protected and allowed repository-
+relative POSIX paths;
+bounded CPU, memory, process, workspace, output, artifact, wall, and idle
+limits; fixed local-container/network-disabled isolation; and patch-only review
+policy. `.git`, `.ordomata`, and `.agentops` are unconditionally protected, and
+case-insensitive aliases of controller-owned paths, traversal, or symlink
+escapes fail closed. Registration versions are bounded canonical SemVer;
+credential/billing option names, known shell launchers, and protected relative
+executables are rejected. Its evidence exposes only bounded
+digest references, version metadata, and fixed `validation_mode: "read_only"`,
+`dispatch_enabled: false`, and `authority_granted: false` facts.
+
+There is no CLI or sample registration, state/event integration, task/binding
+schema change, authorization change, worktree, Git or subprocess invocation,
+worker, supervisor dispatch, billing change, or live-route change. Baseline
+command results, generated/vendor exclusions, bare executable resolution and
+content attestation, and future `shell=False` action-boundary execution remain
+deferred; the validator authorizes and executes nothing. The next recommended
+bounded slice is controller-owned registration selection and digest-only
+attempt binding for a dispatch-disabled repository proposal, with exact durable
+readback but still no worktree, command, worker, or authority.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and

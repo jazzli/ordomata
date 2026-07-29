@@ -189,11 +189,24 @@ Policy activation, Git/remote publication, deployment, and other shared effects
 remain separate unimplemented typed actions whose exact resource version and
 digest must receive fresh authorization and any required approval.
 
-The next recommended narrow slice is a versioned, privacy-bounded repository-
-registration contract and read-only validator for canonical repository
-identity, exact verification argv, protected and allowed paths, and resource
-and isolation limits. It must not create a worktree, invoke a command or worker,
-enable supervisor dispatch, or grant repository authority.
+The first repository-registration slice now provides a standalone versioned
+schema and pure read-only validator. It validates a controller-supplied ordinary
+Git root, stable repository/filesystem references, exact argv-array
+(not shell-text) verification declarations, canonical protected/allowed paths with
+mandatory Git and Ordomata state protection, bounded resource limits, a fixed
+local-container/network-disabled
+isolation requirement, and a patch-only review policy. Traversal and symlink
+escapes fail closed. The resulting privacy-bounded evidence contains only
+bounded digest references, version metadata, and fixed declarations that
+validation is read-only, dispatch is disabled, and no authority is granted. It
+is a PIP input, not a permit: there is no state/event integration, task/attempt
+binding, authorization change, worktree, command, worker, supervisor dispatch,
+billing change, or live-route change. Baseline command results and generated/
+vendor exclusions remain deferred.
+
+The next recommended bounded slice is controller-owned registration selection
+and digest-only attempt binding for a dispatch-disabled repository proposal,
+with exact durable readback but still no worktree, command, worker, or authority.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
@@ -519,13 +532,14 @@ violation, not an instruction to follow.
    disabled. Retain legacy Class 0/1 checks as defense in depth through the
    migration.
 4. **Partly implemented; continuous mediation planned — typed contracts.** The
-   first task effect is typed independently of `PermissionClass`, and the
-   supervisor has focused flow and controller-bookkeeping shadow attributes.
-   Profile, repository, command, and tool coverage remains planned. Shadow
-   mismatches are recorded rather than rejected because the legacy class is
-   still authoritative. Once enforcement migrates, derive the compatibility
-   class from the request and mediate exact commands and tools at their point
-   of use.
+   first task effect is typed independently of `PermissionClass`, the supervisor
+   has focused flow and controller-bookkeeping shadow attributes, and the
+   standalone schema-v1 repository-registration contract produces digest-only,
+   no-authority validation evidence. Profile, durable repository selection and
+   binding, command, and tool coverage remains planned. Shadow mismatches are
+   recorded rather than rejected because the legacy class is still
+   authoritative. Once enforcement migrates, derive the compatibility class
+   from the request and mediate exact commands and tools at their point of use.
 5. **Planned with multi-agent flows.** Enforce versioned RBAC assignments,
    least-privilege delegation, and separation of duties. Children inherit only
    a strict subset of the parent's effective authority.
