@@ -189,8 +189,9 @@ Policy activation, Git/remote publication, deployment, and other shared effects
 remain separate unimplemented typed actions whose exact resource version and
 digest must receive fresh authorization and any required approval.
 
-The first repository-registration slice provides a standalone versioned schema
-and pure read-only validator. It validates a controller-supplied ordinary Git
+The repository-registration boundary preserves frozen schema v1 and adds a
+separate schema v2. Its pure read-only validator dispatches on an exact integer
+version and validates a controller-supplied ordinary Git
 root, stable repository/filesystem references, exact argv-array (not shell-
 text) verification declarations, canonical protected/allowed paths with
 mandatory Git and Ordomata state protection, bounded resource limits, a fixed
@@ -199,7 +200,10 @@ review policy. Traversal and symlink escapes fail closed. The resulting
 privacy-bounded evidence contains only bounded digest references, version
 metadata, and fixed declarations that validation is read-only, dispatch is
 disabled, and no authority is granted. The validator remains a pure PIP
-collector: it creates no state and is not a permit.
+collector: it creates no state and is not a permit. V2 adds bounded, canonical
+literal generated/vendor deny roots strictly below allowed paths. Those
+declarations are digest-bound but provide no provenance, ignore, authorization,
+or enforcement fact.
 
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
@@ -228,8 +232,10 @@ Exact durable readback proves only that the local evidence was stored as
 expected; it is not an action receipt or grant. The evidence layer adds no
 SQLite migration, run creation or status transition, worktree, Git/command/
 process invocation, worker or supervisor dispatch, route/profile selection,
-billing/capacity/circuit fact, harness call, or live eligibility. Baseline
-command results and generated/vendor exclusions remain deferred.
+billing/capacity/circuit fact, harness call, or live eligibility. The frozen
+registration schema-v1 evidence meaning remains the only version accepted by
+this proposal chain. Schema-v2 registrations fail before any event append.
+Baseline command results remain deferred.
 
 The third slice is the library-only `ordomata.repository_proposal_inspection`
 API `inspect_repository_proposal_evidence(database_path, *, run_id)`. It
@@ -323,9 +329,20 @@ replay cannot be distinguished without a trusted anchor. The verifier persists
 or repairs nothing, enforces or authorizes nothing, and creates no worker,
 repository, command, route, billing, network, harness, dispatch, or live effect.
 
+The sixth bounded Phase 3 slice adds a separate repository-registration
+schema-v2 contract. It requires bounded `generated_paths` and
+`vendor_paths` arrays as canonical literal deny/classification roots strictly
+beneath allowed paths. They cannot overlap one another, protected or sensitive
+paths, or case aliases, and they reject traversal, glob/expansion syntax,
+symlinks, and special files. Missing leaves are accepted without creation.
+Nonempty categories are digest-bound but raw paths remain absent from evidence.
+The declarations provide no generation/provenance attestation, do not suppress
+diff or protected-path review, and establish no ABAC attribute, authority, or
+effect. Schema v1 remains frozen and proposal evidence remains v1-only.
+
 The next recommended bounded slice is pure schema/validator support for
-generated/vendor exclusions in repository registrations, still with no
-execution or worker enablement.
+controller-supplied baseline command-result attestations in schema v3,
+still without execution, authorization, or proposal-lineage widening.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
@@ -653,11 +670,12 @@ violation, not an instruction to follow.
 4. **Partly implemented; continuous mediation planned — typed contracts.** The
    first task effect is typed independently of `PermissionClass`, the supervisor
    has focused flow and controller-bookkeeping shadow attributes, and the
-   standalone schema-v1 repository-registration contract produces digest-only,
-   no-authority validation evidence. Controller-owned durable repository-
-   registration selection and proposal-attempt binding are now implemented as
-   two content-addressed, statusless PIP events for the fixed dispatch-disabled
-   sentinel run. Independent single-run inspection and a fresh-inspection,
+   frozen schema-v1 and separate schema-v2 repository-registration contracts
+   produce digest-only, no-authority validation evidence. Controller-owned
+   durable repository-registration selection and proposal-attempt binding remain
+   pinned to v1 evidence and are implemented as two content-addressed,
+   statusless PIP events for the fixed dispatch-disabled sentinel run.
+   Independent single-run inspection and a fresh-inspection,
    non-authoritative Class 0/1 admission shadow are implemented, along with
    independent value-free verification of an untrusted returned shadow mapping;
    profile-resource authorization, command, and tool coverage remain planned.

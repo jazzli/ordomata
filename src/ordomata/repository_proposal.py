@@ -19,7 +19,6 @@ from .errors import ConfigurationError, ValidationError
 from .models import PermissionClass, RunStatus
 from .repository_registration import (
     REPOSITORY_REGISTRATION_EVIDENCE_KIND,
-    REPOSITORY_REGISTRATION_SCHEMA_VERSION,
     RepositoryRegistration,
     fresh_repository_registration_evidence,
 )
@@ -41,6 +40,7 @@ REPOSITORY_PROPOSAL_ATTEMPT_BINDING_EVENT_TYPE = (
 )
 REPOSITORY_REGISTRATION_SELECTION_SCHEMA_VERSION = 1
 REPOSITORY_PROPOSAL_ATTEMPT_BINDING_SCHEMA_VERSION = 1
+_REPOSITORY_PROPOSAL_REGISTRATION_SCHEMA_VERSION = 1
 
 _SELECTION_KIND = "repository_registration_selection"
 _BINDING_KIND = "repository_proposal_attempt"
@@ -390,7 +390,7 @@ def _validate_registration_evidence(value: Any) -> dict[str, Any]:
     if (
         type(evidence["schema_version"]) is not int
         or evidence["schema_version"]
-        != REPOSITORY_REGISTRATION_SCHEMA_VERSION
+        != _REPOSITORY_PROPOSAL_REGISTRATION_SCHEMA_VERSION
         or evidence["kind"] != REPOSITORY_REGISTRATION_EVIDENCE_KIND
         or evidence["validation_mode"] != "read_only"
         or evidence["dispatch_enabled"] is not False

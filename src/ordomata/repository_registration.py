@@ -25,7 +25,8 @@ from .redaction import contains_credential_material
 from .schema import parse_json_document, require_valid
 
 
-REPOSITORY_REGISTRATION_SCHEMA_VERSION = 1
+REPOSITORY_REGISTRATION_SCHEMA_VERSION = 2
+REPOSITORY_REGISTRATION_SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2})
 REPOSITORY_REGISTRATION_KIND = "repository_registration"
 REPOSITORY_REGISTRATION_EVIDENCE_KIND = "repository_registration_validation"
 
@@ -43,6 +44,22 @@ _WINDOWS_ABSOLUTE_PATH_PATTERN = re.compile(r"[A-Za-z]:[\\/]")
 _BARE_EXECUTABLE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}")
 _COMMAND_KINDS = ("format", "lint", "type_check", "test", "build")
 _MANDATORY_PROTECTED_PATHS = frozenset({".agentops", ".git", ".ordomata"})
+_EXCLUSION_PATH_NAMES = ("generated_paths", "vendor_paths")
+_MAX_EXCLUSION_PATHS_PER_CATEGORY = 64
+_MAX_EXCLUSION_PATHS = 128
+_MAX_EXCLUSION_PATH_BYTES = 32_768
+_EXCLUSION_FORBIDDEN_CHARACTERS = frozenset(
+    "*?[]{}$`:%!^~()<>|&;\"'"
+)
+_WINDOWS_RESERVED_PATH_STEMS = frozenset(
+    {"aux", "con", "nul", "prn"}
+    | {f"com{suffix}" for suffix in "123456789¹²³"}
+    | {f"lpt{suffix}" for suffix in "123456789¹²³"}
+)
+_SCHEMA_FILENAME_BY_VERSION = {
+    1: "repository-registration.schema.json",
+    2: "repository-registration-v2.schema.json",
+}
 _SHELL_PROGRAMS = frozenset(
     {
         "ash",
@@ -203,12 +220,11 @@ class VerificationCommands:
 class RepositoryPathPolicy:
     allowed_paths: tuple[str, ...] = field(repr=False)
     protected_paths: tuple[str, ...] = field(repr=False)
+    generated_paths: tuple[str, ...] = field(default=(), repr=False)
+    vendor_paths: tuple[str, ...] = field(default=(), repr=False)
 
     def to_canonical(self) -> dict[str, Any]:
-        return {
-            "allowed_paths": list(self.allowed_paths),
-            "protected_paths": list(self.protected_paths),
-        }
+        return _path_policy_projection(self)
 
     @property
     def digest(self) -> str:
@@ -345,6 +361,8 @@ def _require_typed_registration_snapshot(
         raise _InvalidRegistration
     if (
         type(registration.schema_version) is not int
+        or registration.schema_version
+        not in REPOSITORY_REGISTRATION_SUPPORTED_SCHEMA_VERSIONS
         or type(registration.kind) is not str
         or type(registration.registration_id) is not str
         or type(registration.registration_version) is not str
@@ -383,6 +401,14 @@ def _require_typed_registration_snapshot(
         or any(type(path) is not str for path in policy.allowed_paths)
         or type(policy.protected_paths) is not tuple
         or any(type(path) is not str for path in policy.protected_paths)
+        or type(policy.generated_paths) is not tuple
+        or any(type(path) is not str for path in policy.generated_paths)
+        or type(policy.vendor_paths) is not tuple
+        or any(type(path) is not str for path in policy.vendor_paths)
+        or (
+            registration.schema_version == 1
+            and (policy.generated_paths or policy.vendor_paths)
+        )
     ):
         raise _InvalidRegistration
 
@@ -447,10 +473,32 @@ def _verification_commands_projection(
 
 
 def _path_policy_projection(policy: RepositoryPathPolicy) -> dict[str, Any]:
-    return {
+    projection: dict[str, Any] = {
         "allowed_paths": list(policy.allowed_paths),
         "protected_paths": list(policy.protected_paths),
     }
+    if policy.generated_paths:
+        projection["generated_paths"] = list(policy.generated_paths)
+    if policy.vendor_paths:
+        projection["vendor_paths"] = list(policy.vendor_paths)
+    return projection
+
+
+def _path_policy_document_projection(
+    policy: RepositoryPathPolicy,
+    *,
+    schema_version: int,
+) -> dict[str, Any]:
+    projection = _path_policy_projection(policy)
+    if schema_version == 1:
+        if policy.generated_paths or policy.vendor_paths:
+            raise _InvalidRegistration
+        return projection
+    if schema_version == 2:
+        projection.setdefault("generated_paths", [])
+        projection.setdefault("vendor_paths", [])
+        return projection
+    raise _InvalidRegistration
 
 
 def _resource_limits_projection(
@@ -732,6 +780,139 @@ def _reject_overlapping_paths(paths: tuple[str, ...]) -> None:
                 raise _InvalidRegistration
 
 
+def _exclusion_path_is_literal(value: str) -> bool:
+    if any(
+        character in value
+        for character in _EXCLUSION_FORBIDDEN_CHARACTERS
+    ):
+        return False
+    for part in PurePosixPath(value).parts:
+        folded = part.casefold()
+        windows_stem = folded.split(".", 1)[0].rstrip(" .")
+        if (
+            part.endswith((" ", "."))
+            or windows_stem in _WINDOWS_RESERVED_PATH_STEMS
+            or folded in _MANDATORY_PROTECTED_PATHS
+            or folded in _PROHIBITED_CREDENTIAL_PATH_PARTS
+            or folded.startswith(".env.")
+            or folded.startswith(".envrc.")
+            or any(
+                unicodedata.category(character).startswith("C")
+                for character in part
+            )
+        ):
+            return False
+    return True
+
+
+def _validate_exclusion_endpoint(root: Path, value: str) -> None:
+    candidate = root.joinpath(*PurePosixPath(value).parts)
+    try:
+        candidate_stat = candidate.lstat()
+    except FileNotFoundError:
+        return
+    except OSError:
+        raise _InvalidRegistration from None
+    if not (
+        stat.S_ISDIR(candidate_stat.st_mode)
+        or stat.S_ISREG(candidate_stat.st_mode)
+    ):
+        raise _InvalidRegistration
+
+
+def _validate_exclusion_component_spelling(root: Path, value: str) -> None:
+    current = root
+    for part in PurePosixPath(value).parts:
+        try:
+            with os.scandir(current) as entries:
+                names = [entry.name for entry in entries]
+        except OSError:
+            raise _InvalidRegistration from None
+        folded = unicodedata.normalize("NFC", part).casefold()
+        matches = [
+            name
+            for name in names
+            if unicodedata.normalize("NFC", name).casefold() == folded
+        ]
+        if part not in names:
+            if matches:
+                raise _InvalidRegistration
+            return
+        if matches != [part]:
+            raise _InvalidRegistration
+        current /= part
+
+
+def _build_exclusion_paths(raw: Any, *, root: Path) -> tuple[str, ...]:
+    if (
+        type(raw) is not list
+        or len(raw) > _MAX_EXCLUSION_PATHS_PER_CATEGORY
+    ):
+        raise _InvalidRegistration
+    paths = tuple(
+        sorted(
+            _canonical_relative_path(
+                value,
+                root=root,
+                allow_root=False,
+            )
+            for value in raw
+        )
+    )
+    if (
+        any(not _exclusion_path_is_literal(path) for path in paths)
+        or len(paths) != len(set(paths))
+    ):
+        raise _InvalidRegistration
+    for path in paths:
+        _validate_exclusion_component_spelling(root, path)
+        _validate_exclusion_endpoint(root, path)
+    _reject_overlapping_paths(paths)
+    return paths
+
+
+def _validate_exclusion_relationships(
+    *,
+    allowed: tuple[str, ...],
+    protected: tuple[str, ...],
+    generated: tuple[str, ...],
+    vendor: tuple[str, ...],
+) -> None:
+    exclusions = (*generated, *vendor)
+    if len(exclusions) > _MAX_EXCLUSION_PATHS:
+        raise _InvalidRegistration
+    try:
+        total_bytes = sum(len(path.encode("utf-8")) for path in exclusions)
+    except UnicodeError:
+        raise _InvalidRegistration from None
+    if total_bytes > _MAX_EXCLUSION_PATH_BYTES:
+        raise _InvalidRegistration
+    _reject_overlapping_paths(exclusions)
+    for exclusion in exclusions:
+        containing_allowed = 0
+        for allowed_path in allowed:
+            casefold_related = _is_at_or_below_casefold(
+                exclusion, allowed_path
+            ) or _is_at_or_below_casefold(allowed_path, exclusion)
+            exactly_related = _is_at_or_below(
+                exclusion, allowed_path
+            ) or _is_at_or_below(allowed_path, exclusion)
+            if casefold_related and not exactly_related:
+                raise _InvalidRegistration
+            if _is_at_or_below(allowed_path, exclusion):
+                raise _InvalidRegistration
+            if _is_at_or_below(exclusion, allowed_path):
+                containing_allowed += 1
+        if containing_allowed != 1:
+            raise _InvalidRegistration
+        if any(
+            _is_at_or_below_casefold(exclusion, protected_path)
+            or _is_at_or_below_casefold(protected_path, exclusion)
+            for protected_path in protected
+        ):
+            raise _InvalidRegistration
+
+
 def _build_repository_identity(
     raw: Any,
     *,
@@ -918,11 +1099,18 @@ def _build_verification_commands(raw: Any, *, root: Path) -> VerificationCommand
     return VerificationCommands(**built)
 
 
-def _build_path_policy(raw: Any, *, root: Path) -> RepositoryPathPolicy:
-    policy = _require_exact_keys(
-        raw,
-        frozenset({"allowed_paths", "protected_paths"}),
-    )
+def _build_path_policy(
+    raw: Any,
+    *,
+    root: Path,
+    schema_version: int,
+) -> RepositoryPathPolicy:
+    expected_keys = {"allowed_paths", "protected_paths"}
+    if schema_version == 2:
+        expected_keys.update(_EXCLUSION_PATH_NAMES)
+    elif schema_version != 1:
+        raise _InvalidRegistration
+    policy = _require_exact_keys(raw, frozenset(expected_keys))
     normalized: dict[str, tuple[str, ...]] = {}
     for name in ("allowed_paths", "protected_paths"):
         values = policy[name]
@@ -962,9 +1150,28 @@ def _build_path_policy(raw: Any, *, root: Path) -> RepositoryPathPolicy:
         for mandatory in _MANDATORY_PROTECTED_PATHS
     ):
         raise _InvalidRegistration
+    generated: tuple[str, ...] = ()
+    vendor: tuple[str, ...] = ()
+    if schema_version == 2:
+        generated = _build_exclusion_paths(
+            policy["generated_paths"],
+            root=root,
+        )
+        vendor = _build_exclusion_paths(
+            policy["vendor_paths"],
+            root=root,
+        )
+        _validate_exclusion_relationships(
+            allowed=allowed,
+            protected=protected,
+            generated=generated,
+            vendor=vendor,
+        )
     return RepositoryPathPolicy(
         allowed_paths=allowed,
         protected_paths=protected,
+        generated_paths=generated,
+        vendor_paths=vendor,
     )
 
 
@@ -1095,9 +1302,11 @@ def _validate_repository_registration(
             }
         ),
     )
+    schema_version = registration["schema_version"]
     if (
-        type(registration["schema_version"]) is not int
-        or registration["schema_version"] != REPOSITORY_REGISTRATION_SCHEMA_VERSION
+        type(schema_version) is not int
+        or schema_version
+        not in REPOSITORY_REGISTRATION_SUPPORTED_SCHEMA_VERSIONS
         or registration["kind"] != REPOSITORY_REGISTRATION_KIND
     ):
         raise _InvalidRegistration
@@ -1117,7 +1326,7 @@ def _validate_repository_registration(
         git_stat=git_stat,
     )
     return RepositoryRegistration(
-        schema_version=REPOSITORY_REGISTRATION_SCHEMA_VERSION,
+        schema_version=schema_version,
         kind=REPOSITORY_REGISTRATION_KIND,
         registration_id=registration_id,
         registration_version=registration_version,
@@ -1129,6 +1338,7 @@ def _validate_repository_registration(
         path_policy=_build_path_policy(
             registration["path_policy"],
             root=root,
+            schema_version=schema_version,
         ),
         resource_limits=_build_resource_limits(registration["resource_limits"]),
         isolation_requirements=_build_isolation_requirements(
@@ -1190,8 +1400,9 @@ def revalidate_repository_registration(
                 "root": ".",
             },
             "verification_commands": verification_commands,
-            "path_policy": _path_policy_projection(
-                registration.path_policy
+            "path_policy": _path_policy_document_projection(
+                registration.path_policy,
+                schema_version=registration.schema_version,
             ),
             "resource_limits": _resource_limits_projection(
                 registration.resource_limits
@@ -1254,10 +1465,16 @@ def load_repository_registration(
         raise ConfigurationError(_LOAD_MESSAGE) from None
     raw = _load_json_object(registration_path, failure_message=_LOAD_MESSAGE)
     if definition_schema_path is None:
+        schema_version = raw.get("schema_version")
+        if (
+            type(schema_version) is not int
+            or schema_version not in _SCHEMA_FILENAME_BY_VERSION
+        ):
+            raise ConfigurationError(_INVALID_MESSAGE)
         definition_schema_path = (
             registration_path.parent.parent
             / "schemas"
-            / "repository-registration.schema.json"
+            / _SCHEMA_FILENAME_BY_VERSION[schema_version]
         )
     try:
         schema_path = Path(definition_schema_path)
@@ -1281,6 +1498,7 @@ __all__ = [
     "REPOSITORY_REGISTRATION_EVIDENCE_KIND",
     "REPOSITORY_REGISTRATION_KIND",
     "REPOSITORY_REGISTRATION_SCHEMA_VERSION",
+    "REPOSITORY_REGISTRATION_SUPPORTED_SCHEMA_VERSIONS",
     "RepositoryIdentity",
     "RepositoryIsolationRequirements",
     "RepositoryPathPolicy",

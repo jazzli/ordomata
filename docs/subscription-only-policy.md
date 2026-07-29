@@ -132,8 +132,9 @@ billing route, or live gate; invoke no harness; and enable no credit, overage,
 API, cloud, comparison, supervisor, or external-action fallback. Schema-v1
 through v5 histories retain their prior billing and authorization meanings.
 
-The standalone schema-v1 repository-registration contract and pure validator
-deterministically validate and hash a controller-supplied ordinary Git
+The frozen schema-v1 and separate schema-v2 repository-registration contracts
+plus pure version-dispatched validation deterministically validate and hash a
+controller-supplied ordinary Git
 identity, stable filesystem reference, exact verification argv-array (not
 shell-text) declarations, canonical protected/allowed paths, bounded resource
 limits, fixed local-container/network-disabled isolation, and patch-only review
@@ -141,7 +142,9 @@ policy. Their digest-only evidence explicitly declares read-only use, disabled
 dispatch, and no granted authority. The validator invokes no Git command,
 subprocess, worker, harness, or network service; creates no state or worktree;
 and changes no authorization, billing gate, circuit, capacity, or live-route
-eligibility.
+eligibility. V2 adds bounded canonical literal generated/vendor deny roots
+strictly below allowed paths; they provide no billing, route, harness, ignore,
+or execution evidence.
 
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration and binds it plus an explicit canonical
@@ -162,8 +165,9 @@ receipt, route/profile selection, billing assessment, capacity/circuit event,
 worktree, Git/command/process invocation, worker/supervisor dispatch, harness
 call, network request, or live eligibility. It cannot satisfy route, capacity,
 identity, paid-continuation, environment, isolation, circuit, or explicit live-
-gate prerequisites. Baseline results and generated/vendor exclusions remain
-deferred.
+gate prerequisites. The chain remains pinned to frozen registration evidence
+v1 and rejects schema-v2 registrations before any event append. Baseline results
+remain deferred.
 
 The third slice is the library-only `ordomata.repository_proposal_inspection`
 API `inspect_repository_proposal_evidence(database_path, *, run_id)`. Its
@@ -253,9 +257,21 @@ nothing, enforces or authorizes nothing, and creates no worker, repository,
 command, route, billing, network, harness, dispatch, or live effect. It cannot
 satisfy any subscription or live-run prerequisite.
 
+The sixth bounded Phase 3 slice adds the separate repository-registration
+schema-v2 contract. Its required, bounded `generated_paths` and
+`vendor_paths` are canonical literal deny/classification roots strictly below
+allowed paths. They are pairwise non-overlapping and disjoint from
+protected/sensitive paths; aliases, traversal, glob/expansion syntax, symlinks,
+and special files fail closed. Nonempty categories are digest-bound, but their
+raw paths remain absent from evidence. These declarations provide no route,
+capacity, identity, billing, paid-continuation, or live-gate evidence and do not
+enable or invoke a harness. Frozen schema v1 remains the only proposal-lineage
+version.
+
 The next recommended bounded slice is pure schema/validator support for
-generated/vendor exclusions in repository registrations, still with no
-execution or worker enablement.
+controller-supplied baseline command-result attestations in schema v3,
+still without command execution, subscription evidence, or proposal-lineage
+widening.
 
 `compare-run` is an opt-in execution workflow, not a bypass. It requires the same live gate and current evidence for every selected profile before creating comparison records. Trials use one immutable sanitized Class 0 snapshot, randomized repetition blocks, fresh sessions and workspaces, no shared outputs, and no external actions. Reports expose raw automated dimensions and separate human-review fields; they do not declare a winner or auto-promote a profile.
 
