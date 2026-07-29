@@ -59,6 +59,10 @@ The repository already provides the foundation this plan extends:
   repository-proposal run from one read-only SQLite snapshot and returns only
   bounded single-run coverage, validated linkage, and fixed privacy-safe
   findings without repair or authority;
+- a library-only repository-proposal admission ABAC shadow that freshly invokes
+  that inspector, projects only exact clean Class 0 `READ` or Class 1 `CREATE`
+  local attributes under fixed class-specific policy, and returns only an
+  explicitly non-authoritative, non-persistent observation;
 - a versioned additive SQLite supervisor migration with immutable mock-only
   flow admission, append-only optimistic control/flow/attempt revisions, sticky
   cancellation, fenced multi-resource claim APIs, and an internal local
@@ -222,11 +226,44 @@ Inspection creates no source database/schema/sidecar or migration and persists
 no run, status, event, authorization decision, or action receipt. It creates no
 worktree and performs no Git/command/process invocation, worker or supervisor
 dispatch, route/profile selection, billing/capacity/circuit change,
-harness/network action, or live eligibility. The next recommended bounded
-slice is a controller-owned, non-enforcing repository-proposal admission ABAC
-shadow bound only to clean, complete inspection evidence and fixed Class 0/1
-attributes/policy, with no authority or repository, command, worker, route,
-billing, or dispatch effect.
+harness/network action, or live eligibility.
+
+The fourth Phase 3 slice is the library-only
+`ordomata.repository_proposal_admission` API
+`evaluate_repository_proposal_admission_shadow(database_path, *, run_id,
+evaluated_at)`. It freshly calls the independent inspector and accepts no
+caller-supplied report, class, request, policy, or evaluator. Shadow evaluation
+requires a clean, evidence-complete, complete, untruncated, finding-free exact
+three-event Class 0/1 inspection. A nonclean result constructs no request,
+policy, or decision and returns `not_evaluated`, `indeterminate`, and the fixed
+`inspection_not_clean_complete` block code. Binding, evaluator, or exact replay
+failure also remains an inert fixed failed/indeterminate result.
+
+The controller derives exactly two class-specific projections: Class 0 local
+`READ` observation with a read-only operation/resource/policy and unenforced
+audit-receipt plus read-only obligations, and Class 1 local `CREATE` nomination
+with a local-draft operation/resource/policy and unenforced audit-receipt plus
+isolated-local-only obligations. Each policy
+enables only its projected class and fixed controller, local-boundary,
+network-disabled, local-non-AI attributes. The request digest-binds the
+privacy-safe inspection mapping and validated proposal, registration,
+repository, selection, and binding lineage. The active shadow evaluation must
+equal both the captured built-in replay and the controller's exact expected
+decision.
+
+An exact permit remains observational and cannot become admission authority.
+The mapping fixes all authoritative decision, enforcement, authority,
+admission/action, receipt, evidence-persistence, repair, dispatch, route,
+billing, and obligation-enforcement flags to false. The API has no CLI and
+persists nothing; it creates no source state, event, durable decision/receipt,
+worktree, Git/command/process invocation, worker/supervisor dispatch,
+route/profile choice, billing/capacity/circuit fact, harness/network action, or
+live eligibility. Raw identifiers/paths, argv, registration/proposal content,
+SQLite diagnostics, workspace/run-directory values, and artifact content do
+not enter the result. The next recommended bounded slice is a separate,
+library-only verifier for an untrusted returned admission-shadow mapping that
+emits only fixed privacy-safe replay findings and still adds no authority,
+persistence, repair, enforcement, worker enablement, or effect.
 
 The target semantics for Class 3 standing envelopes, irreversible actions,
 the non-delegable root-authority kernel, consequential outbox execution,
@@ -663,8 +700,9 @@ satisfied.
 
 ## Phase 3 - Repository registrations and isolated worker cells
 
-**Implementation checkpoint — read-only registration, proposal evidence, and
-single-run inspection, not worker-cell enablement:** standalone
+**Implementation checkpoint — read-only registration, proposal evidence,
+single-run inspection, and inert admission shadow, not worker-cell
+enablement:** standalone
 `schemas/repository-registration.schema.json` schema v1 and the pure
 `ordomata.repository_registration` validator implement the initial contract
 boundary. They validate a controller-supplied ordinary Git root and stable
@@ -694,10 +732,15 @@ caller-named run from one read-only SQLite snapshot, distinguishes exact
 protocol-recoverable prefixes from the complete three-event chain and invalid history,
 and emits only bounded fixed-code findings. It makes no whole-database or
 external-tamper-anchor claim and does not revalidate registration against the
-live filesystem. Baseline results and generated/vendor exclusions remain
-deferred, as do bare executable resolution and content attestation, future
-`shell=False` action-boundary execution, and every worker-cell deliverable
-below.
+live filesystem. The implemented admission shadow freshly invokes that
+inspector, evaluates only its exact clean and complete Class 0/1 evidence, and
+uses a fixed class-specific Class 0 `READ` or Class 1 `CREATE` local projection
+with privacy-safe digest binding and exact built-in replay. A nonclean result is
+indeterminate and not evaluated; an exact permit is still non-authoritative,
+non-persistent, and no-effect. Baseline results and generated/vendor exclusions
+remain deferred, as do bare executable resolution and content attestation,
+future `shell=False` action-boundary execution, and every worker-cell
+deliverable below.
 
 ### Deliverables
 
@@ -715,6 +758,10 @@ below.
 - Preserve the implemented independent, single-run, read-only evidence
   inspection as a mandatory proof boundary before any future worktree or
   command path; a clean report alone still grants no authority.
+- Preserve the implemented fresh-inspection admission shadow as an
+  observational boundary only: neither its Class 0/1 projection nor an exact
+  permit may be reused as authority or enable a worktree, command, route,
+  worker, or external effect.
 - Create one disposable detached Git worktree per Class 1 job. Never modify the operator's primary checkout or create a branch.
 - Keep the base repository read-only from the worker's perspective and expose only the job worktree plus bounded temporary storage.
 - Keep the repository's shared Git directory, refs, config, hooks, indexes, and credentials controller-only. Hide the worktree's `.git` pointer and do not mount the common Git directory into the worker cell. A worker edits only materialized source files without Git authority; the controller owns worktree lifecycle and computes the resulting patch.

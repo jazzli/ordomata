@@ -588,11 +588,48 @@ artifact content.
 Inspection creates no run, status, event, authorization decision, action
 receipt, worktree, Git/command/process invocation, worker or supervisor
 dispatch, route/profile selection, billing/capacity/circuit change,
-harness/network action, or live eligibility. The next recommended bounded
-slice is a controller-owned, non-enforcing repository-proposal admission ABAC
-shadow that binds only clean, complete inspection evidence to fixed Class 0/1
-attributes and policy while granting no authority or repository, command,
-worker, route, billing, or dispatch effect.
+harness/network action, or live eligibility.
+
+The fourth slice is the controller-owned, library-only
+`ordomata.repository_proposal_admission` shadow. Its sole entry point accepts a
+durable database path, caller-named run, and controller evaluation time, then
+freshly invokes the independent inspector. It deliberately accepts no supplied
+inspection object, permission class, request, policy, or evaluator. ABAC
+evaluation occurs only when that fresh result is clean, evidence-complete,
+complete, untruncated, finding-free, and exactly the expected three-event Class
+0/1 chain. A nonclean result constructs no request, policy, or decision: it is
+`not_evaluated`, has the `indeterminate` effect, and carries only the fixed
+`inspection_not_clean_complete` block code. Run-binding, evaluator, or exact
+replay failures are likewise inert failed/indeterminate observations.
+
+The projection is closed and class-specific. Class 0 maps to a local `READ`
+observation with the fixed read-only operation, resource type, policy, and
+unenforced audit-receipt plus read-only obligations. Class 1 maps to a local
+`CREATE` nomination with the fixed local-draft operation, resource type,
+policy, and unenforced audit-receipt plus isolated-local-only obligations. A
+class policy enables exactly its projected class, verb,
+operation, resource type, controller role, local-control-plane trust boundary,
+disabled network, and local non-AI route. The request binds the canonical
+digest of the privacy-safe inspection mapping and validated proposal,
+registration, repository, selection, and binding lineage. The shadow evaluator
+and captured built-in replay must both equal the controller's exact expected
+decision, preventing an injected or substituted evaluator from becoming a
+grant boundary.
+
+Even an exact observational permit is not a PEP decision, reusable capability,
+or admission. The returned mapping fixes all authority, enforcement,
+admission/action, receipt, evidence-persistence, repair, dispatch, route,
+billing, and obligation-enforcement flags to false. Nothing is persisted or
+written to source state: there is no CLI, database/schema/sidecar/migration
+change, run event, durable authorization decision, receipt, worktree,
+Git/command/process invocation,
+worker or supervisor dispatch, profile choice, billing/capacity/circuit fact,
+harness/network action, or live eligibility. Raw paths and identifiers, argv,
+registration/proposal content, workspace/run-directory values, SQLite
+diagnostics, and artifact content do not enter the shadow mapping. The next
+recommended bounded slice is an independent, library-only verifier for an
+untrusted returned shadow mapping that emits only fixed privacy-safe replay
+findings and continues to provide no persistence, repair, authority, or effect.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor

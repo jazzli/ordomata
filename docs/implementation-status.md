@@ -236,11 +236,43 @@ Inspection creates no source database/schema/sidecar or migration and persists
 no run, status, event, authorization decision, or action receipt. It creates no
 worktree and performs no Git/command/process invocation, worker or supervisor
 dispatch, route/profile selection, billing/capacity/circuit change,
-harness/network action, or live eligibility. The next recommended bounded
-slice is a controller-owned, non-enforcing repository-proposal admission ABAC
-shadow bound only to clean, complete inspection evidence and fixed Class 0/1
-attributes/policy, with no authority or repository, command, worker, route,
-billing, or dispatch effect.
+harness/network action, or live eligibility.
+
+The fourth slice is the library-only
+`ordomata.repository_proposal_admission` API
+`evaluate_repository_proposal_admission_shadow(database_path, *, run_id,
+evaluated_at)`. It freshly invokes the independent inspector and accepts no
+caller-provided report, class, request, policy, or evaluator. Only a clean,
+evidence-complete, complete, untruncated, finding-free exact three-event Class
+0/1 report proceeds to shadow evaluation. A nonclean report returns no request,
+policy, or decision: its status is `not_evaluated`, its effect is
+`indeterminate`, and its fixed block code is
+`inspection_not_clean_complete`. Run-binding, evaluator, or replay failure
+also produces an inert fixed failed/indeterminate result.
+
+The fixed Class 0 projection is a local `READ` observation under a
+class-specific policy with unenforced audit-receipt plus read-only obligations.
+The fixed Class 1 projection is a local `CREATE` nomination under a
+class-specific local-draft policy with unenforced audit-receipt plus
+isolated-local-only obligations. Each policy enables exactly its projected
+class, verb, operation, and resource type plus the controller role, local
+control-plane boundary, disabled network, and local non-AI route. The request
+digest-binds the privacy-safe inspection mapping and validated
+proposal/registration/repository lineage. The active evaluator, a captured
+built-in replay, and the controller's exact expected decision must agree.
+
+Any returned shadow permit remains descriptive. The mapping fixes authority,
+enforcement, admission/action, receipt, evidence persistence, repair, dispatch,
+route, billing, and obligation enforcement to false. There is no CLI,
+persistence, source-state change, event, durable authorization record,
+worktree, Git/command/process invocation, worker/supervisor dispatch,
+route/profile selection, billing/capacity/circuit fact, harness/network action,
+or live eligibility, and no raw path/identifier, argv, registration/proposal
+content, SQLite diagnostic, workspace/run-directory value, or artifact content
+is exposed. The next recommended bounded slice is an independent,
+library-only verifier for an untrusted returned admission-shadow mapping. It
+should return only fixed privacy-safe replay findings and add no authority,
+persistence, repair, enforcement, worker enablement, or effect.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and
@@ -400,6 +432,11 @@ specific authorization enforcement, and soak evidence remain planned.
   one read-only SQLite snapshot; the bounded report distinguishes exact
   protocol-recoverable prefixes, a complete three-event chain, and every invalid
   history with fixed privacy-safe finding codes and no repair or authority.
+- `ordomata.repository_proposal_admission.evaluate_repository_proposal_admission_shadow`:
+  library-only, fresh-inspection Class 0 `READ`/Class 1 `CREATE` admission
+  observation under fixed class-specific policy; nonclean evidence remains
+  indeterminate and even an exact shadow permit grants no authority, persists
+  nothing, and performs no action.
 - `ordomata auth-inspect`: source-preserving, SQLite read-only inspection of
   baseline schema/history and frozen migration-ledger integrity, authorization
   shadow integrity, authenticated freshness, legacy and authority-ceiling

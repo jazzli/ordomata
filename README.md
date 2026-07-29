@@ -71,6 +71,11 @@ records.
   `inspect_repository_proposal_evidence` API proves one caller-named run from a
   single read-only SQLite snapshot and returns only bounded, privacy-safe
   coverage, linkage, digest, sequence, and fixed-code findings;
+- controller-owned, library-only repository-proposal admission shadow: the
+  `evaluate_repository_proposal_admission_shadow` API freshly invokes that
+  inspector, evaluates only exact clean and complete Class 0/1 evidence against
+  a fixed class-specific ABAC policy, and returns a privacy-safe, explicitly
+  non-authoritative observation without persistence or effect;
 - isolated per-run workspaces, wall timeouts, terminal-event checks, and output validation;
 - append-only SQLite runs, events, artifacts, capacity observations, billing circuits, scheduler claims, and expiring leases, with capacity checked inside the atomic dispatch reservation; baseline creation and exact legacy adoption are transactional, and every ordinary open verifies the frozen, contiguous v1-v4 migration prefix before use;
 - a versioned additive SQLite migration for a durable supervisor control-plane
@@ -270,11 +275,50 @@ Inspection has no CLI, creates no source database/schema/sidecar or migration,
 persists no run, status, event, authorization decision, or action receipt, and
 creates no worktree. It performs no Git/subprocess call, worker or supervisor
 dispatch, profile route, billing/capacity/circuit change, harness/network
-action, or live eligibility. The next recommended bounded slice is a
-controller-owned, non-enforcing repository-proposal admission ABAC
-shadow that binds only clean, complete inspection evidence to fixed Class 0/1
-attributes and policy while still granting no authority or repository,
-command, worker, route, billing, or dispatch effect.
+action, or live eligibility.
+
+The fourth slice is the library-only
+`ordomata.repository_proposal_admission` API
+`evaluate_repository_proposal_admission_shadow(database_path, *, run_id,
+evaluated_at)`. The controller supplies only the durable state path, run
+identifier, and evaluation time. The API freshly invokes the independent
+inspector on every call and accepts no caller-supplied inspection report,
+permission class, authorization request, policy, or evaluator. It evaluates
+only a clean, evidence-complete, complete, untruncated, finding-free exact
+three-event inspection. Every other inspection returns an inert
+`not_evaluated` result with an `indeterminate` effect and the fixed
+`inspection_not_clean_complete` block code; run-binding, evaluation, or replay
+failures likewise return fixed failed/indeterminate results rather than a
+decision.
+
+The controller derives exactly two local shadow projections. Class 0 is a
+`READ` observation with its fixed read-only operation, resource type, policy,
+and unenforced audit-receipt plus read-only obligations. Class 1 is a `CREATE`
+nomination of a local draft with its fixed local-draft operation, resource type,
+policy, and unenforced audit-receipt plus isolated-local-only obligations. Each
+class-specific policy admits only that class and projection,
+the controller role, local control-plane trust boundary, disabled network, and
+local non-AI route. The request binds a canonical digest of the privacy-safe
+inspection mapping and its validated proposal/registration/repository lineage;
+it never imports raw repository paths, identifiers, proposal content, argv,
+workspace/run-directory values, SQLite diagnostics, or artifact content. The
+built-in shadow evaluator is replayed through a captured built-in boundary and
+must exactly match the controller's expected decision.
+
+An exact observational `permit` and `shadow_eligible: true` still grant no
+authority. The result mapping fixes `decision_authoritative`,
+`enforcement_enabled`, `authority_granted`, `admission_performed`,
+`action_performed`, `action_receipt_created`, `evidence_persisted`,
+`repair_performed`, `dispatch_enabled`, `route_selected`, `billing_assessed`,
+and `obligations_enforced` to false. The API has no CLI or persistence path and
+creates no source state, event, durable authorization record, receipt,
+worktree, Git/subprocess/command invocation, worker or supervisor dispatch,
+route/profile choice, billing/capacity/circuit fact, harness/network action, or
+live eligibility. The next recommended bounded slice is a separate,
+library-only verifier that independently replays a supplied admission-shadow
+mapping into fixed privacy-safe findings while treating that mapping as
+untrusted evidence and still providing no authority, persistence, repair, or
+effect.
 
 ## Quick start
 

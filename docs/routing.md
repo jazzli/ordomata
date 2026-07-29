@@ -196,11 +196,40 @@ billing/capacity evidence eligible, satisfy a live gate, or enable dispatch.
 Inspection creates no source database/schema/sidecar or migration and persists
 no run/status/event or authorization evidence. It creates no worktree and
 performs no Git/command/process invocation, worker/supervisor dispatch, route,
-billing, harness/network, or live effect. The next recommended bounded slice is
-a controller-owned, non-enforcing repository-proposal admission ABAC shadow
-bound only to clean, complete inspection evidence and fixed Class 0/1
-attributes/policy, still with no authority or repository, command, worker,
-route, billing, or dispatch effect.
+billing, harness/network, or live effect.
+
+The fourth slice is the controller-owned, library-only
+`ordomata.repository_proposal_admission` shadow. It accepts only a durable
+database path, caller-named run, and controller evaluation time, then freshly
+invokes the independent inspector; callers cannot supply a report, class,
+request, policy, or evaluator. Only a clean, evidence-complete, complete,
+untruncated, finding-free exact three-event Class 0/1 inspection is evaluated.
+A nonclean inspection is `not_evaluated` and `indeterminate`, with no request,
+policy, or decision. Run-binding, evaluator, or replay failures are likewise
+inert failed/indeterminate observations.
+
+Class 0 projects exactly to a local `READ` observation with a fixed read-only
+operation/resource, class-specific policy, and unenforced audit-receipt plus
+read-only obligations. Class 1 projects exactly to a local `CREATE` nomination
+with a fixed local-draft operation/resource, class-specific policy, and
+unenforced audit-receipt plus isolated-local-only obligations.
+Each request digest-binds the privacy-safe inspection mapping and validated
+lineage, and both the active shadow evaluation and captured built-in replay
+must equal the controller's expected decision. Routing is not consulted: the
+fixed environment is network-disabled and local non-AI, and no profile or
+runner candidate is selected or made eligible.
+
+Even an exact shadow permit grants no authority and is not a route or dispatch
+input. The mapping fixes authority, enforcement, admission/action, receipt,
+evidence persistence, repair, dispatch, route selection, billing assessment,
+and obligation enforcement to false. The API persists nothing and creates no
+source state, event, durable decision/receipt, worktree, Git/command/process
+invocation, worker/supervisor dispatch, profile selection,
+billing/capacity/circuit fact, harness/network action, or live eligibility. The
+next recommended bounded slice is a separate library-only verifier for an
+untrusted returned shadow mapping that emits fixed privacy-safe replay findings
+and continues to grant no authority, persistence, repair, routing, dispatch,
+worker enablement, or effect.
 
 ## Adaptive promoted-profile routing (target)
 
