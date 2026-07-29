@@ -133,20 +133,43 @@ API, cloud, comparison, supervisor, or external-action fallback. Schema-v1
 through v5 histories retain their prior billing and authorization meanings.
 
 The standalone schema-v1 repository-registration contract and pure validator
-now deterministically validate and hash a controller-supplied ordinary Git
+deterministically validate and hash a controller-supplied ordinary Git
 identity, stable filesystem reference, exact verification argv-array (not
 shell-text) declarations, canonical protected/allowed paths, bounded resource
-limits, fixed local-
-container/network-disabled isolation, and patch-only review policy. Their
-digest-only evidence explicitly declares read-only use, disabled dispatch, and
-no granted authority. They invoke no Git command, subprocess, worker, harness,
-or network service; create no worktree, state/event record, or attempt binding;
-and change no authorization, billing gate, circuit, capacity, or live-route
-eligibility. Baseline results and generated/vendor exclusions remain deferred.
+limits, fixed local-container/network-disabled isolation, and patch-only review
+policy. Their digest-only evidence explicitly declares read-only use, disabled
+dispatch, and no granted authority. The validator invokes no Git command,
+subprocess, worker, harness, or network service; creates no state or worktree;
+and changes no authorization, billing gate, circuit, capacity, or live-route
+eligibility.
 
-The next recommended bounded slice is controller-owned registration selection
-and digest-only attempt binding for a dispatch-disabled repository proposal,
-with exact durable readback but still no worktree, command, worker, or authority.
+Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
+freshly revalidates one registration and binds it plus an explicit canonical
+`proposal_digest` to an existing immutable Class 0/1
+`repository-proposal-disabled` run. It appends exactly one content-addressed,
+statusless `repository_registration_selection` event and then one content-
+addressed, statusless `repository_proposal_attempt_binding` event. Each append
+atomically requires the run to remain `CREATED` and the exact ordered
+predecessor event IDs. Commit failures roll back before reconciliation; exact
+event identifiers, payloads, ordering, digest/component links, and status must
+read back from one consistent SQLite snapshot. These privacy-bounded events
+store no raw proposal content, registration document, path, argv, workspace,
+run directory, credential, or artifact content.
+
+The proposal evidence reuses existing `run_events` and adds no SQLite
+migration, run creation/status transition, authorization decision/action
+receipt, route/profile selection, billing assessment, capacity/circuit event,
+worktree, Git/command/process invocation, worker/supervisor dispatch, harness
+call, network request, or live eligibility. It cannot satisfy route, capacity,
+identity, paid-continuation, environment, isolation, circuit, or explicit live-
+gate prerequisites. Baseline results and generated/vendor exclusions remain
+deferred.
+
+The next recommended bounded slice is an independent read-only repository-
+proposal evidence inspector for exact cardinality/order, digest/replay and
+durable-run/component linkage, fixed disabled semantics, and privacy-safe
+findings, still with no repair, worktree, command, worker, authorization,
+billing, route, or dispatch effect.
 
 `compare-run` is an opt-in execution workflow, not a bypass. It requires the same live gate and current evidence for every selected profile before creating comparison records. Trials use one immutable sanitized Class 0 snapshot, randomized repetition blocks, fresh sessions and workspaces, no shared outputs, and no external actions. Reports expose raw automated dimensions and separate human-review fields; they do not declare a winner or auto-promote a profile.
 

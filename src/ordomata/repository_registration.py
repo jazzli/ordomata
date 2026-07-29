@@ -132,6 +132,7 @@ _LIMIT_BOUNDS: dict[str, tuple[int, int]] = {
     "wall_seconds": (1, 86_400),
     "idle_seconds": (1, 3_600),
 }
+_CONCRETE_PATH_TYPE = type(Path())
 
 
 class _InvalidRegistration(ValueError):
@@ -316,18 +317,7 @@ class RepositoryRegistration:
     def to_canonical(self) -> dict[str, Any]:
         """Return the privacy-bounded canonical preimage used for hashing."""
 
-        return {
-            "isolation_requirements": self.isolation_requirements.to_canonical(),
-            "kind": self.kind,
-            "path_policy": self.path_policy.to_canonical(),
-            "registration_ref": self.registration_ref,
-            "registration_version": self.registration_version,
-            "repository": self.repository.to_canonical(),
-            "resource_limits": self.resource_limits.to_canonical(),
-            "review_policy": self.review_policy.to_canonical(),
-            "schema_version": self.schema_version,
-            "verification_commands": self.verification_commands.to_canonical(),
-        }
+        return _registration_canonical_projection(self)
 
     @property
     def registration_digest(self) -> str:
@@ -336,23 +326,228 @@ class RepositoryRegistration:
     def to_evidence(self) -> dict[str, Any]:
         """Return digest-only evidence that omits paths, identifiers, and argv."""
 
-        return {
-            "authority_granted": False,
-            "dispatch_enabled": False,
-            "filesystem_identity_ref": self.repository.filesystem_identity_ref,
-            "isolation_requirements_digest": self.isolation_requirements.digest,
-            "kind": REPOSITORY_REGISTRATION_EVIDENCE_KIND,
-            "path_policy_digest": self.path_policy.digest,
-            "registration_digest": self.registration_digest,
-            "registration_ref": self.registration_ref,
-            "registration_version": self.registration_version,
-            "repository_ref": self.repository.repository_ref,
-            "resource_limits_digest": self.resource_limits.digest,
-            "review_policy_digest": self.review_policy.digest,
-            "schema_version": self.schema_version,
-            "validation_mode": "read_only",
-            "verification_commands_digest": self.verification_commands.digest,
-        }
+        return _registration_evidence_projection(self)
+
+
+def _require_typed_registration_snapshot(
+    registration: RepositoryRegistration,
+) -> None:
+    if (
+        type(registration) is not RepositoryRegistration
+        or type(registration.repository) is not RepositoryIdentity
+        or type(registration.verification_commands) is not VerificationCommands
+        or type(registration.path_policy) is not RepositoryPathPolicy
+        or type(registration.resource_limits) is not RepositoryResourceLimits
+        or type(registration.isolation_requirements)
+        is not RepositoryIsolationRequirements
+        or type(registration.review_policy) is not RepositoryReviewPolicy
+    ):
+        raise _InvalidRegistration
+    if (
+        type(registration.schema_version) is not int
+        or type(registration.kind) is not str
+        or type(registration.registration_id) is not str
+        or type(registration.registration_version) is not str
+    ):
+        raise _InvalidRegistration
+
+    repository = registration.repository
+    if (
+        type(repository.repository_id) is not str
+        or type(repository.vcs) is not str
+        or type(repository.canonical_root) is not _CONCRETE_PATH_TYPE
+        or type(repository.root_ref) is not str
+        or type(repository.filesystem_identity_ref) is not str
+        or type(repository.repository_ref) is not str
+    ):
+        raise _InvalidRegistration
+
+    for kind in _COMMAND_KINDS:
+        commands = getattr(registration.verification_commands, kind)
+        if type(commands) is not tuple:
+            raise _InvalidRegistration
+        for command in commands:
+            if (
+                type(command) is not VerificationCommand
+                or type(command.command_id) is not str
+                or type(command.kind) is not str
+                or type(command.argv) is not tuple
+                or any(type(argument) is not str for argument in command.argv)
+                or type(command.cwd) is not str
+            ):
+                raise _InvalidRegistration
+
+    policy = registration.path_policy
+    if (
+        type(policy.allowed_paths) is not tuple
+        or any(type(path) is not str for path in policy.allowed_paths)
+        or type(policy.protected_paths) is not tuple
+        or any(type(path) is not str for path in policy.protected_paths)
+    ):
+        raise _InvalidRegistration
+
+    if any(
+        type(getattr(registration.resource_limits, name)) is not int
+        for name in _LIMIT_BOUNDS
+    ):
+        raise _InvalidRegistration
+
+    isolation = registration.isolation_requirements
+    if (
+        type(isolation.backend) is not str
+        or type(isolation.network_mode) is not str
+        or any(
+            type(getattr(isolation, name)) is not bool
+            for name in (
+                "non_root",
+                "read_only_base_repository",
+                "read_only_root_filesystem",
+                "explicit_mounts_only",
+                "git_metadata_hidden",
+                "credential_paths_denied",
+                "control_sockets_denied",
+                "fresh_cell_per_attempt",
+            )
+        )
+    ):
+        raise _InvalidRegistration
+
+    review = registration.review_policy
+    if (
+        type(review.output) is not str
+        or any(
+            type(getattr(review, name)) is not bool
+            for name in (
+                "branch_creation",
+                "commit",
+                "push",
+                "pull_request",
+                "promotion",
+            )
+        )
+    ):
+        raise _InvalidRegistration
+
+
+def _verification_commands_projection(
+    commands: VerificationCommands,
+) -> dict[str, list[dict[str, Any]]]:
+    return {
+        kind: [
+            {
+                "argv": list(command.argv),
+                "command_id": command.command_id,
+                "cwd": command.cwd,
+                "kind": command.kind,
+            }
+            for command in getattr(commands, kind)
+        ]
+        for kind in _COMMAND_KINDS
+    }
+
+
+def _path_policy_projection(policy: RepositoryPathPolicy) -> dict[str, Any]:
+    return {
+        "allowed_paths": list(policy.allowed_paths),
+        "protected_paths": list(policy.protected_paths),
+    }
+
+
+def _resource_limits_projection(
+    limits: RepositoryResourceLimits,
+) -> dict[str, Any]:
+    return {name: getattr(limits, name) for name in _LIMIT_BOUNDS}
+
+
+def _isolation_requirements_projection(
+    requirements: RepositoryIsolationRequirements,
+) -> dict[str, Any]:
+    return {
+        "backend": requirements.backend,
+        "control_sockets_denied": requirements.control_sockets_denied,
+        "credential_paths_denied": requirements.credential_paths_denied,
+        "explicit_mounts_only": requirements.explicit_mounts_only,
+        "fresh_cell_per_attempt": requirements.fresh_cell_per_attempt,
+        "git_metadata_hidden": requirements.git_metadata_hidden,
+        "network_mode": requirements.network_mode,
+        "non_root": requirements.non_root,
+        "read_only_base_repository": requirements.read_only_base_repository,
+        "read_only_root_filesystem": requirements.read_only_root_filesystem,
+    }
+
+
+def _review_policy_projection(policy: RepositoryReviewPolicy) -> dict[str, Any]:
+    return {
+        "branch_creation": policy.branch_creation,
+        "commit": policy.commit,
+        "output": policy.output,
+        "promotion": policy.promotion,
+        "pull_request": policy.pull_request,
+        "push": policy.push,
+    }
+
+
+def _registration_canonical_projection(
+    registration: RepositoryRegistration,
+) -> dict[str, Any]:
+    _require_typed_registration_snapshot(registration)
+    repository = registration.repository
+    return {
+        "isolation_requirements": _isolation_requirements_projection(
+            registration.isolation_requirements
+        ),
+        "kind": registration.kind,
+        "path_policy": _path_policy_projection(registration.path_policy),
+        "registration_ref": canonical_digest(
+            {"registration_id": registration.registration_id}
+        ),
+        "registration_version": registration.registration_version,
+        "repository": {
+            "filesystem_identity_ref": repository.filesystem_identity_ref,
+            "repository_id_ref": canonical_digest(
+                {"repository_id": repository.repository_id}
+            ),
+            "repository_ref": repository.repository_ref,
+            "root_ref": repository.root_ref,
+            "vcs": repository.vcs,
+        },
+        "resource_limits": _resource_limits_projection(
+            registration.resource_limits
+        ),
+        "review_policy": _review_policy_projection(registration.review_policy),
+        "schema_version": registration.schema_version,
+        "verification_commands": _verification_commands_projection(
+            registration.verification_commands
+        ),
+    }
+
+
+def _registration_evidence_projection(
+    registration: RepositoryRegistration,
+) -> dict[str, Any]:
+    canonical = _registration_canonical_projection(registration)
+    repository = registration.repository
+    return {
+        "authority_granted": False,
+        "dispatch_enabled": False,
+        "filesystem_identity_ref": repository.filesystem_identity_ref,
+        "isolation_requirements_digest": canonical_digest(
+            canonical["isolation_requirements"]
+        ),
+        "kind": REPOSITORY_REGISTRATION_EVIDENCE_KIND,
+        "path_policy_digest": canonical_digest(canonical["path_policy"]),
+        "registration_digest": canonical_digest(canonical),
+        "registration_ref": canonical["registration_ref"],
+        "registration_version": registration.registration_version,
+        "repository_ref": repository.repository_ref,
+        "resource_limits_digest": canonical_digest(canonical["resource_limits"]),
+        "review_policy_digest": canonical_digest(canonical["review_policy"]),
+        "schema_version": registration.schema_version,
+        "validation_mode": "read_only",
+        "verification_commands_digest": canonical_digest(
+            canonical["verification_commands"]
+        ),
+    }
 
 
 def _require_exact_keys(value: Any, expected: frozenset[str]) -> dict[str, Any]:
@@ -959,6 +1154,82 @@ def validate_repository_registration(
         raise ValidationError(_INVALID_MESSAGE) from None
 
 
+def revalidate_repository_registration(
+    registration: RepositoryRegistration,
+) -> RepositoryRegistration:
+    """Revalidate one typed snapshot against fresh repository facts.
+
+    ``RepositoryRegistration`` is intentionally constructible for transparent
+    controller code and tests, so its Python type alone is not validation
+    provenance.  Reconstructing the source document and running the strict
+    validator again rejects forged dataclass instances and repository drift
+    before durable evidence is created.
+    """
+
+    try:
+        _require_typed_registration_snapshot(registration)
+        verification_commands = {
+            kind: [
+                {
+                    "argv": list(command.argv),
+                    "command_id": command.command_id,
+                    "cwd": command.cwd,
+                }
+                for command in getattr(registration.verification_commands, kind)
+            ]
+            for kind in _COMMAND_KINDS
+        }
+        document = {
+            "schema_version": registration.schema_version,
+            "kind": registration.kind,
+            "registration_id": registration.registration_id,
+            "registration_version": registration.registration_version,
+            "repository": {
+                "repository_id": registration.repository.repository_id,
+                "vcs": registration.repository.vcs,
+                "root": ".",
+            },
+            "verification_commands": verification_commands,
+            "path_policy": _path_policy_projection(
+                registration.path_policy
+            ),
+            "resource_limits": _resource_limits_projection(
+                registration.resource_limits
+            ),
+            "isolation_requirements": _isolation_requirements_projection(
+                registration.isolation_requirements
+            ),
+            "review_policy": _review_policy_projection(
+                registration.review_policy
+            ),
+        }
+        refreshed = _validate_repository_registration(
+            document,
+            repository_root=registration.repository.canonical_root,
+        )
+        if _registration_canonical_projection(
+            refreshed
+        ) != _registration_canonical_projection(registration):
+            raise _InvalidRegistration
+        return refreshed
+    except (AttributeError, OSError, TypeError, ValueError, ValidationError):
+        raise ValidationError(_INVALID_MESSAGE) from None
+
+
+_BUILTIN_REVALIDATE_REPOSITORY_REGISTRATION = (
+    revalidate_repository_registration
+)
+
+
+def fresh_repository_registration_evidence(
+    registration: RepositoryRegistration,
+) -> dict[str, Any]:
+    """Return a freshly revalidated, explicitly projected evidence copy."""
+
+    refreshed = _BUILTIN_REVALIDATE_REPOSITORY_REGISTRATION(registration)
+    return _registration_evidence_projection(refreshed)
+
+
 def _load_json_object(path: Path, *, failure_message: str) -> dict[str, Any]:
     try:
         document = parse_json_document(path.read_text(encoding="utf-8"))
@@ -1018,6 +1289,8 @@ __all__ = [
     "RepositoryReviewPolicy",
     "VerificationCommand",
     "VerificationCommands",
+    "fresh_repository_registration_evidence",
     "load_repository_registration",
+    "revalidate_repository_registration",
     "validate_repository_registration",
 ]

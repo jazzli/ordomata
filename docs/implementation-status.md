@@ -42,6 +42,9 @@ Earlier design discussion selected machine-verifiable repository maintenance as 
 - No recurring schedule installation.
 - No supervisor worker dispatch: the implemented foreground loop is a
   mock-only control-plane tracer and cannot claim or execute queued work.
+- Repository-proposal selection and binding are inert evidence only. They
+  require an existing `repository-proposal-disabled` run to remain `CREATED`
+  and cannot admit, claim, dispatch, or execute it.
 - No live harness comparison in normal tests or setup; no live Codex-versus-Claude comparison has been completed.
 - No Git remote mutation.
 
@@ -144,32 +147,55 @@ they change no enforcing decision-event or action-receipt schema and add no
 authority. Frozen schema-v1 through v5 histories retain their prior
 interpretation.
 
-The first repository-registration slice is implemented as standalone
+The repository-registration boundary has two implemented slices. Standalone
 `schemas/repository-registration.schema.json` schema v1 plus the pure
-`ordomata.repository_registration` validator. A strict controller-supplied
-ordinary Git root is reduced to stable repository/filesystem references. The
+`ordomata.repository_registration` validator reduce a strict controller-
+supplied ordinary Git root to stable repository/filesystem references. The
 validator accepts exact argv-array (not shell-text) declarations for format,
 lint, type-check, test, and build; canonical protected and allowed repository-
-relative POSIX paths;
-bounded CPU, memory, process, workspace, output, artifact, wall, and idle
-limits; fixed local-container/network-disabled isolation; and patch-only review
-policy. `.git`, `.ordomata`, and `.agentops` are unconditionally protected, and
-case-insensitive aliases of controller-owned paths, traversal, or symlink
-escapes fail closed. Registration versions are bounded canonical SemVer;
-credential/billing option names, known shell launchers, and protected relative
-executables are rejected. Its evidence exposes only bounded
-digest references, version metadata, and fixed `validation_mode: "read_only"`,
-`dispatch_enabled: false`, and `authority_granted: false` facts.
+relative POSIX paths; bounded CPU, memory, process, workspace, output, artifact,
+wall, and idle limits; fixed local-container/network-disabled isolation; and
+patch-only review policy. `.git`, `.ordomata`, and `.agentops` are
+unconditionally protected, and case-insensitive aliases of controller-owned
+paths, traversal, or symlink escapes fail closed. Registration versions are
+bounded canonical SemVer; credential/billing option names, known shell
+launchers, and protected relative executables are rejected. Its evidence
+exposes only bounded digest references, version metadata, and fixed
+`validation_mode: "read_only"`, `dispatch_enabled: false`, and
+`authority_granted: false` facts. The validator remains pure, creates no state,
+and authorizes or executes nothing.
 
-There is no CLI or sample registration, state/event integration, task/binding
-schema change, authorization change, worktree, Git or subprocess invocation,
-worker, supervisor dispatch, billing change, or live-route change. Baseline
-command results, generated/vendor exclusions, bare executable resolution and
-content attestation, and future `shell=False` action-boundary execution remain
-deferred; the validator authorizes and executes nothing. The next recommended
-bounded slice is controller-owned registration selection and digest-only
-attempt binding for a dispatch-disabled repository proposal, with exact durable
-readback but still no worktree, command, worker, or authority.
+The separate `ordomata.repository_proposal` evidence layer implements
+`bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
+registration)`. It freshly revalidates the registration and accepts only a
+canonical proposal digest for an existing immutable Class 0/1
+`repository-proposal-disabled` run with no history beyond its initial
+`CREATED` event. It appends exactly one schema-v1, content-addressed, statusless
+`repository_registration_selection` event and then exactly one schema-v1,
+content-addressed, statusless `repository_proposal_attempt_binding`. Each
+append atomically requires current status `CREATED` and the exact ordered
+predecessor event IDs. Commit failures roll back before reconciliation; the
+complete history, event identifiers, payloads, order, registration links,
+proposal digest, and status must then read back exactly from one consistent
+SQLite snapshot. Exact retry and exact selection-only interruption are
+reconciled; conflicting or ambiguous history fails closed.
+
+The two events contain privacy-bounded digest/reference and version/control
+metadata only; no registration body, raw proposal content, identifier, path,
+argv, workspace, run directory, or artifact content is stored. They reuse the
+existing `run_events` table and add no SQLite migration, CLI, sample
+registration, run creation or status transition, authorization decision or
+action receipt, worktree, Git/subprocess/command invocation, worker or
+supervisor dispatch, profile route, billing/capacity/circuit change, harness
+call, or live eligibility. Baseline command results, generated/vendor
+exclusions, bare executable resolution/content attestation, and future
+`shell=False` execution remain deferred.
+
+The next recommended bounded slice is an independent read-only repository-
+proposal evidence inspector for exact cardinality, ordering, digest/replay,
+durable-run and registration-component linkage, fixed disabled semantics, and
+privacy-safe bounded findings, with no repair, worktree, command, worker,
+authorization, or dispatch.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and
@@ -319,6 +345,11 @@ specific authorization enforcement, and soak evidence remain planned.
 - `ordomata billing-attest --runner codex|claude`: TTY-only, exact-confirmation refresh of short-lived account-bound evidence after independent machine inspection; private atomic storage contains no raw identity, numeric balance, token, or diagnostic free text.
 - `ordomata profiles` and `ordomata route`: versioned execution profiles, exact billing lanes, capability filters, and auditable ranking.
 - `ordomata task-validate` and `context-inspect`: strict contract/schema loading and immutable local context construction.
+- `ordomata.repository_proposal.bind_repository_proposal_attempt`: library-only
+  controller selection and exact durable binding of a freshly revalidated
+  repository registration plus explicit canonical proposal digest to an
+  existing `CREATED` dispatch-disabled sentinel run; it appends exactly two
+  statusless content-addressed events and does not execute or authorize work.
 - `ordomata auth-inspect`: source-preserving, SQLite read-only inspection of
   baseline schema/history and frozen migration-ledger integrity, authorization
   shadow integrity, authenticated freshness, legacy and authority-ceiling

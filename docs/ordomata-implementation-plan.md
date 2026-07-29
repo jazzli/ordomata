@@ -50,6 +50,11 @@ The repository already provides the foundation this plan extends:
 - isolated per-run directories and read-only/tool-disabled synthesis runs;
 - append-only SQLite runs, events, artifacts, schedule claims, and leases, with
   transactional baseline initialization and frozen migration-ledger integrity;
+- a pure schema-v1 repository-registration validator plus library-only,
+  controller-owned repository-proposal selection and binding: an existing
+  `CREATED` `repository-proposal-disabled` run receives exactly two statusless,
+  content-addressed events after fresh registration validation and an explicit
+  canonical proposal digest, with exact readback and no dispatch or authority;
 - a versioned additive SQLite supervisor migration with immutable mock-only
   flow admission, append-only optimistic control/flow/attempt revisions, sticky
   cancellation, fenced multi-resource claim APIs, and an internal local
@@ -147,19 +152,38 @@ owner-private Class 1 local effect.
 
 The first Phase 3 repository-registration slice is implemented as a standalone
 schema-v1 contract and pure read-only validator. It reduces a strict controller-
-supplied ordinary Git root to stable repository/filesystem references; validates
-exact verification argv-array (not shell-text) declarations, canonical
-protected/allowed paths, bounded resource limits, fixed local-container/network-
-disabled isolation, and patch-only review policy; and returns digest-only
-evidence declaring read-only use,
-disabled dispatch, and no granted authority. Git and Ordomata state paths are
-always protected, while traversal and symlink escapes fail closed. It has no
-CLI, persistence, attempt binding, worktree, command, worker, authorization,
-supervisor-dispatch, billing, or live-route effect. Baseline command results and
-generated/vendor exclusions remain deferred. The next recommended bounded slice
-is controller-owned registration selection and digest-only attempt binding for
-a dispatch-disabled repository proposal, with exact durable readback but still
-no worktree, command, worker, or authority.
+supplied ordinary Git root to stable repository/filesystem references;
+validates exact verification argv-array (not shell-text) declarations,
+canonical protected/allowed paths, bounded resource limits, fixed local-
+container/network-disabled isolation, and patch-only review policy; and returns
+digest-only evidence declaring read-only use, disabled dispatch, and no granted
+authority. Git and Ordomata state paths are always protected, while traversal
+and symlink escapes fail closed. The validator remains pure, creates no state,
+and authorizes or executes nothing.
+
+The second Phase 3 slice is the separate
+`ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
+It freshly revalidates a registration and requires an explicit canonical
+`proposal_digest` plus an existing immutable Class 0/1
+`repository-proposal-disabled` run with only its initial `CREATED` status. It
+appends exactly one content-addressed, statusless
+`repository_registration_selection` event and then one content-addressed,
+statusless `repository_proposal_attempt_binding`; each append atomically
+requires current status `CREATED` plus the exact ordered predecessor event IDs.
+Commit failures roll back before reconciliation, and exact history/readback
+from one consistent SQLite snapshot is mandatory. Only digest/reference and
+bounded version/control metadata is stored; raw
+proposal content and registration/path/argv/workspace/run-directory values are
+not. The events reuse existing `run_events` and add no migration, run creation
+or status transition, authorization decision or action receipt, worktree,
+command/process/worker/supervisor dispatch, routing, billing, harness, or live-
+route effect. Baseline command results and generated/vendor exclusions remain
+deferred.
+
+The next recommended bounded slice is an independent read-only repository-
+proposal evidence inspector for cardinality, ordering, digest/replay, durable-
+run and component linkage, fixed disabled semantics, and privacy-safe bounded
+findings, with no repair, worktree, command, worker, authorization, or dispatch.
 
 The target semantics for Class 3 standing envelopes, irreversible actions,
 the non-delegable root-authority kernel, consequential outbox execution,
@@ -327,7 +351,9 @@ Planned logical records:
   codes, obligations, expiry, and derived display class;
 - **action receipts:** the exact enforced object, decision id, outcome, and any
   artifact or state transition produced;
-- **repository registrations:** immutable repository identity plus versioned authoritative commands, protected paths, limits, and worker requirements;
+- **repository registrations:** immutable repository identity plus versioned
+  controller-validated command declarations, protected paths, limits, and
+  worker requirements; declarations do not authorize execution;
 - **flow definitions/runs:** versioned DAG, goal digest, immutable input snapshot, controller id, revision, status, and cancellation intent;
 - **flow steps:** typed dependencies, required actions/resources, environment
   and consequence requirements, required capabilities, derived class, retry
@@ -354,8 +380,12 @@ The current additive schema migration implements only the bounded Phase 2
 control-plane subset: mock-only immutable flow records, append-only control/
 flow/attempt events, sticky cancellation requests, fenced leases/claims, and
 the internal local completion outbox/delivery receipts. The standalone
-repository-registration schema and validator do not persist registrations;
-authorization records, durable repository selection/binding, worker execution,
+repository-registration schema and validator still do not persist registration
+documents. The separate proposal-evidence layer now stores one controller-owned
+selection and one linked proposal-attempt binding as content-addressed existing
+run events; this required no migration and retains only privacy-bounded digest/
+version metadata plus bounded attempt controls. Independent proposal-evidence
+inspection, authorization records for repository actions, worker execution,
 and consequential-action delivery remain planned.
 
 Historical run, event, attempt, artifact, authorization request/decision,
@@ -590,40 +620,53 @@ satisfied.
 
 ## Phase 3 - Repository registrations and isolated worker cells
 
-**Implementation checkpoint — read-only registration contract, not worker-cell
-enablement:** standalone `schemas/repository-registration.schema.json` schema v1
-and the pure `ordomata.repository_registration` validator implement the initial
-contract boundary. They validate a controller-supplied ordinary Git root and
-stable repository/filesystem references; format, lint, type-check, test, and
-build as exact argv-array (not shell-text) declarations; canonical protected and
-allowed POSIX paths with mandatory `.git`, `.ordomata`, and `.agentops`
-protection; bounded
-CPU, memory, process, workspace, output, artifact, wall, and idle limits; fixed
-local-container/network-disabled isolation; and patch-only/no-Git-publication
-review policy. Case-insensitive aliases of controller-owned paths, traversal,
-and symlink escapes fail closed. Registration versions are bounded canonical
-SemVer; credential/billing option names, known shell launchers, and protected
-relative executables are rejected. The result is digest-only evidence with
-fixed read-only, dispatch-disabled, and no-authority facts.
-It creates no state or event, task/attempt binding, worktree, command, worker,
-authorization, dispatch, billing, or live-route capability. Baseline results
-and generated/vendor exclusions remain deferred, as do bare executable
+**Implementation checkpoint — read-only registration and proposal evidence,
+not worker-cell enablement:** standalone
+`schemas/repository-registration.schema.json` schema v1 and the pure
+`ordomata.repository_registration` validator implement the initial contract
+boundary. They validate a controller-supplied ordinary Git root and stable
+repository/filesystem references; format, lint, type-check, test, and build as
+exact argv-array (not shell-text) declarations; canonical protected and allowed
+POSIX paths with mandatory `.git`, `.ordomata`, and `.agentops` protection;
+bounded CPU, memory, process, workspace, output, artifact, wall, and idle
+limits; fixed local-container/network-disabled isolation; and patch-only/no-
+Git-publication review policy. Case-insensitive aliases of controller-owned
+paths, traversal, and symlink escapes fail closed. Registration versions are
+bounded canonical SemVer; credential/billing option names, known shell
+launchers, and protected relative executables are rejected. The result is
+digest-only evidence with fixed read-only, dispatch-disabled, and no-authority
+facts. The validator creates no state and authorizes or executes nothing.
+
+The separate proposal-evidence API freshly revalidates that registration and
+binds its controller-owned selection plus an explicit canonical proposal
+digest to an existing immutable Class 0/1 `repository-proposal-disabled` run.
+It writes exactly two ordered, statusless, content-addressed events while each
+append atomically requires the run to remain `CREATED` with the exact ordered
+predecessor event IDs, then requires exact readback from one consistent SQLite
+snapshot. Only privacy-bounded digest/version and attempt-control metadata is
+stored. It creates no run or status transition and adds no SQLite migration,
+authorization, worktree, command, process, worker, dispatch, route, billing, or
+live capability. Independent read-only inspection is the next slice. Baseline
+results and generated/vendor exclusions remain deferred, as do bare executable
 resolution and content attestation, future `shell=False` action-boundary
-execution, and every worker-cell deliverable below. The validator authorizes
-and executes nothing.
+execution, and every worker-cell deliverable below.
 
 ### Deliverables
 
 - Complete the versioned repository-registration contract containing:
   - canonical repository path and identity;
-  - authoritative format, lint, type-check, test, and build argv arrays;
+  - controller-validated format, lint, type-check, test, and build argv-array
+    declarations, which are configuration inputs rather than execution
+    authority;
   - baseline command results;
   - protected and allowed paths;
   - generated/vendor exclusions;
   - resource, timeout, network, and artifact limits;
   - required isolation backend;
   - review-only branch/patch policy.
-- Resolve and canonicalize every path, reject symlink escapes, and hash the registration used by each attempt.
+- Continue from the implemented path resolution and digest-bound registration
+  selection/proposal-attempt linkage by adding independent read-only evidence
+  inspection before any worktree or command path.
 - Create one disposable detached Git worktree per Class 1 job. Never modify the operator's primary checkout or create a branch.
 - Keep the base repository read-only from the worker's perspective and expose only the job worktree plus bounded temporary storage.
 - Keep the repository's shared Git directory, refs, config, hooks, indexes, and credentials controller-only. Hide the worktree's `.git` pointer and do not mount the common Git directory into the worker cell. A worker edits only materialized source files without Git authority; the controller owns worktree lifecycle and computes the resulting patch.

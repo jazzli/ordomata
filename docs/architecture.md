@@ -298,6 +298,21 @@ allowance.
 
 Run identity, task version, context snapshot, runner, and creation metadata are immutable. Billing assessments, capacity outcomes, billing-circuit transitions, state transitions, and artifact metadata are appended as immutable events. SQLite triggers prevent updates or deletion of historical run data. Mutable scheduler leases are separate operational records and do not rewrite history.
 
+Dispatch-disabled repository proposals reuse that existing run-event substrate;
+they add no table or SQLite migration. An existing immutable Class 0/1 run with
+the fixed `repository-proposal-disabled` runner must contain only its initial
+`CREATED` status before the controller may append a content-addressed
+`repository_registration_selection` event and then a content-addressed
+`repository_proposal_attempt_binding` event. Both are statusless, each append
+atomically requires current status `CREATED` plus the exact ordered predecessor
+event IDs, and the binding stores an explicit canonical proposal digest rather
+than proposal content. Commit failure is rolled back before reconciliation.
+Exact retry and selection-only interruption recovery succeed only when one
+transactionally consistent SQLite read returns the exact event identifiers,
+types, payloads, order, durable run linkage, and current status. This proves
+local evidence persistence, not authorization, an effect receipt, dispatch, or
+an external tamper anchor.
+
 A run is successful only when all of the following hold:
 
 1. the process exits successfully;
@@ -482,28 +497,59 @@ The first repository-registration slice is implemented as the standalone
 root it derives stable repository and filesystem references, validates exact
 argv-array (not shell-text) declarations for format, lint, type-check, test, and
 build, and canonicalizes protected and allowed repository-relative POSIX paths.
-`.git`,
-`.ordomata`, and `.agentops` are always protected; traversal and symlink escapes
-fail closed, including case-insensitive aliases of those controller-owned
-paths. Registration versions are bounded canonical SemVer. Credential/billing
-option names, known shell launchers, and protected relative executables are
-rejected. The contract also fixes bounded CPU, memory, process, workspace,
-output, artifact, wall, and idle limits; a local-container, network-disabled
-isolation requirement; and a patch-only policy that forbids branch, commit,
-push, PR, and promotion actions. The returned privacy-bounded evidence contains
+`.git`, `.ordomata`, and `.agentops` are always protected; traversal and symlink
+escapes fail closed, including case-insensitive aliases of those controller-
+owned paths. Registration versions are bounded canonical SemVer.
+Credential/billing option names, known shell launchers, and protected relative
+executables are rejected. The contract also fixes bounded CPU, memory, process,
+workspace, output, artifact, wall, and idle limits; a local-container, network-
+disabled isolation requirement; and a patch-only policy that forbids branch,
+commit, push, PR, and promotion actions. Its privacy-bounded evidence contains
 bounded digest references, version metadata, and fixed
 `validation_mode: "read_only"`, `dispatch_enabled: false`, and
 `authority_granted: false` facts rather than local paths or declarations.
 Baseline command results, generated/vendor exclusions, bare executable
-resolution and content attestation, and any future `shell=False` action-boundary
-execution remain deferred. The validator authorizes and executes nothing.
+resolution and content attestation, and future `shell=False` action-boundary
+execution remain deferred. The validator remains pure, has no CLI or sample
+registration, creates no state, and authorizes or executes nothing.
 
-This validator supplies controller evidence only. It has no CLI or sample
-registration and creates no state/event record, task/attempt binding,
-authorization decision, worktree, process, worker, route, or live eligibility.
-The next recommended bounded slice is controller-owned registration selection
-and digest-only attempt binding for a dispatch-disabled repository proposal,
-with exact durable readback but still no worktree, command, worker, or authority.
+The second slice is the separate
+`ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
+It freshly revalidates a `RepositoryRegistration`, requires an existing
+immutable Class 0/1 `repository-proposal-disabled` run to be exactly at
+`CREATED`, requires an explicit canonical `proposal_digest`, and binds the
+controller-owned selection to that proposal attempt without storing proposal
+content. The selection event contains the validator's privacy-bounded evidence,
+its digest, the exact proposal digest, the run reference, and fixed
+`controller_owned` selection mode. The binding links that selection, repeats
+the proposal digest, and binds every registration component digest plus
+privacy-safe references for the
+immutable run, proposal version, runner, workspace, run directory, context,
+attempt, timeout, and current Class 0/1 ceiling. It fixes read-only validation,
+disabled dispatch, and no granted authority. Neither event is an ABAC request,
+decision, pre-effect record, action receipt, routing selection, or run status.
+
+The API appends exactly those two schema-v1 events after `CREATED`, atomically
+guarding current status and exact ordered predecessor event IDs on each append,
+reconciles only an exact retry or exact selection-only partial history, and
+then rereads the complete three-event history in one consistent SQLite
+snapshot. Commit failures roll back before any readback reconciliation.
+Conflicting, ambiguous, status-bearing, reordered, stale-registration, or
+otherwise inexact histories fail closed.
+No registration document or raw path, argv, proposal ID/content, workspace,
+run directory, or artifact content is persisted. There is no new SQLite
+migration, run creation or status transition, authorization or authority,
+worktree, Git or command execution, process, worker or supervisor dispatch,
+model/profile route,
+billing/capacity/circuit change, harness call, or live eligibility.
+
+The next recommended bounded slice is an independent read-only repository-
+proposal evidence inspector. From one consistent SQLite snapshot it should
+verify exactly-one selection/binding coverage, `created < selection < binding`
+ordering, content-addressed event identifiers, durable `RunRecord` and
+registration-component linkage, replayed fixed disabled semantics, and
+privacy-safe bounded findings without repair, mutation, worktree, command,
+worker, authorization, or dispatch.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor

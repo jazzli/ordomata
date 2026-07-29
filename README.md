@@ -61,6 +61,12 @@ records.
   Chief-of-Staff attempts, including canonical candidates, fixed rejection
   codes, raw metric tiers, policy/profile/configuration refs, and the selected
   overrides digest;
+- controller-owned, dispatch-disabled repository-proposal evidence: the
+  `bind_repository_proposal_attempt` library API freshly revalidates one
+  registration, requires an explicit canonical proposal digest for an existing
+  `repository-proposal-disabled` run, and exactly reads back one content-
+  addressed `repository_registration_selection` event followed by one
+  `repository_proposal_attempt_binding` event while the run remains `CREATED`;
 - isolated per-run workspaces, wall timeouts, terminal-event checks, and output validation;
 - append-only SQLite runs, events, artifacts, capacity observations, billing circuits, scheduler claims, and expiring leases, with capacity checked inside the atomic dispatch reservation; baseline creation and exact legacy adoption are transactional, and every ordinary open verifies the frozen, contiguous v1-v4 migration prefix before use;
 - a versioned additive SQLite migration for a durable supervisor control-plane
@@ -167,31 +173,57 @@ limited to Class 0/1 requests for the exact profile-backed controller-owned
 `MockRunner`, publication remains an owner-private Class 1 local write, and no
 live, shared, promotion, API, credit, overage, or cloud path is enabled.
 
-The first repository-registration slice is implemented as a standalone schema-
-v1 contract and pure read-only validator. It accepts a controller-supplied
-ordinary Git root, derives stable repository and filesystem references, validates
-format, lint, type-check, test, and build as exact argv-array (not shell-text)
-declarations, canonicalizes protected and allowed repository-relative POSIX
-paths, enforces
-mandatory protection for `.git`, `.ordomata`, and `.agentops`, and validates
-bounded resource, fixed local-container/network-disabled isolation, and patch-
-only review declarations. Case-insensitive aliases of controller-owned paths,
+The repository-registration boundary now has two implemented slices. The
+standalone schema-v1 contract and pure read-only `repository_registration`
+validator accept a controller-supplied ordinary Git root, derive stable
+repository and filesystem references, validate format, lint, type-check, test,
+and build as exact argv-array (not shell-text) declarations, canonicalize
+protected and allowed repository-relative POSIX paths, enforce mandatory
+protection for `.git`, `.ordomata`, and `.agentops`, and validate bounded
+resource, fixed local-container/network-disabled isolation, and patch-only
+review declarations. Case-insensitive aliases of controller-owned paths,
 traversal, and symlink escapes fail closed. Registration versions are bounded
 canonical SemVer; credential/billing option names, known shell launchers, and
-protected relative executables are rejected. Its
-privacy-bounded evidence contains only bounded digest references, version
-metadata, and fixed `validation_mode: "read_only"`, `dispatch_enabled: false`,
-and `authority_granted: false` facts.
-It has no CLI or sample registration and creates no state or event, task or
-attempt binding, authorization, worktree, command, worker, route, or live-model
-eligibility. Baseline command results and generated/vendor exclusions remain
-deferred. Bare executable resolution and content attestation, and any future
-`shell=False` action-boundary execution also remain deferred; this validator
-authorizes and executes nothing.
+protected relative executables are rejected. The validator remains pure: it
+creates no run, state/event record, authorization, worktree, command, worker,
+route, or live-model eligibility and authorizes or executes nothing.
 
-The next recommended bounded slice is controller-owned registration selection
-and digest-only attempt binding for a dispatch-disabled repository proposal,
-with exact durable readback but still no worktree, command, worker, or authority.
+Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
+freshly revalidates one registration, requires an explicit canonical
+`proposal_digest`, and accepts only an existing immutable Class 0/1
+`repository-proposal-disabled` run whose sole prior event is `CREATED`. It
+appends exactly two schema-v1, statusless, content-addressed events in order:
+`repository_registration_selection`, then
+`repository_proposal_attempt_binding`. Each append atomically requires current
+status `CREATED` and the exact ordered predecessor event IDs, so an unrelated
+concurrent event blocks before proposal evidence is appended. The selection
+records the controller-owned privacy-bounded registration evidence and exact
+proposal digest; the binding repeats that digest and carries only privacy-
+bounded digest/version links, bounded attempt controls, fixed disabled facts,
+and privacy-safe references to the existing run. Commit failures are rolled
+back before reconciliation. Exact retries and a selection-only interrupted
+append reconcile only after one transactionally consistent read of the exact
+event IDs, types, payloads, order, and current status.
+The persisted evidence fixes `validation_mode: "read_only"`,
+`dispatch_enabled: false`, and `authority_granted: false`; the returned
+projection reports `persistence_mode: "append_only_exact_readback"` and
+`run_status_at_readback: "created"`.
+
+This evidence layer reuses existing append-only `run_events`; it adds no
+SQLite migration and does not persist a registration document or any raw
+repository path, argv, workspace, run directory, proposal identifier, proposal
+content, or artifact content. It has no CLI or sample registration and creates
+no run or status transition,
+authorization decision or action receipt, worktree, Git or subprocess call,
+worker or supervisor dispatch, profile route, billing/capacity/circuit fact, or
+live eligibility. Baseline command results, generated/vendor exclusions, bare
+executable resolution and content attestation, and any future `shell=False`
+action-boundary execution remain deferred.
+
+The next recommended bounded slice is an independent read-only repository-
+proposal evidence inspector for exact cardinality, order, digest/replay,
+durable-run linkage, fixed disabled semantics, and privacy-safe reporting,
+still with no repair, worktree, command, worker, authorization, or dispatch.
 
 ## Quick start
 
@@ -416,7 +448,9 @@ claims about commands available today.
   a worker daemon; no `launchd`, cron, or other OS schedule is installed;
 - no production inbox, calendar, Drive, Slack, or other connectors;
 - no Cursor Agent adapter yet (the desktop launcher alone is insufficient);
-- no repository worktree maintenance workflow yet;
+- no repository worktree maintenance workflow yet; the implemented repository-
+  proposal records are inert evidence for an existing `CREATED` sentinel run,
+  not admission or dispatch;
 - no automatic outcome-to-router learning or retry/failover controller yet;
 - no general runtime ABAC coverage yet: only Class 1 admission of a new
   profile-backed exact built-in-mock attempt, its mock dispatch, and its
