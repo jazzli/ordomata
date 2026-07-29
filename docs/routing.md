@@ -128,9 +128,9 @@ Selection evidence never grants authority and never makes stale or unsafe billin
 evidence eligible. The `route` command remains a read-only preview, and an
 explicit profile rejected before run creation intentionally leaves no event.
 
-The frozen schema-v1 and separate schema-v2 repository-registration contracts
-plus pure version-dispatched validation are implemented. They validate a
-controller-supplied ordinary Git
+The frozen schema-v1 and separate schema-v2/schema-v3 repository-registration
+contracts plus pure version-dispatched validation are implemented. They
+validate a controller-supplied ordinary Git
 root, stable repository/filesystem references, exact verification argv-array
 (not shell-text) declarations, canonical protected/allowed paths, bounded
 resource limits, fixed local-container/network-disabled isolation, and patch-
@@ -138,7 +138,18 @@ only review policy, then return digest-only evidence declaring
 `dispatch_enabled: false` and `authority_granted: false`. V2 adds bounded,
 canonical literal generated/vendor deny roots strictly below allowed paths;
 they select no profile or route and provide no ignore or eligibility behavior.
-The validator remains pure and creates no state.
+V3 retains those rules and adds controller-supplied baseline command results.
+Every declared command is covered exactly once by kind, identifier, and command
+digest under one shared opaque snapshot digest. Results contain bounded integer
+timing and exactly one tagged exited, signaled, or timed-out observation; a
+timeout carries the controller-supplied `termination_confirmed: true`
+assertion. No supplied success, output or output hash, environment, path,
+message, or arbitrary metadata is accepted. Canonical aggregate evidence binds
+the repository and complete command references while exposing no snapshot or
+individual result. It adds only fixed controller-supplied source, aggregate
+digest, bounded result count, `baseline_authenticity_verified: false`, and
+`baseline_freshness_verified: false`. The validator remains pure and creates no
+state.
 
 The separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` API records a
@@ -161,8 +172,10 @@ supervisor dispatch. They reuse existing `run_events`, add no SQLite migration
 or run creation/status transition, and persist no registration body or raw
 proposal content, path, argv, workspace, run directory, or artifact content.
 They create no worktree, Git/command/process invocation, or worker. The chain
-remains pinned to frozen registration evidence v1; schema-v2 registrations fail
-before an event append. Baseline results remain deferred.
+remains pinned to frozen registration evidence v1; schema-v2 and schema-v3
+registrations fail before an event append. Baseline claims cannot select a
+profile or make route, billing, capacity, identity, environment, isolation,
+circuit, or live-gate evidence eligible.
 
 The third slice is the library-only `ordomata.repository_proposal_inspection`
 API `inspect_repository_proposal_evidence(database_path, *, run_id)`. Its
@@ -255,9 +268,16 @@ special files. Nonempty categories are digest-bound, but raw paths remain
 absent from evidence. They do not choose routes, suppress changes, attest
 provenance, or enable execution. Schema v1 and proposal lineage remain frozen.
 
+The seventh bounded Phase 3 slice adds the schema-v3 baseline contract described
+above. It does not authenticate results, compare the clock, recompute a
+snapshot, resolve an executable/toolchain, execute a command, choose a route,
+or establish eligibility or authority. Schemas v1 and v2 retain their prior
+meanings, and proposal lineage remains v1-only.
+
 The next recommended bounded slice is pure schema/validator support for
-controller-supplied baseline command-result attestations in schema v3,
-still without command execution, routing, or proposal-lineage widening.
+controller-supplied executable/toolchain identity attestations in schema v4,
+still without executable resolution, command execution, routing, or proposal-
+lineage widening.
 
 ## Adaptive promoted-profile routing (target)
 

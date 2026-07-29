@@ -132,9 +132,9 @@ billing route, or live gate; invoke no harness; and enable no credit, overage,
 API, cloud, comparison, supervisor, or external-action fallback. Schema-v1
 through v5 histories retain their prior billing and authorization meanings.
 
-The frozen schema-v1 and separate schema-v2 repository-registration contracts
-plus pure version-dispatched validation deterministically validate and hash a
-controller-supplied ordinary Git
+The frozen schema-v1 and separate schema-v2/schema-v3 repository-registration
+contracts plus pure version-dispatched validation deterministically validate
+and hash a controller-supplied ordinary Git
 identity, stable filesystem reference, exact verification argv-array (not
 shell-text) declarations, canonical protected/allowed paths, bounded resource
 limits, fixed local-container/network-disabled isolation, and patch-only review
@@ -144,7 +144,17 @@ subprocess, worker, harness, or network service; creates no state or worktree;
 and changes no authorization, billing gate, circuit, capacity, or live-route
 eligibility. V2 adds bounded canonical literal generated/vendor deny roots
 strictly below allowed paths; they provide no billing, route, harness, ignore,
-or execution evidence.
+or execution evidence. V3 retains those path rules and requires exact
+one-to-one linkage between every declared command and a controller-supplied
+baseline result under one shared opaque snapshot digest. Results admit only
+bounded integer timing and tagged exited, signaled, or timed-out observations;
+a timeout carries the controller-supplied `termination_confirmed: true`
+assertion. They contain no supplied success, output or output hash,
+environment, path, message, credential, billing fact, or arbitrary metadata.
+Outward evidence adds only fixed controller-supplied source, aggregate digest,
+bounded result count, `baseline_authenticity_verified: false`, and
+`baseline_freshness_verified: false`; it exposes no snapshot or individual
+result.
 
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration and binds it plus an explicit canonical
@@ -166,8 +176,9 @@ worktree, Git/command/process invocation, worker/supervisor dispatch, harness
 call, network request, or live eligibility. It cannot satisfy route, capacity,
 identity, paid-continuation, environment, isolation, circuit, or explicit live-
 gate prerequisites. The chain remains pinned to frozen registration evidence
-v1 and rejects schema-v2 registrations before any event append. Baseline results
-remain deferred.
+v1 and rejects schema-v2 and schema-v3 registrations before any event append.
+Baseline observations cannot satisfy route, capacity, identity, paid-
+continuation, environment, isolation, circuit, or explicit live-gate evidence.
 
 The third slice is the library-only `ordomata.repository_proposal_inspection`
 API `inspect_repository_proposal_evidence(database_path, *, run_id)`. Its
@@ -268,10 +279,17 @@ capacity, identity, billing, paid-continuation, or live-gate evidence and do not
 enable or invoke a harness. Frozen schema v1 remains the only proposal-lineage
 version.
 
+The seventh bounded Phase 3 slice adds the schema-v3 baseline contract described
+above. It does not authenticate the observations, compare the clock, recompute
+the snapshot, resolve an executable/toolchain, execute a command, invoke a
+harness, or create subscription, billing, capacity, or route evidence. Schemas
+v1 and v2 retain their prior meanings, and frozen schema v1 remains the only
+proposal-lineage version.
+
 The next recommended bounded slice is pure schema/validator support for
-controller-supplied baseline command-result attestations in schema v3,
-still without command execution, subscription evidence, or proposal-lineage
-widening.
+controller-supplied executable/toolchain identity attestations in schema v4,
+still without executable resolution, command execution, subscription evidence,
+or proposal-lineage widening.
 
 `compare-run` is an opt-in execution workflow, not a bypass. It requires the same live gate and current evidence for every selected profile before creating comparison records. Trials use one immutable sanitized Class 0 snapshot, randomized repetition blocks, fresh sessions and workspaces, no shared outputs, and no external actions. Reports expose raw automated dimensions and separate human-review fields; they do not declare a winner or auto-promote a profile.
 

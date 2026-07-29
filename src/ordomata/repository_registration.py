@@ -25,15 +25,19 @@ from .redaction import contains_credential_material
 from .schema import parse_json_document, require_valid
 
 
-REPOSITORY_REGISTRATION_SCHEMA_VERSION = 2
-REPOSITORY_REGISTRATION_SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2})
+REPOSITORY_REGISTRATION_SCHEMA_VERSION = 3
+REPOSITORY_REGISTRATION_SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2, 3})
 REPOSITORY_REGISTRATION_KIND = "repository_registration"
 REPOSITORY_REGISTRATION_EVIDENCE_KIND = "repository_registration_validation"
+BASELINE_COMMAND_RESULTS_KIND = "repository_baseline_command_results"
+BASELINE_COMMAND_RESULTS_SCHEMA_VERSION = 1
+BASELINE_COMMAND_RESULTS_ATTESTATION_SOURCE = "controller_supplied"
 
 _INVALID_MESSAGE = "repository registration is invalid"
 _LOAD_MESSAGE = "repository registration could not be loaded"
 _SCHEMA_LOAD_MESSAGE = "repository registration schema could not be loaded"
 _IDENTIFIER_PATTERN = re.compile(r"[a-z][a-z0-9_.-]{0,119}")
+_DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
 _REPOSITORY_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._/-]{2,199}")
 _VERSION_PATTERN = re.compile(
     r"(?:0|[1-9][0-9]{0,9})\."
@@ -43,6 +47,12 @@ _VERSION_PATTERN = re.compile(
 _WINDOWS_ABSOLUTE_PATH_PATTERN = re.compile(r"[A-Za-z]:[\\/]")
 _BARE_EXECUTABLE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}")
 _COMMAND_KINDS = ("format", "lint", "type_check", "test", "build")
+_MAX_BASELINE_RESULTS = 80
+_MAX_UNIX_MILLISECONDS = 9_007_199_254_740_991
+_MAX_REGISTRATION_DOCUMENT_BYTES = 8 * 1024 * 1024
+_MAX_SCHEMA_DOCUMENT_BYTES = 1024 * 1024
+_MAX_SNAPSHOT_BYTES = 4 * 1024 * 1024
+_MAX_SNAPSHOT_INTEGER_BITS = 64
 _MANDATORY_PROTECTED_PATHS = frozenset({".agentops", ".git", ".ordomata"})
 _EXCLUSION_PATH_NAMES = ("generated_paths", "vendor_paths")
 _MAX_EXCLUSION_PATHS_PER_CATEGORY = 64
@@ -59,6 +69,7 @@ _WINDOWS_RESERVED_PATH_STEMS = frozenset(
 _SCHEMA_FILENAME_BY_VERSION = {
     1: "repository-registration.schema.json",
     2: "repository-registration-v2.schema.json",
+    3: "repository-registration-v3.schema.json",
 }
 _SHELL_PROGRAMS = frozenset(
     {
@@ -217,6 +228,55 @@ class VerificationCommands:
 
 
 @dataclass(frozen=True, slots=True)
+class BaselineCommandTermination:
+    """One bounded terminal observation without output or diagnostic content."""
+
+    kind: str
+    exit_code: int | None = field(default=None, repr=False)
+    signal_number: int | None = field(default=None, repr=False)
+    timeout_seconds: int | None = field(default=None, repr=False)
+    termination_confirmed: bool | None = field(default=None, repr=False)
+
+    def to_canonical(self) -> dict[str, Any]:
+        return _baseline_termination_projection(self)
+
+
+@dataclass(frozen=True, slots=True)
+class BaselineCommandResult:
+    """Controller-supplied result linked to one declared verification command."""
+
+    kind: str
+    command_id: str = field(repr=False)
+    command_digest: str = field(repr=False)
+    started_at_unix_ms: int = field(repr=False)
+    completed_at_unix_ms: int = field(repr=False)
+    termination: BaselineCommandTermination = field(repr=False)
+
+    def to_canonical(self) -> dict[str, Any]:
+        return _baseline_command_result_projection(self)
+
+
+@dataclass(frozen=True, slots=True)
+class BaselineCommandResults:
+    """Unauthenticated baseline observations with controller-derived bindings."""
+
+    kind: str
+    schema_version: int
+    attestation_source: str
+    repository_ref: str = field(repr=False)
+    snapshot_digest: str = field(repr=False)
+    verification_commands_digest: str = field(repr=False)
+    results: tuple[BaselineCommandResult, ...] = field(repr=False)
+
+    def to_canonical(self) -> dict[str, Any]:
+        return _baseline_command_results_projection(self)
+
+    @property
+    def digest(self) -> str:
+        return canonical_digest(self.to_canonical())
+
+
+@dataclass(frozen=True, slots=True)
 class RepositoryPathPolicy:
     allowed_paths: tuple[str, ...] = field(repr=False)
     protected_paths: tuple[str, ...] = field(repr=False)
@@ -325,6 +385,10 @@ class RepositoryRegistration:
     resource_limits: RepositoryResourceLimits
     isolation_requirements: RepositoryIsolationRequirements
     review_policy: RepositoryReviewPolicy
+    baseline_command_results: BaselineCommandResults | None = field(
+        default=None,
+        repr=False,
+    )
 
     @property
     def registration_ref(self) -> str:
@@ -454,6 +518,12 @@ def _require_typed_registration_snapshot(
     ):
         raise _InvalidRegistration
 
+    if registration.schema_version in {1, 2}:
+        if registration.baseline_command_results is not None:
+            raise _InvalidRegistration
+    else:
+        _require_typed_baseline_snapshot(registration)
+
 
 def _verification_commands_projection(
     commands: VerificationCommands,
@@ -470,6 +540,190 @@ def _verification_commands_projection(
         ]
         for kind in _COMMAND_KINDS
     }
+
+
+def _verification_command_projection(
+    command: VerificationCommand,
+) -> dict[str, Any]:
+    return {
+        "argv": list(command.argv),
+        "command_id": command.command_id,
+        "cwd": command.cwd,
+        "kind": command.kind,
+    }
+
+
+def _verification_command_digest(command: VerificationCommand) -> str:
+    return canonical_digest(
+        {
+            "command": _verification_command_projection(command),
+            "kind": "repository_verification_command",
+            "schema_version": 1,
+        }
+    )
+
+
+def _baseline_termination_projection(
+    termination: BaselineCommandTermination,
+) -> dict[str, Any]:
+    if termination.kind == "exited":
+        return {
+            "exit_code": termination.exit_code,
+            "kind": "exited",
+        }
+    if termination.kind == "signaled":
+        return {
+            "kind": "signaled",
+            "signal_number": termination.signal_number,
+        }
+    if termination.kind == "timed_out":
+        return {
+            "kind": "timed_out",
+            "termination_confirmed": termination.termination_confirmed,
+            "timeout_seconds": termination.timeout_seconds,
+        }
+    raise _InvalidRegistration
+
+
+def _baseline_command_result_projection(
+    result: BaselineCommandResult,
+) -> dict[str, Any]:
+    return {
+        "command_digest": result.command_digest,
+        "command_id": result.command_id,
+        "completed_at_unix_ms": result.completed_at_unix_ms,
+        "kind": result.kind,
+        "started_at_unix_ms": result.started_at_unix_ms,
+        "termination": _baseline_termination_projection(result.termination),
+    }
+
+
+def _baseline_command_results_projection(
+    baseline: BaselineCommandResults,
+) -> dict[str, Any]:
+    return {
+        "attestation_source": baseline.attestation_source,
+        "kind": baseline.kind,
+        "repository_ref": baseline.repository_ref,
+        "results": [
+            _baseline_command_result_projection(result)
+            for result in baseline.results
+        ],
+        "schema_version": baseline.schema_version,
+        "snapshot_digest": baseline.snapshot_digest,
+        "verification_commands_digest": (
+            baseline.verification_commands_digest
+        ),
+    }
+
+
+def _baseline_command_results_document_projection(
+    baseline: BaselineCommandResults,
+) -> dict[str, Any]:
+    return {
+        "attestation_source": baseline.attestation_source,
+        "kind": baseline.kind,
+        "results": [
+            _baseline_command_result_projection(result)
+            for result in baseline.results
+        ],
+        "snapshot_digest": baseline.snapshot_digest,
+    }
+
+
+def _require_typed_baseline_snapshot(
+    registration: RepositoryRegistration,
+) -> None:
+    baseline = registration.baseline_command_results
+    if (
+        type(baseline) is not BaselineCommandResults
+        or type(baseline.kind) is not str
+        or baseline.kind != BASELINE_COMMAND_RESULTS_KIND
+        or type(baseline.schema_version) is not int
+        or baseline.schema_version != BASELINE_COMMAND_RESULTS_SCHEMA_VERSION
+        or type(baseline.attestation_source) is not str
+        or baseline.attestation_source
+        != BASELINE_COMMAND_RESULTS_ATTESTATION_SOURCE
+        or type(baseline.repository_ref) is not str
+        or baseline.repository_ref != registration.repository.repository_ref
+        or type(baseline.snapshot_digest) is not str
+        or _DIGEST_PATTERN.fullmatch(baseline.snapshot_digest) is None
+        or type(baseline.verification_commands_digest) is not str
+        or baseline.verification_commands_digest
+        != canonical_digest(
+            _verification_commands_projection(
+                registration.verification_commands
+            )
+        )
+        or type(baseline.results) is not tuple
+    ):
+        raise _InvalidRegistration
+    commands = tuple(
+        command
+        for kind in _COMMAND_KINDS
+        for command in getattr(registration.verification_commands, kind)
+    )
+    if (
+        len(baseline.results) != len(commands)
+        or not 1 <= len(baseline.results) <= _MAX_BASELINE_RESULTS
+    ):
+        raise _InvalidRegistration
+    wall_milliseconds = registration.resource_limits.wall_seconds * 1000
+    for result, command in zip(baseline.results, commands, strict=True):
+        if (
+            type(result) is not BaselineCommandResult
+            or type(result.kind) is not str
+            or result.kind != command.kind
+            or type(result.command_id) is not str
+            or result.command_id != command.command_id
+            or type(result.command_digest) is not str
+            or result.command_digest != _verification_command_digest(command)
+            or type(result.started_at_unix_ms) is not int
+            or not 0 <= result.started_at_unix_ms <= _MAX_UNIX_MILLISECONDS
+            or type(result.completed_at_unix_ms) is not int
+            or not 0 <= result.completed_at_unix_ms <= _MAX_UNIX_MILLISECONDS
+            or result.started_at_unix_ms > result.completed_at_unix_ms
+            or result.completed_at_unix_ms - result.started_at_unix_ms
+            > wall_milliseconds
+            or type(result.termination) is not BaselineCommandTermination
+        ):
+            raise _InvalidRegistration
+        termination = result.termination
+        if type(termination.kind) is not str:
+            raise _InvalidRegistration
+        if termination.kind == "exited":
+            if (
+                type(termination.exit_code) is not int
+                or not 0 <= termination.exit_code <= 255
+                or termination.signal_number is not None
+                or termination.timeout_seconds is not None
+                or termination.termination_confirmed is not None
+            ):
+                raise _InvalidRegistration
+        elif termination.kind == "signaled":
+            if (
+                termination.exit_code is not None
+                or type(termination.signal_number) is not int
+                or not 1 <= termination.signal_number <= 64
+                or termination.timeout_seconds is not None
+                or termination.termination_confirmed is not None
+            ):
+                raise _InvalidRegistration
+        elif termination.kind == "timed_out":
+            if (
+                termination.exit_code is not None
+                or termination.signal_number is not None
+                or type(termination.timeout_seconds) is not int
+                or not 1
+                <= termination.timeout_seconds
+                <= registration.resource_limits.wall_seconds
+                or termination.termination_confirmed is not True
+                or result.completed_at_unix_ms - result.started_at_unix_ms
+                < termination.timeout_seconds * 1000
+            ):
+                raise _InvalidRegistration
+        else:
+            raise _InvalidRegistration
 
 
 def _path_policy_projection(policy: RepositoryPathPolicy) -> dict[str, Any]:
@@ -494,7 +748,7 @@ def _path_policy_document_projection(
         if policy.generated_paths or policy.vendor_paths:
             raise _InvalidRegistration
         return projection
-    if schema_version == 2:
+    if schema_version in {2, 3}:
         projection.setdefault("generated_paths", [])
         projection.setdefault("vendor_paths", [])
         return projection
@@ -540,7 +794,7 @@ def _registration_canonical_projection(
 ) -> dict[str, Any]:
     _require_typed_registration_snapshot(registration)
     repository = registration.repository
-    return {
+    projection = {
         "isolation_requirements": _isolation_requirements_projection(
             registration.isolation_requirements
         ),
@@ -568,6 +822,14 @@ def _registration_canonical_projection(
             registration.verification_commands
         ),
     }
+    if registration.schema_version == 3:
+        baseline = registration.baseline_command_results
+        if baseline is None:
+            raise _InvalidRegistration
+        projection["baseline_command_results"] = (
+            _baseline_command_results_projection(baseline)
+        )
+    return projection
 
 
 def _registration_evidence_projection(
@@ -575,7 +837,7 @@ def _registration_evidence_projection(
 ) -> dict[str, Any]:
     canonical = _registration_canonical_projection(registration)
     repository = registration.repository
-    return {
+    projection = {
         "authority_granted": False,
         "dispatch_enabled": False,
         "filesystem_identity_ref": repository.filesystem_identity_ref,
@@ -596,6 +858,24 @@ def _registration_evidence_projection(
             canonical["verification_commands"]
         ),
     }
+    if registration.schema_version == 3:
+        baseline = registration.baseline_command_results
+        if baseline is None:
+            raise _InvalidRegistration
+        projection.update(
+            {
+                "baseline_attestation_source": (
+                    BASELINE_COMMAND_RESULTS_ATTESTATION_SOURCE
+                ),
+                "baseline_authenticity_verified": False,
+                "baseline_command_results_digest": canonical_digest(
+                    _baseline_command_results_projection(baseline)
+                ),
+                "baseline_freshness_verified": False,
+                "baseline_result_count": len(baseline.results),
+            }
+        )
+    return projection
 
 
 def _require_exact_keys(value: Any, expected: frozenset[str]) -> dict[str, Any]:
@@ -1099,6 +1379,186 @@ def _build_verification_commands(raw: Any, *, root: Path) -> VerificationCommand
     return VerificationCommands(**built)
 
 
+def _require_digest(value: Any) -> str:
+    if type(value) is not str or _DIGEST_PATTERN.fullmatch(value) is None:
+        raise _InvalidRegistration
+    return value
+
+
+def _build_baseline_termination(
+    raw: Any,
+    *,
+    elapsed_milliseconds: int,
+    wall_seconds: int,
+) -> BaselineCommandTermination:
+    if type(raw) is not dict or type(raw.get("kind")) is not str:
+        raise _InvalidRegistration
+    kind = raw["kind"]
+    if kind == "exited":
+        termination = _require_exact_keys(
+            raw,
+            frozenset({"kind", "exit_code"}),
+        )
+        exit_code = termination["exit_code"]
+        if type(exit_code) is not int or not 0 <= exit_code <= 255:
+            raise _InvalidRegistration
+        return BaselineCommandTermination(
+            kind="exited",
+            exit_code=exit_code,
+        )
+    if kind == "signaled":
+        termination = _require_exact_keys(
+            raw,
+            frozenset({"kind", "signal_number"}),
+        )
+        signal_number = termination["signal_number"]
+        if (
+            type(signal_number) is not int
+            or not 1 <= signal_number <= 64
+        ):
+            raise _InvalidRegistration
+        return BaselineCommandTermination(
+            kind="signaled",
+            signal_number=signal_number,
+        )
+    if kind == "timed_out":
+        termination = _require_exact_keys(
+            raw,
+            frozenset(
+                {
+                    "kind",
+                    "termination_confirmed",
+                    "timeout_seconds",
+                }
+            ),
+        )
+        timeout_seconds = termination["timeout_seconds"]
+        if (
+            type(timeout_seconds) is not int
+            or not 1 <= timeout_seconds <= wall_seconds
+            or termination["termination_confirmed"] is not True
+            or elapsed_milliseconds < timeout_seconds * 1000
+        ):
+            raise _InvalidRegistration
+        return BaselineCommandTermination(
+            kind="timed_out",
+            timeout_seconds=timeout_seconds,
+            termination_confirmed=True,
+        )
+    raise _InvalidRegistration
+
+
+def _build_baseline_command_results(
+    raw: Any,
+    *,
+    repository: RepositoryIdentity,
+    commands: VerificationCommands,
+    resource_limits: RepositoryResourceLimits,
+) -> BaselineCommandResults:
+    baseline = _require_exact_keys(
+        raw,
+        frozenset(
+            {
+                "attestation_source",
+                "kind",
+                "results",
+                "snapshot_digest",
+            }
+        ),
+    )
+    if (
+        baseline["kind"] != BASELINE_COMMAND_RESULTS_KIND
+        or baseline["attestation_source"]
+        != BASELINE_COMMAND_RESULTS_ATTESTATION_SOURCE
+    ):
+        raise _InvalidRegistration
+    snapshot_digest = _require_digest(baseline["snapshot_digest"])
+    declared_commands = tuple(
+        command
+        for kind in _COMMAND_KINDS
+        for command in getattr(commands, kind)
+    )
+    raw_results = baseline["results"]
+    if (
+        type(raw_results) is not list
+        or len(raw_results) != len(declared_commands)
+        or not 1 <= len(raw_results) <= _MAX_BASELINE_RESULTS
+    ):
+        raise _InvalidRegistration
+    command_by_key = {
+        (command.kind, command.command_id): command
+        for command in declared_commands
+    }
+    result_by_key: dict[tuple[str, str], BaselineCommandResult] = {}
+    wall_milliseconds = resource_limits.wall_seconds * 1000
+    for raw_result in raw_results:
+        result = _require_exact_keys(
+            raw_result,
+            frozenset(
+                {
+                    "command_digest",
+                    "command_id",
+                    "completed_at_unix_ms",
+                    "kind",
+                    "started_at_unix_ms",
+                    "termination",
+                }
+            ),
+        )
+        kind = result["kind"]
+        command_id = result["command_id"]
+        if type(kind) is not str or type(command_id) is not str:
+            raise _InvalidRegistration
+        key = (kind, command_id)
+        if key in result_by_key or key not in command_by_key:
+            raise _InvalidRegistration
+        command = command_by_key[key]
+        if _require_digest(result["command_digest"]) != (
+            _verification_command_digest(command)
+        ):
+            raise _InvalidRegistration
+        started = result["started_at_unix_ms"]
+        completed = result["completed_at_unix_ms"]
+        if (
+            type(started) is not int
+            or not 0 <= started <= _MAX_UNIX_MILLISECONDS
+            or type(completed) is not int
+            or not 0 <= completed <= _MAX_UNIX_MILLISECONDS
+            or started > completed
+            or completed - started > wall_milliseconds
+        ):
+            raise _InvalidRegistration
+        result_by_key[key] = BaselineCommandResult(
+            kind=kind,
+            command_id=command_id,
+            command_digest=_verification_command_digest(command),
+            started_at_unix_ms=started,
+            completed_at_unix_ms=completed,
+            termination=_build_baseline_termination(
+                result["termination"],
+                elapsed_milliseconds=completed - started,
+                wall_seconds=resource_limits.wall_seconds,
+            ),
+        )
+    if frozenset(result_by_key) != frozenset(command_by_key):
+        raise _InvalidRegistration
+    ordered_results = tuple(
+        result_by_key[(command.kind, command.command_id)]
+        for command in declared_commands
+    )
+    return BaselineCommandResults(
+        kind=BASELINE_COMMAND_RESULTS_KIND,
+        schema_version=BASELINE_COMMAND_RESULTS_SCHEMA_VERSION,
+        attestation_source=BASELINE_COMMAND_RESULTS_ATTESTATION_SOURCE,
+        repository_ref=repository.repository_ref,
+        snapshot_digest=snapshot_digest,
+        verification_commands_digest=canonical_digest(
+            _verification_commands_projection(commands)
+        ),
+        results=ordered_results,
+    )
+
+
 def _build_path_policy(
     raw: Any,
     *,
@@ -1106,7 +1566,7 @@ def _build_path_policy(
     schema_version: int,
 ) -> RepositoryPathPolicy:
     expected_keys = {"allowed_paths", "protected_paths"}
-    if schema_version == 2:
+    if schema_version in {2, 3}:
         expected_keys.update(_EXCLUSION_PATH_NAMES)
     elif schema_version != 1:
         raise _InvalidRegistration
@@ -1152,7 +1612,7 @@ def _build_path_policy(
         raise _InvalidRegistration
     generated: tuple[str, ...] = ()
     vendor: tuple[str, ...] = ()
-    if schema_version == 2:
+    if schema_version in {2, 3}:
         generated = _build_exclusion_paths(
             policy["generated_paths"],
             root=root,
@@ -1245,13 +1705,37 @@ def _build_review_policy(raw: Any) -> RepositoryReviewPolicy:
     )
 
 
-def _snapshot_json_value(value: Any, *, depth: int, nodes: list[int]) -> Any:
+def _consume_snapshot_text(value: str, *, bytes_seen: list[int]) -> None:
+    if len(value) > _MAX_SNAPSHOT_BYTES:
+        raise _InvalidRegistration
+    bytes_seen[0] += len(value.encode("utf-8"))
+    if bytes_seen[0] > _MAX_SNAPSHOT_BYTES:
+        raise _InvalidRegistration
+
+
+def _snapshot_json_value(
+    value: Any,
+    *,
+    depth: int,
+    nodes: list[int],
+    bytes_seen: list[int],
+) -> Any:
     """Copy strict JSON data without invoking caller-defined conversion hooks."""
 
     nodes[0] += 1
+    bytes_seen[0] += 1
     if depth > 64 or nodes[0] > 10_000:
         raise _InvalidRegistration
-    if value is None or type(value) in {bool, int, str}:
+    if bytes_seen[0] > _MAX_SNAPSHOT_BYTES:
+        raise _InvalidRegistration
+    if value is None or type(value) is bool:
+        return value
+    if type(value) is int:
+        if value.bit_length() > _MAX_SNAPSHOT_INTEGER_BITS:
+            raise _InvalidRegistration
+        return value
+    if type(value) is str:
+        _consume_snapshot_text(value, bytes_seen=bytes_seen)
         return value
     if type(value) is float:
         if not math.isfinite(value):
@@ -1259,21 +1743,38 @@ def _snapshot_json_value(value: Any, *, depth: int, nodes: list[int]) -> Any:
         return value
     if type(value) is list:
         return [
-            _snapshot_json_value(child, depth=depth + 1, nodes=nodes)
+            _snapshot_json_value(
+                child,
+                depth=depth + 1,
+                nodes=nodes,
+                bytes_seen=bytes_seen,
+            )
             for child in value
         ]
     if type(value) is dict:
         if any(type(key) is not str for key in value):
             raise _InvalidRegistration
+        for key in value:
+            _consume_snapshot_text(key, bytes_seen=bytes_seen)
         return {
-            key: _snapshot_json_value(child, depth=depth + 1, nodes=nodes)
+            key: _snapshot_json_value(
+                child,
+                depth=depth + 1,
+                nodes=nodes,
+                bytes_seen=bytes_seen,
+            )
             for key, child in value.items()
         }
     raise _InvalidRegistration
 
 
 def _snapshot_registration(value: Any) -> dict[str, Any]:
-    decoded = _snapshot_json_value(value, depth=0, nodes=[0])
+    decoded = _snapshot_json_value(
+        value,
+        depth=0,
+        nodes=[0],
+        bytes_seen=[0],
+    )
     if not isinstance(decoded, dict):
         raise _InvalidRegistration
     return decoded
@@ -1285,30 +1786,29 @@ def _validate_repository_registration(
     repository_root: str | Path,
 ) -> RepositoryRegistration:
     raw = _snapshot_registration(value)
-    registration = _require_exact_keys(
-        raw,
-        frozenset(
-            {
-                "schema_version",
-                "kind",
-                "registration_id",
-                "registration_version",
-                "repository",
-                "verification_commands",
-                "path_policy",
-                "resource_limits",
-                "isolation_requirements",
-                "review_policy",
-            }
-        ),
-    )
-    schema_version = registration["schema_version"]
+    schema_version = raw.get("schema_version")
     if (
         type(schema_version) is not int
         or schema_version
         not in REPOSITORY_REGISTRATION_SUPPORTED_SCHEMA_VERSIONS
-        or registration["kind"] != REPOSITORY_REGISTRATION_KIND
     ):
+        raise _InvalidRegistration
+    expected_keys = {
+        "schema_version",
+        "kind",
+        "registration_id",
+        "registration_version",
+        "repository",
+        "verification_commands",
+        "path_policy",
+        "resource_limits",
+        "isolation_requirements",
+        "review_policy",
+    }
+    if schema_version == 3:
+        expected_keys.add("baseline_command_results")
+    registration = _require_exact_keys(raw, frozenset(expected_keys))
+    if registration["kind"] != REPOSITORY_REGISTRATION_KIND:
         raise _InvalidRegistration
     registration_id = _require_identifier(registration["registration_id"])
     registration_version = registration["registration_version"]
@@ -1325,26 +1825,37 @@ def _validate_repository_registration(
         root_stat=root_stat,
         git_stat=git_stat,
     )
+    verification_commands = _build_verification_commands(
+        registration["verification_commands"],
+        root=root,
+    )
+    resource_limits = _build_resource_limits(registration["resource_limits"])
+    baseline_command_results = None
+    if schema_version == 3:
+        baseline_command_results = _build_baseline_command_results(
+            registration["baseline_command_results"],
+            repository=repository,
+            commands=verification_commands,
+            resource_limits=resource_limits,
+        )
     return RepositoryRegistration(
         schema_version=schema_version,
         kind=REPOSITORY_REGISTRATION_KIND,
         registration_id=registration_id,
         registration_version=registration_version,
         repository=repository,
-        verification_commands=_build_verification_commands(
-            registration["verification_commands"],
-            root=root,
-        ),
+        verification_commands=verification_commands,
         path_policy=_build_path_policy(
             registration["path_policy"],
             root=root,
             schema_version=schema_version,
         ),
-        resource_limits=_build_resource_limits(registration["resource_limits"]),
+        resource_limits=resource_limits,
         isolation_requirements=_build_isolation_requirements(
             registration["isolation_requirements"]
         ),
         review_policy=_build_review_policy(registration["review_policy"]),
+        baseline_command_results=baseline_command_results,
     )
 
 
@@ -1414,6 +1925,13 @@ def revalidate_repository_registration(
                 registration.review_policy
             ),
         }
+        if registration.schema_version == 3:
+            baseline = registration.baseline_command_results
+            if baseline is None:
+                raise _InvalidRegistration
+            document["baseline_command_results"] = (
+                _baseline_command_results_document_projection(baseline)
+            )
         refreshed = _validate_repository_registration(
             document,
             repository_root=registration.repository.canonical_root,
@@ -1441,10 +1959,19 @@ def fresh_repository_registration_evidence(
     return _registration_evidence_projection(refreshed)
 
 
-def _load_json_object(path: Path, *, failure_message: str) -> dict[str, Any]:
+def _load_json_object(
+    path: Path,
+    *,
+    failure_message: str,
+    maximum_bytes: int,
+) -> dict[str, Any]:
     try:
-        document = parse_json_document(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValidationError):
+        with path.open("rb") as source:
+            encoded = source.read(maximum_bytes + 1)
+        if len(encoded) > maximum_bytes:
+            raise ValueError
+        document = parse_json_document(encoded.decode("utf-8"))
+    except (OSError, RecursionError, UnicodeError, ValueError, ValidationError):
         raise ConfigurationError(failure_message) from None
     if not isinstance(document, dict):
         raise ConfigurationError(failure_message)
@@ -1463,7 +1990,11 @@ def load_repository_registration(
         registration_path = Path(path)
     except (TypeError, ValueError):
         raise ConfigurationError(_LOAD_MESSAGE) from None
-    raw = _load_json_object(registration_path, failure_message=_LOAD_MESSAGE)
+    raw = _load_json_object(
+        registration_path,
+        failure_message=_LOAD_MESSAGE,
+        maximum_bytes=_MAX_REGISTRATION_DOCUMENT_BYTES,
+    )
     if definition_schema_path is None:
         schema_version = raw.get("schema_version")
         if (
@@ -1480,10 +2011,14 @@ def load_repository_registration(
         schema_path = Path(definition_schema_path)
     except (TypeError, ValueError):
         raise ConfigurationError(_SCHEMA_LOAD_MESSAGE) from None
-    schema = _load_json_object(schema_path, failure_message=_SCHEMA_LOAD_MESSAGE)
+    schema = _load_json_object(
+        schema_path,
+        failure_message=_SCHEMA_LOAD_MESSAGE,
+        maximum_bytes=_MAX_SCHEMA_DOCUMENT_BYTES,
+    )
     try:
         require_valid(raw, schema)
-    except ValidationError:
+    except (RecursionError, TypeError, ValueError, ValidationError):
         raise ConfigurationError(_INVALID_MESSAGE) from None
     try:
         return validate_repository_registration(
@@ -1495,10 +2030,16 @@ def load_repository_registration(
 
 
 __all__ = [
+    "BASELINE_COMMAND_RESULTS_ATTESTATION_SOURCE",
+    "BASELINE_COMMAND_RESULTS_KIND",
+    "BASELINE_COMMAND_RESULTS_SCHEMA_VERSION",
     "REPOSITORY_REGISTRATION_EVIDENCE_KIND",
     "REPOSITORY_REGISTRATION_KIND",
     "REPOSITORY_REGISTRATION_SCHEMA_VERSION",
     "REPOSITORY_REGISTRATION_SUPPORTED_SCHEMA_VERSIONS",
+    "BaselineCommandResult",
+    "BaselineCommandResults",
+    "BaselineCommandTermination",
     "RepositoryIdentity",
     "RepositoryIsolationRequirements",
     "RepositoryPathPolicy",

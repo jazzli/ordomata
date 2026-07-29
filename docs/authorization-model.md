@@ -189,9 +189,9 @@ Policy activation, Git/remote publication, deployment, and other shared effects
 remain separate unimplemented typed actions whose exact resource version and
 digest must receive fresh authorization and any required approval.
 
-The repository-registration boundary preserves frozen schema v1 and adds a
-separate schema v2. Its pure read-only validator dispatches on an exact integer
-version and validates a controller-supplied ordinary Git
+The repository-registration boundary preserves frozen schema v1 and adds
+separate schemas v2 and v3. Its pure read-only validator dispatches on an exact
+integer version and validates a controller-supplied ordinary Git
 root, stable repository/filesystem references, exact argv-array (not shell-
 text) verification declarations, canonical protected/allowed paths with
 mandatory Git and Ordomata state protection, bounded resource limits, a fixed
@@ -203,7 +203,27 @@ disabled, and no authority is granted. The validator remains a pure PIP
 collector: it creates no state and is not a permit. V2 adds bounded, canonical
 literal generated/vendor deny roots strictly below allowed paths. Those
 declarations are digest-bound but provide no provenance, ignore, authorization,
-or enforcement fact.
+or enforcement fact. V3 retains the v2 rules and adds controller-supplied
+baseline command-result attestations. Every declared command must have exactly
+one kind-, identifier-, and command-digest-linked observation under one shared
+opaque snapshot digest. Only bounded integer timing and a tagged `exited`,
+`signaled`, or `timed_out` termination are accepted; a timeout must carry the
+controller-supplied `termination_confirmed: true` assertion. Pass is derived
+only from exited zero. No supplied success, output or output hash, environment,
+path, message, or arbitrary metadata enters the result block. Its canonical
+aggregate binds the repository reference, complete command digest, snapshot,
+and declaration-ordered observations.
+
+The baseline block is descriptive PIP input, not authenticated evidence or an
+ABAC grant. Validation neither compares the claimed observation times with the
+clock nor recomputes the snapshot, resolves an executable/toolchain, or proves
+reproducibility. Outward evidence exposes only the aggregate baseline digest and
+bounded result count with fixed controller-supplied source,
+`baseline_authenticity_verified: false`, and
+`baseline_freshness_verified: false`. The snapshot and individual results
+remain absent. These facts cannot satisfy
+an authorization, freshness, containment, command, execution, or action-receipt
+predicate.
 
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
@@ -234,8 +254,9 @@ SQLite migration, run creation or status transition, worktree, Git/command/
 process invocation, worker or supervisor dispatch, route/profile selection,
 billing/capacity/circuit fact, harness call, or live eligibility. The frozen
 registration schema-v1 evidence meaning remains the only version accepted by
-this proposal chain. Schema-v2 registrations fail before any event append.
-Baseline command results remain deferred.
+this proposal chain. Schema-v2 and schema-v3 registrations fail before any
+event append. Executable resolution and executable/toolchain identity or
+content attestation remain deferred.
 
 The third slice is the library-only `ordomata.repository_proposal_inspection`
 API `inspect_repository_proposal_evidence(database_path, *, run_id)`. It
@@ -340,9 +361,16 @@ The declarations provide no generation/provenance attestation, do not suppress
 diff or protected-path review, and establish no ABAC attribute, authority, or
 effect. Schema v1 remains frozen and proposal evidence remains v1-only.
 
+The seventh bounded Phase 3 slice adds the separate schema-v3 baseline contract
+described above. It establishes no authenticated source, current freshness,
+ABAC attribute, permission, execution fact, or effect. Schemas v1 and v2 retain
+their exact canonical and evidence meanings, and proposal evidence remains
+v1-only.
+
 The next recommended bounded slice is pure schema/validator support for
-controller-supplied baseline command-result attestations in schema v3,
-still without execution, authorization, or proposal-lineage widening.
+controller-supplied executable/toolchain identity attestations in schema v4,
+still without resolution, execution, authorization, or proposal-lineage
+widening.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
@@ -670,8 +698,10 @@ violation, not an instruction to follow.
 4. **Partly implemented; continuous mediation planned — typed contracts.** The
    first task effect is typed independently of `PermissionClass`, the supervisor
    has focused flow and controller-bookkeeping shadow attributes, and the
-   frozen schema-v1 and separate schema-v2 repository-registration contracts
-   produce digest-only, no-authority validation evidence. Controller-owned
+   frozen schema-v1 and separate schema-v2/schema-v3 repository-registration
+   contracts produce digest-only, no-authority validation evidence; v3 baseline
+   evidence is aggregate-only and explicitly unauthenticated and not freshness-
+   verified. Controller-owned
    durable repository-registration selection and proposal-attempt binding remain
    pinned to v1 evidence and are implemented as two content-addressed,
    statusless PIP events for the fixed dispatch-disabled sentinel run.

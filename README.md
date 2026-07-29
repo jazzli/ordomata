@@ -187,7 +187,8 @@ limited to Class 0/1 requests for the exact profile-backed controller-owned
 live, shared, promotion, API, credit, overage, or cloud path is enabled.
 
 The repository-registration boundary now has a frozen schema-v1 contract and
-an additive schema-v2 contract. The pure read-only `repository_registration`
+separate additive schema-v2 and schema-v3 contracts. The pure read-only
+`repository_registration`
 validator accepts a controller-supplied ordinary Git root, derives stable
 repository and filesystem references, validates format, lint, type-check, test,
 and build as exact argv-array (not shell-text) declarations, canonicalizes
@@ -204,7 +205,28 @@ paths, never glob or ignore rules. Cross-category nesting, case aliases,
 protected or sensitive overlap, symlinks, special files, traversal, and
 expansion syntax fail closed; missing leaves remain valid and are not created.
 The declarations attest neither generation nor vendor provenance and cannot
-hide a diff or authorize a change. The validator remains pure: it
+hide a diff or authorize a change. Schema v3 retains those path-policy rules
+and additionally requires controller-supplied baseline command-result
+attestations. Every declared command is covered exactly once by its kind,
+identifier, and digest of the exact canonical declaration, and every result is
+bound to one shared opaque snapshot digest. Results contain only bounded
+integer timing and an exact tagged `exited`, `signaled`, or `timed_out`
+observation; a timeout must carry the controller-supplied
+`termination_confirmed: true` assertion. They contain no supplied success
+claim, output or output hash, environment, path, message, or arbitrary metadata; success is
+derived only from an exited zero code. Canonicalization binds the ordered
+observations, repository reference, and verification-command digest into one
+aggregate baseline digest. The privacy-bounded v3 evidence adds only
+`baseline_attestation_source: "controller_supplied"`,
+`baseline_command_results_digest`, bounded `baseline_result_count`,
+`baseline_authenticity_verified: false`, and
+`baseline_freshness_verified: false`. It does not expose the snapshot or
+individual command results.
+
+The v3 validator checks internal structure and linkage only. It does not
+authenticate the supplied observations, compare their timestamps with the
+clock, recompute the snapshot, resolve an executable or toolchain, or establish
+reproducibility. The validator remains pure: it
 creates no run, state/event record, authorization, worktree, command, worker,
 route, or live-model eligibility and authorizes or executes nothing.
 
@@ -237,9 +259,10 @@ no run or status transition,
 authorization decision or action receipt, worktree, Git or subprocess call,
 worker or supervisor dispatch, profile route, billing/capacity/circuit fact, or
 live eligibility. Proposal lineage remains pinned to frozen registration
-evidence v1, so schema-v2 registrations fail before any proposal event append.
-Baseline command results, bare executable resolution and content attestation,
-and any future `shell=False` action-boundary execution remain deferred.
+evidence v1, so schema-v2 and schema-v3 registrations fail before any proposal
+event append. Bare executable resolution and executable/toolchain content
+attestation, and any future `shell=False` action-boundary execution remain
+deferred.
 
 The third slice is the library-only `ordomata.repository_proposal_inspection`
 API `inspect_repository_proposal_evidence(database_path, *, run_id)`. It
@@ -352,9 +375,18 @@ meaning remain unchanged. There is no automatic exclusion discovery,
 ignore-file inference, persistence, repair, execution, worker, route, billing,
 network, harness, dispatch, or live effect.
 
+The seventh bounded Phase 3 slice is the schema-v3 baseline contract described
+above. It validates only controller-supplied, exactly linked, snapshot-bound
+command-result observations and emits aggregate-only evidence with authenticity
+and freshness explicitly unverified. It performs no snapshot computation,
+command resolution or execution, persistence, repair, worker, route, billing,
+network, harness, dispatch, authorization, or live effect. Schema v1 and v2
+retain their exact meanings, and proposal evidence remains v1-only.
+
 The next recommended bounded slice is pure schema/validator support for
-controller-supplied baseline command-result attestations in schema v3,
-still without command execution or proposal-lineage widening.
+controller-supplied executable/toolchain identity attestations in schema v4,
+still without executable resolution, command execution, or proposal-lineage
+widening.
 
 ## Quick start
 

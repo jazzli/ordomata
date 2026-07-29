@@ -504,7 +504,8 @@ PEP.
 
 The repository-registration boundary preserves the standalone
 `schemas/repository-registration.schema.json` schema-v1 contract and adds the
-separate `schemas/repository-registration-v2.schema.json` contract. The pure
+separate `schemas/repository-registration-v2.schema.json` and
+`schemas/repository-registration-v3.schema.json` contracts. The pure
 `repository_registration` validator dispatches on an exact integer version.
 From a controller-supplied ordinary Git
 root it derives stable repository and filesystem references, validates exact
@@ -532,11 +533,35 @@ fail closed. Missing leaves are accepted without creation. Generated
 classification attests no reproducibility, and vendor classification attests
 no provenance, integrity, or license. Neither category hides changes or grants
 authority. Schema v1 remains unchanged, and the existing proposal-evidence
-chain remains pinned to registration evidence v1, so v2 fails before any event
-append. Baseline command results, bare executable resolution and content
-attestation, and future `shell=False` action-boundary execution remain
-deferred. The validator remains pure, has no CLI or sample registration,
-creates no state, and authorizes or executes nothing.
+chain remains pinned to registration evidence v1, so v2 and v3 fail before any
+event append.
+
+Schema v3 preserves the v2 path-policy semantics and requires a
+controller-supplied baseline command-result block. It covers every declared
+verification command exactly once by kind, identifier, and a domain-separated
+digest of its exact canonical declaration. All observations share one bounded
+opaque snapshot digest. Each observation carries bounded integer start and
+completion timing and exactly one tagged termination: an exit code, a signal,
+or a timeout carrying the controller-supplied `termination_confirmed: true`
+assertion. Pass is derived only from an exited zero code; the
+input cannot supply a separate success/status claim. The block admits no raw
+output, output hash, environment, path, message, or arbitrary metadata.
+Canonical result ordering follows the fixed command-kind and declaration order,
+and the aggregate digest additionally binds the derived repository reference
+and complete verification-command digest.
+
+V3 validation proves only the block's internal shape, coverage, and linkage.
+The snapshot and timing are opaque controller-supplied claims: the validator
+does not authenticate them, compare them with the clock, recompute repository
+content, resolve a bare executable or toolchain, or attest reproducibility.
+Outward evidence adds only fixed controller-supplied source, an aggregate
+baseline digest, bounded result count, and
+`baseline_authenticity_verified: false` plus
+`baseline_freshness_verified: false`; it exposes neither the snapshot nor
+individual observations. Bare executable resolution and
+executable/toolchain content attestation, and future `shell=False` action-
+boundary execution remain deferred. The validator remains pure, has no CLI or
+sample registration, creates no state, and authorizes or executes nothing.
 
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
@@ -662,9 +687,16 @@ The sixth bounded Phase 3 slice is that schema-v2 exclusion contract. It adds no
 automatic exclusion discovery, ignore behavior, persistence, repair, execution,
 worker, route, billing, network, harness, dispatch, or live effect.
 
+The seventh bounded Phase 3 slice is the schema-v3 baseline contract described
+above. It adds no snapshot computation, executable resolution, command
+execution, persistence, repair, worker, route, billing, network, harness,
+dispatch, authority, or live effect. Frozen schemas v1 and v2 retain their
+prior canonical and evidence meanings, and proposal lineage remains v1-only.
+
 The next recommended bounded slice is pure schema/validator support for
-controller-supplied baseline command-result attestations in schema v3,
-still without command execution or proposal-lineage widening.
+controller-supplied executable/toolchain identity attestations in schema v4,
+still without executable resolution, command execution, or proposal-lineage
+widening.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor

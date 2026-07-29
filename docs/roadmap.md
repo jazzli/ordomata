@@ -113,19 +113,29 @@ parallel because it cannot exercise worker authority.
   shadow-independent dispatch and publication replay; schema-v1 through v5
   histories retain their frozen meanings.
 - The standalone schema-v1 repository-registration contract remains frozen,
-  schema v2 adds generated/vendor exclusions, and pure version-dispatched
-  validation is implemented. The validator derives stable repository/filesystem
-  references from a controller-supplied ordinary Git root; validates exact argv-
-  array (not shell-text) verification declarations, canonical protected/
-  allowed paths, bounded resource limits, fixed local-container/network-
-  disabled isolation, and patch-only review policy; and returns digest-only
-  evidence that explicitly grants no authority or dispatch. Mandatory `.git`,
-  `.ordomata`, and `.agentops` protection plus traversal/symlink rejection fail
-  closed. V2 exclusions are bounded canonical literal carve-outs strictly below
-  allowed paths, pairwise non-overlapping and disjoint from protected/sensitive
-  paths. They are deny/classification metadata only, attest no generation or
-  vendor provenance, and cannot hide changes. The validator remains pure and
-  creates no state. Baselines remain deferred.
+  schema v2 adds generated/vendor exclusions, schema v3 adds controller-supplied
+  baseline command-result attestations, and pure version-dispatched validation
+  is implemented. The validator derives stable repository/filesystem references
+  from a controller-supplied ordinary Git root; validates exact argv-array (not
+  shell-text) verification declarations, canonical protected/allowed paths,
+  bounded resource limits, fixed local-container/network-disabled isolation,
+  and patch-only review policy; and returns digest-only evidence that explicitly
+  grants no authority or dispatch. Mandatory `.git`, `.ordomata`, and
+  `.agentops` protection plus traversal/symlink rejection fail closed. V2
+  exclusions are bounded canonical literal carve-outs strictly below allowed
+  paths, pairwise non-overlapping and disjoint from protected/sensitive paths.
+  They are deny/classification metadata only, attest no generation or vendor
+  provenance, and cannot hide changes.
+- V3 requires exact one-to-one linkage from every declared verification command
+  to one controller-supplied result under a single opaque snapshot digest.
+  Results admit only bounded integer timing and tagged exited, signaled, or
+  timed-out observations; a timeout carries the controller-supplied
+  `termination_confirmed: true` assertion. They accept no supplied success,
+  output or output hash, environment, path, message, or arbitrary metadata. Canonical
+  aggregate evidence reports authenticity and freshness as unverified and
+  exposes neither the snapshot nor individual results. Validation does not
+  compare the clock, recompute the snapshot, resolve an executable/toolchain,
+  execute a command, persist state, or grant authority.
 - Controller-owned repository-proposal evidence is also implemented. For an
   existing immutable Class 0/1 `repository-proposal-disabled` run with only its
   initial `CREATED` event,
@@ -210,11 +220,17 @@ parallel because it cannot exercise worker authority.
   and `vendor_paths`. Nonempty categories are digest-bound while raw paths
   remain absent from evidence; missing leaves are not created, and globbing,
   automatic exclusion discovery, ignore behavior, persistence, execution, and
-  authority remain absent. Frozen schema v1 is still the only proposal-lineage
-  version.
+  authority remain absent.
+- Repository-registration schema v3 now requires the bounded controller-
+  supplied baseline contract described above. Its observations are exactly
+  command-linked and snapshot-bound, but their authenticity and freshness are
+  explicitly unverified. Frozen schemas v1 and v2 retain their prior meanings,
+  and schema v1 remains the only proposal-lineage version; both v2 and v3 fail
+  before a proposal event append.
 - The next recommended bounded slice is pure schema/validator support for
-  controller-supplied baseline command-result attestations in schema v3,
-  still without command execution or proposal-lineage widening.
+  controller-supplied executable/toolchain identity attestations in schema v4,
+  still without executable resolution, command execution, or proposal-lineage
+  widening.
 - Extend the three durable enforcing decision/action-receipt chains beyond the
   narrow profile-backed built-in-mock admission, dispatch, and publication
   boundaries only after semantics and parity stabilize.
