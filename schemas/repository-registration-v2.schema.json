@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ordomata://schemas/repository-registration/2",
+  "title": "Ordomata repository registration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "registration_id",
+    "registration_version",
+    "repository",
+    "verification_commands",
+    "path_policy",
+    "resource_limits",
+    "isolation_requirements",
+    "review_policy"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 2},
+    "kind": {"type": "string", "const": "repository_registration"},
+    "registration_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,119}$"
+    },
+    "registration_version": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^(?:0|[1-9][0-9]{0,9})\\.(?:0|[1-9][0-9]{0,9})\\.(?:0|[1-9][0-9]{0,9})$"
+    },
+    "repository": {"$ref": "#/$defs/repository"},
+    "verification_commands": {"$ref": "#/$defs/verificationCommands"},
+    "path_policy": {"$ref": "#/$defs/pathPolicy"},
+    "resource_limits": {"$ref": "#/$defs/resourceLimits"},
+    "isolation_requirements": {"$ref": "#/$defs/isolationRequirements"},
+    "review_policy": {"$ref": "#/$defs/reviewPolicy"}
+  },
+  "$defs": {
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository_id", "vcs", "root"],
+      "properties": {
+        "repository_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 200,
+          "pattern": "^[a-z0-9][a-z0-9._/-]*[a-z0-9]$"
+        },
+        "vcs": {"type": "string", "const": "git"},
+        "root": {"type": "string", "const": "."}
+      }
+    },
+    "verificationCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command_id", "argv", "cwd"],
+      "properties": {
+        "command_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]{0,119}$"
+        },
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {"type": "string", "minLength": 1, "maxLength": 1024}
+        },
+        "cwd": {"type": "string", "minLength": 1, "maxLength": 500}
+      }
+    },
+    "verificationCommands": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "lint", "type_check", "test", "build"],
+      "properties": {
+        "format": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {"$ref": "#/$defs/verificationCommand"}
+        },
+        "lint": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {"$ref": "#/$defs/verificationCommand"}
+        },
+        "type_check": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {"$ref": "#/$defs/verificationCommand"}
+        },
+        "test": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {"$ref": "#/$defs/verificationCommand"}
+        },
+        "build": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {"$ref": "#/$defs/verificationCommand"}
+        }
+      }
+    },
+    "pathPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowed_paths",
+        "protected_paths",
+        "generated_paths",
+        "vendor_paths"
+      ],
+      "properties": {
+        "allowed_paths": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 500}
+        },
+        "protected_paths": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 500}
+        },
+        "generated_paths": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 500}
+        },
+        "vendor_paths": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 500}
+        }
+      }
+    },
+    "resourceLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cpu_count",
+        "cpu_seconds",
+        "memory_bytes",
+        "process_count",
+        "workspace_bytes",
+        "output_bytes",
+        "artifact_count",
+        "artifact_bytes",
+        "wall_seconds",
+        "idle_seconds"
+      ],
+      "properties": {
+        "cpu_count": {"type": "integer", "minimum": 1, "maximum": 64},
+        "cpu_seconds": {"type": "integer", "minimum": 1, "maximum": 86400},
+        "memory_bytes": {"type": "integer", "minimum": 67108864, "maximum": 68719476736},
+        "process_count": {"type": "integer", "minimum": 1, "maximum": 1024},
+        "workspace_bytes": {"type": "integer", "minimum": 1048576, "maximum": 1099511627776},
+        "output_bytes": {"type": "integer", "minimum": 1024, "maximum": 1073741824},
+        "artifact_count": {"type": "integer", "minimum": 1, "maximum": 1024},
+        "artifact_bytes": {"type": "integer", "minimum": 1024, "maximum": 1073741824},
+        "wall_seconds": {"type": "integer", "minimum": 1, "maximum": 86400},
+        "idle_seconds": {"type": "integer", "minimum": 1, "maximum": 3600}
+      }
+    },
+    "isolationRequirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "backend",
+        "network_mode",
+        "non_root",
+        "read_only_base_repository",
+        "read_only_root_filesystem",
+        "explicit_mounts_only",
+        "git_metadata_hidden",
+        "credential_paths_denied",
+        "control_sockets_denied",
+        "fresh_cell_per_attempt"
+      ],
+      "properties": {
+        "backend": {"type": "string", "const": "local_container"},
+        "network_mode": {"type": "string", "const": "disabled"},
+        "non_root": {"type": "boolean", "const": true},
+        "read_only_base_repository": {"type": "boolean", "const": true},
+        "read_only_root_filesystem": {"type": "boolean", "const": true},
+        "explicit_mounts_only": {"type": "boolean", "const": true},
+        "git_metadata_hidden": {"type": "boolean", "const": true},
+        "credential_paths_denied": {"type": "boolean", "const": true},
+        "control_sockets_denied": {"type": "boolean", "const": true},
+        "fresh_cell_per_attempt": {"type": "boolean", "const": true}
+      }
+    },
+    "reviewPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "output",
+        "branch_creation",
+        "commit",
+        "push",
+        "pull_request",
+        "promotion"
+      ],
+      "properties": {
+        "output": {"type": "string", "const": "patch_only"},
+        "branch_creation": {"type": "boolean", "const": false},
+        "commit": {"type": "boolean", "const": false},
+        "push": {"type": "boolean", "const": false},
+        "pull_request": {"type": "boolean", "const": false},
+        "promotion": {"type": "boolean", "const": false}
+      }
+    }
+  }
+}

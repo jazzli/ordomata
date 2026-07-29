@@ -112,16 +112,20 @@ parallel because it cannot exercise worker authority.
 - Preserve the implemented schema-v6 authoritative task-intent lineage and its
   shadow-independent dispatch and publication replay; schema-v1 through v5
   histories retain their frozen meanings.
-- The standalone schema-v1 repository-registration contract and pure read-only
-  validator are implemented. They derive stable repository/filesystem
-  references from a controller-supplied ordinary Git root; validate exact argv-
+- The standalone schema-v1 repository-registration contract remains frozen,
+  schema v2 adds generated/vendor exclusions, and pure version-dispatched
+  validation is implemented. The validator derives stable repository/filesystem
+  references from a controller-supplied ordinary Git root; validates exact argv-
   array (not shell-text) verification declarations, canonical protected/
   allowed paths, bounded resource limits, fixed local-container/network-
-  disabled isolation, and patch-only review policy; and return digest-only
+  disabled isolation, and patch-only review policy; and returns digest-only
   evidence that explicitly grants no authority or dispatch. Mandatory `.git`,
   `.ordomata`, and `.agentops` protection plus traversal/symlink rejection fail
-  closed. The validator remains pure and creates no state. Baselines and
-  generated/vendor exclusions remain deferred.
+  closed. V2 exclusions are bounded canonical literal carve-outs strictly below
+  allowed paths, pairwise non-overlapping and disjoint from protected/sensitive
+  paths. They are deny/classification metadata only, attest no generation or
+  vendor provenance, and cannot hide changes. The validator remains pure and
+  creates no state. Baselines remain deferred.
 - Controller-owned repository-proposal evidence is also implemented. For an
   existing immutable Class 0/1 `repository-proposal-disabled` run with only its
   initial `CREATED` event,
@@ -202,9 +206,15 @@ parallel because it cannot exercise worker authority.
   anchor. The verifier persists or repairs nothing, enforces or authorizes
   nothing, and has no worker, repository, command, route, billing, network,
   harness, dispatch, or live effect.
+- Repository-registration schema v2 now requires bounded `generated_paths`
+  and `vendor_paths`. Nonempty categories are digest-bound while raw paths
+  remain absent from evidence; missing leaves are not created, and globbing,
+  automatic exclusion discovery, ignore behavior, persistence, execution, and
+  authority remain absent. Frozen schema v1 is still the only proposal-lineage
+  version.
 - The next recommended bounded slice is pure schema/validator support for
-  generated/vendor exclusions in repository registrations, still with no
-  execution or worker enablement.
+  controller-supplied baseline command-result attestations in schema v3,
+  still without command execution or proposal-lineage widening.
 - Extend the three durable enforcing decision/action-receipt chains beyond the
   narrow profile-backed built-in-mock admission, dispatch, and publication
   boundaries only after semantics and parity stabilize.

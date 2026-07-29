@@ -986,6 +986,35 @@ class RepositoryProposalTests(unittest.TestCase):
                     self.assertEqual(len(state.list_events(run.run_id)), 1)
         self.assertEqual(invoked, [])
 
+    def test_registration_schema_v2_is_not_bindable_to_v1_lineage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = self._repository(base)
+            payload = self._registration_payload()
+            payload["schema_version"] = 2
+            payload["path_policy"]["generated_paths"] = []
+            payload["path_policy"]["vendor_paths"] = []
+            registration = self._registration(root, payload=payload)
+
+            with SQLiteStateStore(base / "state.sqlite3") as state:
+                run = self._create_run(state)
+                with self.assertRaisesRegex(
+                    ValidationError,
+                    "repository proposal evidence is invalid",
+                ):
+                    bind_repository_proposal_attempt(
+                        state,
+                        run_id=run.run_id,
+                        registration=registration,
+                    )
+                events = state.list_events(run.run_id)
+                self.assertEqual(len(events), 1)
+                self.assertEqual(events[0].status, RunStatus.CREATED)
+                self.assertEqual(
+                    state.current_status(run.run_id),
+                    RunStatus.CREATED,
+                )
+
     def test_registration_evidence_schema_version_rejects_boolean(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)

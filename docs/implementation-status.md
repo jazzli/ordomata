@@ -147,10 +147,12 @@ they change no enforcing decision-event or action-receipt schema and add no
 authority. Frozen schema-v1 through v5 histories retain their prior
 interpretation.
 
-The repository-registration boundary has two implemented slices. Standalone
-`schemas/repository-registration.schema.json` schema v1 plus the pure
-`ordomata.repository_registration` validator reduce a strict controller-
-supplied ordinary Git root to stable repository/filesystem references. The
+The repository-registration boundary preserves standalone
+`schemas/repository-registration.schema.json` schema v1 and adds
+`schemas/repository-registration-v2.schema.json`. The pure
+`ordomata.repository_registration` validator dispatches on an exact integer
+version and reduces a strict controller-supplied ordinary Git root to stable
+repository/filesystem references. The
 validator accepts exact argv-array (not shell-text) declarations for format,
 lint, type-check, test, and build; canonical protected and allowed repository-
 relative POSIX paths; bounded CPU, memory, process, workspace, output, artifact,
@@ -162,8 +164,15 @@ bounded canonical SemVer; credential/billing option names, known shell
 launchers, and protected relative executables are rejected. Its evidence
 exposes only bounded digest references, version metadata, and fixed
 `validation_mode: "read_only"`, `dispatch_enabled: false`, and
-`authority_granted: false` facts. The validator remains pure, creates no state,
-and authorizes or executes nothing.
+`authority_granted: false` facts. Schema v2 additionally requires bounded
+`generated_paths` and `vendor_paths` arrays under `path_policy`. They are
+sorted, digest-bound literal deny/classification roots strictly below allowed
+paths. Cross-category nesting, case aliases, protected/sensitive overlap,
+traversal, glob/expansion syntax, symlinks, and special files fail closed;
+missing leaves remain valid and are never created. The declarations attest
+neither generation nor vendor provenance and cannot hide a diff or authorize a
+change. The validator remains pure, creates no state, and authorizes or executes
+nothing.
 
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
@@ -187,8 +196,9 @@ existing `run_events` table and add no SQLite migration, CLI, sample
 registration, run creation or status transition, authorization decision or
 action receipt, worktree, Git/subprocess/command invocation, worker or
 supervisor dispatch, profile route, billing/capacity/circuit change, harness
-call, or live eligibility. Baseline command results, generated/vendor
-exclusions, bare executable resolution/content attestation, and future
+call, or live eligibility. The proposal chain remains pinned to frozen
+registration evidence v1 and rejects v2 before any event append. Baseline
+command results, bare executable resolution/content attestation, and future
 `shell=False` execution remain deferred.
 
 The third slice is the library-only `ordomata.repository_proposal_inspection`
@@ -286,9 +296,16 @@ trusted anchor. The verifier has no persistence, repair, enforcement,
 authorization, worker, repository, command, route, billing, network, harness,
 dispatch, or live effect.
 
+The sixth bounded Phase 3 slice is the schema-v2 exclusion contract described
+above. Nonempty categories are included in the canonical path-policy and
+registration digests while raw paths remain absent from evidence. It adds no
+ignore-file inference, automatic exclusion discovery, persistence, repair,
+execution, worker, route, billing, network, harness, dispatch, authority, or
+live effect. Schema v1 and its proposal-evidence meaning remain frozen.
+
 The next recommended bounded slice is pure schema/validator support for
-generated/vendor exclusions in repository registrations, still with no
-execution or worker enablement.
+controller-supplied baseline command-result attestations in schema v3,
+still without command execution or proposal-lineage widening.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and
@@ -443,6 +460,10 @@ specific authorization enforcement, and soak evidence remain planned.
   repository registration plus explicit canonical proposal digest to an
   existing `CREATED` dispatch-disabled sentinel run; it appends exactly two
   statusless content-addressed events and does not execute or authorize work.
+- `ordomata.repository_registration`: pure, version-dispatched validation of
+  frozen schema v1 and schema v2; v2 adds bounded literal generated/vendor
+  carve-outs whose raw paths remain digest-only in evidence and which provide no
+  ignore, execution, persistence, or authority behavior.
 - `ordomata.repository_proposal_inspection.inspect_repository_proposal_evidence`:
   library-only, source-preserving proof of one caller-named proposal run from
   one read-only SQLite snapshot; the bounded report distinguishes exact

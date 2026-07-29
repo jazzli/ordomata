@@ -186,18 +186,25 @@ limited to Class 0/1 requests for the exact profile-backed controller-owned
 `MockRunner`, publication remains an owner-private Class 1 local write, and no
 live, shared, promotion, API, credit, overage, or cloud path is enabled.
 
-The repository-registration boundary now has two implemented slices. The
-standalone schema-v1 contract and pure read-only `repository_registration`
-validator accept a controller-supplied ordinary Git root, derive stable
-repository and filesystem references, validate format, lint, type-check, test,
-and build as exact argv-array (not shell-text) declarations, canonicalize
-protected and allowed repository-relative POSIX paths, enforce mandatory
-protection for `.git`, `.ordomata`, and `.agentops`, and validate bounded
+The repository-registration boundary now has a frozen schema-v1 contract and
+an additive schema-v2 contract. The pure read-only `repository_registration`
+validator accepts a controller-supplied ordinary Git root, derives stable
+repository and filesystem references, validates format, lint, type-check, test,
+and build as exact argv-array (not shell-text) declarations, canonicalizes
+protected and allowed repository-relative POSIX paths, enforces mandatory
+protection for `.git`, `.ordomata`, and `.agentops`, and validates bounded
 resource, fixed local-container/network-disabled isolation, and patch-only
 review declarations. Case-insensitive aliases of controller-owned paths,
 traversal, and symlink escapes fail closed. Registration versions are bounded
 canonical SemVer; credential/billing option names, known shell launchers, and
-protected relative executables are rejected. The validator remains pure: it
+protected relative executables are rejected. Schema v2 additionally requires
+bounded `generated_paths` and `vendor_paths` arrays under `path_policy`.
+They are canonical literal deny/classification roots strictly below allowed
+paths, never glob or ignore rules. Cross-category nesting, case aliases,
+protected or sensitive overlap, symlinks, special files, traversal, and
+expansion syntax fail closed; missing leaves remain valid and are not created.
+The declarations attest neither generation nor vendor provenance and cannot
+hide a diff or authorize a change. The validator remains pure: it
 creates no run, state/event record, authorization, worktree, command, worker,
 route, or live-model eligibility and authorizes or executes nothing.
 
@@ -229,9 +236,10 @@ content, or artifact content. It has no CLI or sample registration and creates
 no run or status transition,
 authorization decision or action receipt, worktree, Git or subprocess call,
 worker or supervisor dispatch, profile route, billing/capacity/circuit fact, or
-live eligibility. Baseline command results, generated/vendor exclusions, bare
-executable resolution and content attestation, and any future `shell=False`
-action-boundary execution remain deferred.
+live eligibility. Proposal lineage remains pinned to frozen registration
+evidence v1, so schema-v2 registrations fail before any proposal event append.
+Baseline command results, bare executable resolution and content attestation,
+and any future `shell=False` action-boundary execution remain deferred.
 
 The third slice is the library-only `ordomata.repository_proposal_inspection`
 API `inspect_repository_proposal_evidence(database_path, *, run_id)`. It
@@ -335,9 +343,18 @@ indistinguishable without a trusted anchor. Verification persists or repairs
 nothing, enforces or authorizes nothing, and has no worker, repository, command,
 route, billing, network, harness, dispatch, or live effect.
 
+The sixth bounded Phase 3 slice is the schema-v2 generated/vendor exclusion
+contract described above. Nonempty categories are bound into the canonical
+path-policy and registration digests; privacy-safe evidence continues to expose
+only bounded digest references, bounded version metadata, and fixed read-only,
+dispatch-disabled, and no-authority facts. Schema v1 and its proposal-evidence
+meaning remain unchanged. There is no automatic exclusion discovery,
+ignore-file inference, persistence, repair, execution, worker, route, billing,
+network, harness, dispatch, or live effect.
+
 The next recommended bounded slice is pure schema/validator support for
-generated/vendor exclusions in repository registrations, still with no
-execution or worker enablement.
+controller-supplied baseline command-result attestations in schema v3,
+still without command execution or proposal-lineage widening.
 
 ## Quick start
 

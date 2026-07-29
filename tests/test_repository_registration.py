@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 import hashlib
 import json
 import os
@@ -18,14 +18,21 @@ from ordomata.errors import ConfigurationError, ValidationError
 from ordomata.repository_registration import (
     REPOSITORY_REGISTRATION_KIND,
     REPOSITORY_REGISTRATION_SCHEMA_VERSION,
+    REPOSITORY_REGISTRATION_SUPPORTED_SCHEMA_VERSIONS,
+    fresh_repository_registration_evidence,
     load_repository_registration,
+    revalidate_repository_registration,
     validate_repository_registration,
 )
+from ordomata.schema import validate_instance
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 REGISTRATION_SCHEMA = (
     REPOSITORY_ROOT / "schemas" / "repository-registration.schema.json"
+)
+REGISTRATION_SCHEMA_V2 = (
+    REPOSITORY_ROOT / "schemas" / "repository-registration-v2.schema.json"
 )
 FIXED_VALIDATION_ERROR = "repository registration is invalid"
 
@@ -155,6 +162,18 @@ class RepositoryRegistrationTests(unittest.TestCase):
             },
         }
 
+    @classmethod
+    def _v2_payload(cls) -> dict[str, object]:
+        payload = cls._payload()
+        payload["schema_version"] = 2
+        payload["path_policy"]["generated_paths"] = [
+            "private-source-path-marker/generated",
+        ]
+        payload["path_policy"]["vendor_paths"] = [
+            "private-test-path-marker/vendor",
+        ]
+        return payload
+
     @staticmethod
     def _tree_snapshot(root: Path) -> tuple[tuple[object, ...], ...]:
         entries: list[tuple[object, ...]] = []
@@ -201,7 +220,11 @@ class RepositoryRegistrationTests(unittest.TestCase):
     def test_valid_registration_is_canonical_frozen_and_privacy_bounded(
         self,
     ) -> None:
-        self.assertEqual(REPOSITORY_REGISTRATION_SCHEMA_VERSION, 1)
+        self.assertEqual(REPOSITORY_REGISTRATION_SCHEMA_VERSION, 2)
+        self.assertEqual(
+            REPOSITORY_REGISTRATION_SUPPORTED_SCHEMA_VERSIONS,
+            frozenset({1, 2}),
+        )
         self.assertEqual(
             REPOSITORY_REGISTRATION_KIND,
             "repository_registration",
@@ -283,6 +306,168 @@ class RepositoryRegistrationTests(unittest.TestCase):
                 "compileall",
             ):
                 self.assertNotIn(private_value, projection)
+
+    def test_schema_v1_is_frozen_and_v2_requires_both_exclusion_arrays(
+        self,
+    ) -> None:
+        schema_v1 = json.loads(REGISTRATION_SCHEMA.read_text(encoding="utf-8"))
+        schema_v2 = json.loads(
+            REGISTRATION_SCHEMA_V2.read_text(encoding="utf-8")
+        )
+        payload_v1 = self._payload()
+        payload_v2 = self._v2_payload()
+
+        self.assertTrue(validate_instance(payload_v1, schema_v1).valid)
+        self.assertTrue(validate_instance(payload_v2, schema_v2).valid)
+        self.assertFalse(validate_instance(payload_v1, schema_v2).valid)
+        self.assertFalse(validate_instance(payload_v2, schema_v1).valid)
+
+        incomplete_v2_payloads = []
+        for missing in ("generated_paths", "vendor_paths"):
+            with self.subTest(missing=missing):
+                incomplete = deepcopy(payload_v2)
+                del incomplete["path_policy"][missing]
+                incomplete_v2_payloads.append(incomplete)
+                self.assertFalse(
+                    validate_instance(incomplete, schema_v2).valid
+                )
+
+        widened_v1 = deepcopy(payload_v1)
+        widened_v1["path_policy"]["generated_paths"] = []
+        widened_v1["path_policy"]["vendor_paths"] = []
+        self.assertFalse(validate_instance(widened_v1, schema_v1).valid)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside = self._repository(temporary)
+            self._assert_invalid(root, widened_v1)
+            for incomplete in incomplete_v2_payloads:
+                self._assert_invalid(root, incomplete)
+
+    def test_v2_exclusions_are_canonical_digest_bound_and_private(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside = self._repository(temporary)
+            payload = self._v2_payload()
+            payload["path_policy"]["generated_paths"].append(
+                "private-docs-path-marker/generated"
+            )
+            registration = validate_repository_registration(
+                payload,
+                repository_root=root,
+            )
+
+            self.assertEqual(registration.schema_version, 2)
+            self.assertEqual(
+                registration.path_policy.generated_paths,
+                (
+                    "private-docs-path-marker/generated",
+                    "private-source-path-marker/generated",
+                ),
+            )
+            self.assertEqual(
+                registration.path_policy.vendor_paths,
+                ("private-test-path-marker/vendor",),
+            )
+            canonical = registration.to_canonical()
+            self.assertEqual(
+                canonical["path_policy"]["generated_paths"],
+                list(registration.path_policy.generated_paths),
+            )
+            self.assertEqual(
+                canonical["path_policy"]["vendor_paths"],
+                list(registration.path_policy.vendor_paths),
+            )
+            evidence = fresh_repository_registration_evidence(registration)
+            self.assertEqual(evidence["schema_version"], 2)
+            self.assertEqual(
+                evidence["path_policy_digest"],
+                canonical_digest(canonical["path_policy"]),
+            )
+            projection = json.dumps(evidence, sort_keys=True)
+            self.assertNotIn("private-source-path-marker", projection)
+            self.assertNotIn("private-test-path-marker", projection)
+            self.assertNotIn("private-docs-path-marker", projection)
+            self.assertNotIn(
+                "private-source-path-marker",
+                repr(registration.path_policy),
+            )
+
+            reordered_payload = deepcopy(payload)
+            reordered_payload["path_policy"]["generated_paths"].reverse()
+            reordered = validate_repository_registration(
+                reordered_payload,
+                repository_root=root,
+            )
+            self.assertEqual(
+                registration.registration_digest,
+                reordered.registration_digest,
+            )
+
+            swapped_payload = deepcopy(payload)
+            generated = swapped_payload["path_policy"]["generated_paths"]
+            vendor = swapped_payload["path_policy"]["vendor_paths"]
+            generated[0], vendor[0] = vendor[0], generated[0]
+            swapped = validate_repository_registration(
+                swapped_payload,
+                repository_root=root,
+            )
+            self.assertNotEqual(
+                registration.path_policy.digest,
+                swapped.path_policy.digest,
+            )
+            self.assertNotEqual(
+                registration.registration_digest,
+                swapped.registration_digest,
+            )
+
+    def test_v1_digest_semantics_and_v2_empty_exclusions_are_stable(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside = self._repository(temporary)
+            registration_v1 = validate_repository_registration(
+                self._payload(),
+                repository_root=root,
+            )
+            path_policy_v1 = {
+                "allowed_paths": list(
+                    registration_v1.path_policy.allowed_paths
+                ),
+                "protected_paths": list(
+                    registration_v1.path_policy.protected_paths
+                ),
+            }
+            self.assertEqual(
+                registration_v1.path_policy.to_canonical(),
+                path_policy_v1,
+            )
+            self.assertEqual(
+                registration_v1.to_evidence()["path_policy_digest"],
+                canonical_digest(path_policy_v1),
+            )
+
+            payload_v2 = self._v2_payload()
+            payload_v2["path_policy"]["generated_paths"] = []
+            payload_v2["path_policy"]["vendor_paths"] = []
+            registration_v2 = validate_repository_registration(
+                payload_v2,
+                repository_root=root,
+            )
+            self.assertEqual(
+                registration_v2.path_policy.to_canonical(),
+                path_policy_v1,
+            )
+            self.assertEqual(
+                registration_v2.path_policy.digest,
+                registration_v1.path_policy.digest,
+            )
+            self.assertNotEqual(
+                registration_v2.registration_digest,
+                registration_v1.registration_digest,
+            )
+            self.assertEqual(
+                revalidate_repository_registration(registration_v2),
+                registration_v2,
+            )
 
     def test_repository_identity_and_set_like_paths_are_digest_stable(
         self,
@@ -675,6 +860,297 @@ class RepositoryRegistrationTests(unittest.TestCase):
             )
             self._assert_invalid(root, case_alias_overlap)
 
+    def test_v2_exclusion_paths_reject_ambiguous_or_sensitive_syntax(
+        self,
+    ) -> None:
+        private_marker = "private-exclusion-syntax-marker"
+        with tempfile.TemporaryDirectory() as temporary:
+            root, outside = self._repository(temporary)
+            prefix = "private-source-path-marker/"
+            values = (
+                ".",
+                "/private-absolute",
+                "//private-host/share",
+                str(outside),
+                "C:/private-drive",
+                "C:private-drive-relative",
+                "~/private-expansion",
+                "file:private-uri",
+                prefix + "/generated",
+                prefix + "./generated",
+                prefix + "../generated",
+                prefix + "generated/",
+                "private-source-path-marker" + chr(92) + "generated",
+                prefix + "*",
+                prefix + "[ab]",
+                prefix + "{one,two}",
+                prefix + "$PRIVATE",
+                prefix + chr(96) + "private" + chr(96),
+                prefix + "!(vendor)",
+                prefix + "@(one|two)",
+                prefix + "<(private)",
+                prefix + "nested/~private",
+                prefix + "nested/private!",
+                prefix + "nested/private^value",
+                prefix + "private" + chr(0),
+                prefix + "private" + chr(10),
+                prefix + "private" + chr(127),
+                prefix + "private" + chr(0x202E),
+                prefix + "cafe" + chr(0x0301),
+                prefix + chr(0xD800),
+                prefix + "CON/generated",
+                prefix + "CON .txt/generated",
+                prefix + "nul.txt/generated",
+                prefix + "vendor./generated",
+                prefix + "vendor /generated",
+                prefix + 'vendor"/generated',
+                prefix + ".git/generated",
+                prefix + ".ordomata/generated",
+                prefix + ".agentops/generated",
+                prefix + ".env",
+                prefix + ".env.private",
+                prefix + ".aws/cache",
+                private_marker,
+            )
+            for value in values:
+                with self.subTest(value=repr(value)):
+                    payload = self._v2_payload()
+                    payload["path_policy"]["generated_paths"] = [value]
+                    payload["path_policy"]["vendor_paths"] = []
+                    self._assert_invalid(
+                        root,
+                        payload,
+                        private_marker=private_marker,
+                    )
+
+    def test_v2_exclusion_relationships_are_strict_and_unambiguous(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside = self._repository(temporary)
+            cases: list[tuple[str, dict[str, object]]] = []
+
+            equal_allowed = self._v2_payload()
+            equal_allowed["path_policy"]["generated_paths"] = [
+                "private-source-path-marker"
+            ]
+            equal_allowed["path_policy"]["vendor_paths"] = []
+            cases.append(("equal-allowed", equal_allowed))
+
+            contains_allowed = self._v2_payload()
+            contains_allowed["path_policy"]["allowed_paths"] = [
+                "private-source-path-marker/nested"
+            ]
+            contains_allowed["path_policy"]["generated_paths"] = [
+                "private-source-path-marker"
+            ]
+            contains_allowed["path_policy"]["vendor_paths"] = []
+            cases.append(("contains-allowed", contains_allowed))
+
+            unrelated = self._v2_payload()
+            unrelated["path_policy"]["generated_paths"] = [
+                "private-unrelated-generated-marker"
+            ]
+            unrelated["path_policy"]["vendor_paths"] = []
+            cases.append(("unrelated", unrelated))
+
+            protected_descendant = self._v2_payload()
+            protected_descendant["path_policy"]["protected_paths"].append(
+                "private-source-path-marker/generated/locked"
+            )
+            protected_descendant["path_policy"]["vendor_paths"] = []
+            cases.append(("contains-protected", protected_descendant))
+
+            protected_ancestor = self._v2_payload()
+            protected_ancestor["path_policy"]["protected_paths"].append(
+                "private-source-path-marker"
+            )
+            protected_ancestor["path_policy"]["vendor_paths"] = []
+            cases.append(("below-protected", protected_ancestor))
+
+            cross_nested = self._v2_payload()
+            cross_nested["path_policy"]["vendor_paths"] = [
+                "private-source-path-marker/generated/vendor"
+            ]
+            cases.append(("cross-category-nested", cross_nested))
+
+            casefold_alias = self._v2_payload()
+            casefold_alias["path_policy"]["vendor_paths"] = [
+                "PRIVATE-SOURCE-PATH-MARKER/GENERATED"
+            ]
+            cases.append(("cross-category-casefold", casefold_alias))
+
+            allowed_casefold = self._v2_payload()
+            allowed_casefold["path_policy"]["generated_paths"] = [
+                "PRIVATE-SOURCE-PATH-MARKER/generated"
+            ]
+            allowed_casefold["path_policy"]["vendor_paths"] = []
+            cases.append(("allowed-casefold", allowed_casefold))
+
+            for case, payload in cases:
+                with self.subTest(case=case):
+                    self._assert_invalid(root, payload)
+
+            valid = self._v2_payload()
+            valid["path_policy"]["generated_paths"] = [
+                "private-source-path-marker/generated",
+                "private-docs-path-marker/cache",
+            ]
+            valid["path_policy"]["vendor_paths"] = [
+                "private-test-path-marker/vendor",
+            ]
+            registration = validate_repository_registration(
+                valid,
+                repository_root=root,
+            )
+            self.assertEqual(len(registration.path_policy.generated_paths), 2)
+            self.assertEqual(len(registration.path_policy.vendor_paths), 1)
+
+    def test_v2_exclusions_reject_symlinks_special_files_and_bounds(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, outside = self._repository(temporary)
+            source = root / "private-source-path-marker"
+            (source / "Vendor").mkdir()
+            case_alias = self._v2_payload()
+            case_alias["path_policy"]["generated_paths"] = [
+                "private-source-path-marker/vendor/generated"
+            ]
+            case_alias["path_policy"]["vendor_paths"] = []
+            self._assert_invalid(root, case_alias)
+
+            casefold_sibling = source / "vendor"
+            try:
+                casefold_sibling.mkdir()
+            except FileExistsError:
+                pass
+            else:
+                ambiguous = self._v2_payload()
+                ambiguous["path_policy"]["generated_paths"] = [
+                    "private-source-path-marker/Vendor/generated"
+                ]
+                ambiguous["path_policy"]["vendor_paths"] = []
+                self._assert_invalid(root, ambiguous)
+
+            (source / "internal-link").symlink_to(
+                root / "private-test-path-marker",
+                target_is_directory=True,
+            )
+            (source / "external-link").symlink_to(
+                outside,
+                target_is_directory=True,
+            )
+            (source / "broken-link").symlink_to(
+                outside / "missing",
+                target_is_directory=True,
+            )
+            for name in ("internal-link", "external-link", "broken-link"):
+                with self.subTest(link=name):
+                    payload = self._v2_payload()
+                    payload["path_policy"]["generated_paths"] = [
+                        f"private-source-path-marker/{name}"
+                    ]
+                    payload["path_policy"]["vendor_paths"] = []
+                    self._assert_invalid(root, payload)
+
+            if hasattr(os, "mkfifo"):
+                fifo = source / "private-fifo"
+                os.mkfifo(fifo)
+                payload = self._v2_payload()
+                payload["path_policy"]["generated_paths"] = [
+                    "private-source-path-marker/private-fifo"
+                ]
+                payload["path_policy"]["vendor_paths"] = []
+                self._assert_invalid(root, payload)
+
+            too_many = self._v2_payload()
+            too_many["path_policy"]["generated_paths"] = [
+                f"private-source-path-marker/generated-{index:03d}"
+                for index in range(65)
+            ]
+            too_many["path_policy"]["vendor_paths"] = []
+            self._assert_invalid(root, too_many)
+
+            at_byte_limit = self._v2_payload()
+            at_byte_limit["path_policy"]["generated_paths"] = [
+                "private-source-path-marker/"
+                + ("g" * 226)
+                + f"-{index:03d}"
+                for index in range(64)
+            ]
+            at_byte_limit["path_policy"]["vendor_paths"] = [
+                "private-test-path-marker/"
+                + ("v" * 226)
+                + f"-{index:03d}"
+                for index in range(64)
+            ]
+            total_bytes = sum(
+                len(path.encode("utf-8"))
+                for name in ("generated_paths", "vendor_paths")
+                for path in at_byte_limit["path_policy"][name]
+            )
+            self.assertEqual(total_bytes, 32_768)
+            at_limit_registration = validate_repository_registration(
+                at_byte_limit,
+                repository_root=root,
+            )
+            self.assertEqual(
+                len(at_limit_registration.path_policy.generated_paths),
+                64,
+            )
+            self.assertEqual(
+                len(at_limit_registration.path_policy.vendor_paths),
+                64,
+            )
+
+            over_byte_limit = deepcopy(at_byte_limit)
+            over_byte_limit["path_policy"]["generated_paths"][0] += "x"
+            self._assert_invalid(root, over_byte_limit)
+
+    def test_v2_typed_and_caller_owned_exclusion_forgery_fails_closed(
+        self,
+    ) -> None:
+        private_marker = "private-exclusion-hook-marker"
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside = self._repository(temporary)
+            registration_v1 = validate_repository_registration(
+                self._payload(),
+                repository_root=root,
+            )
+            forged_v1 = replace(
+                registration_v1,
+                path_policy=replace(
+                    registration_v1.path_policy,
+                    generated_paths=(
+                        "private-source-path-marker/generated",
+                    ),
+                ),
+            )
+            with self.assertRaisesRegex(
+                ValidationError,
+                FIXED_VALIDATION_ERROR,
+            ):
+                revalidate_repository_registration(forged_v1)
+
+            hook = Path(temporary) / "private-exclusion-hook-ran"
+
+            class ExplodingList(list[str]):
+                def __iter__(self):
+                    hook.write_text(private_marker, encoding="utf-8")
+                    raise AssertionError("caller collection hook must not run")
+
+            payload = self._v2_payload()
+            payload["path_policy"]["generated_paths"] = ExplodingList(
+                ["private-source-path-marker/generated"]
+            )
+            self._assert_invalid(
+                root,
+                payload,
+                private_marker=private_marker,
+            )
+            self.assertFalse(hook.exists())
+
     def test_repository_root_and_git_metadata_must_be_ordinary_directories(
         self,
     ) -> None:
@@ -914,6 +1390,84 @@ class RepositoryRegistrationTests(unittest.TestCase):
                     self.assertNotIn(str(path), projection)
                     self.assertNotIn(str(schema), projection)
 
+    def test_loader_dispatches_exact_v1_and_v2_schemas_without_fallback(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root, _outside = self._repository(temporary)
+            configuration = base / "config"
+            schemas = base / "schemas"
+            configuration.mkdir()
+            schemas.mkdir()
+            schema_v1 = schemas / REGISTRATION_SCHEMA.name
+            schema_v2 = schemas / REGISTRATION_SCHEMA_V2.name
+            schema_v1.write_bytes(REGISTRATION_SCHEMA.read_bytes())
+            schema_v2.write_bytes(REGISTRATION_SCHEMA_V2.read_bytes())
+
+            path_v1 = configuration / "registration-v1.json"
+            path_v2 = configuration / "registration-v2.json"
+            path_v1.write_text(
+                json.dumps(self._payload(), sort_keys=True),
+                encoding="utf-8",
+            )
+            path_v2.write_text(
+                json.dumps(self._v2_payload(), sort_keys=True),
+                encoding="utf-8",
+            )
+
+            loaded_v1 = load_repository_registration(
+                path_v1,
+                repository_root=root,
+            )
+            loaded_v2 = load_repository_registration(
+                path_v2,
+                repository_root=root,
+            )
+            self.assertEqual(loaded_v1.schema_version, 1)
+            self.assertEqual(loaded_v2.schema_version, 2)
+
+            for case, path, schema in (
+                ("v1-with-v2", path_v1, schema_v2),
+                ("v2-with-v1", path_v2, schema_v1),
+            ):
+                with self.subTest(case=case):
+                    with self.assertRaisesRegex(
+                        ConfigurationError,
+                        FIXED_VALIDATION_ERROR,
+                    ):
+                        load_repository_registration(
+                            path,
+                            repository_root=root,
+                            definition_schema_path=schema,
+                        )
+
+            unsupported = self._v2_payload()
+            unsupported["schema_version"] = True
+            unsupported_path = configuration / "unsupported.json"
+            unsupported_path.write_text(
+                json.dumps(unsupported, sort_keys=True),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                ConfigurationError,
+                FIXED_VALIDATION_ERROR,
+            ):
+                load_repository_registration(
+                    unsupported_path,
+                    repository_root=root,
+                )
+
+            schema_v2.unlink()
+            with self.assertRaisesRegex(
+                ConfigurationError,
+                "repository registration schema could not be loaded",
+            ):
+                load_repository_registration(
+                    path_v2,
+                    repository_root=root,
+                )
+
     def test_validation_is_read_only_and_never_invokes_a_process(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root, outside = self._repository(temporary)
@@ -990,6 +1544,10 @@ class RepositoryRegistrationTests(unittest.TestCase):
                     payload,
                     repository_root=root,
                 )
+                registration_v2 = validate_repository_registration(
+                    self._v2_payload(),
+                    repository_root=root,
+                )
                 loaded = load_repository_registration(
                     registration_path,
                     repository_root=root,
@@ -1004,6 +1562,7 @@ class RepositoryRegistrationTests(unittest.TestCase):
                 loaded.registration_digest,
                 registration.registration_digest,
             )
+            self.assertEqual(registration_v2.schema_version, 2)
             for observed in (
                 run,
                 popen,
@@ -1026,6 +1585,12 @@ class RepositoryRegistrationTests(unittest.TestCase):
             )
             self.assertFalse((root / ".git" / "worktrees").exists())
             self.assertFalse((root / ".ordomata").exists())
+            self.assertFalse(
+                (root / "private-source-path-marker" / "generated").exists()
+            )
+            self.assertFalse(
+                (root / "private-test-path-marker" / "vendor").exists()
+            )
 
 
 if __name__ == "__main__":

@@ -128,14 +128,17 @@ Selection evidence never grants authority and never makes stale or unsafe billin
 evidence eligible. The `route` command remains a read-only preview, and an
 explicit profile rejected before run creation intentionally leaves no event.
 
-The standalone schema-v1 repository-registration contract and pure read-only
-validator are implemented. They validate a controller-supplied ordinary Git
+The frozen schema-v1 and separate schema-v2 repository-registration contracts
+plus pure version-dispatched validation are implemented. They validate a
+controller-supplied ordinary Git
 root, stable repository/filesystem references, exact verification argv-array
 (not shell-text) declarations, canonical protected/allowed paths, bounded
 resource limits, fixed local-container/network-disabled isolation, and patch-
 only review policy, then return digest-only evidence declaring
-`dispatch_enabled: false` and `authority_granted: false`. The validator remains
-pure and creates no state.
+`dispatch_enabled: false` and `authority_granted: false`. V2 adds bounded,
+canonical literal generated/vendor deny roots strictly below allowed paths;
+they select no profile or route and provide no ignore or eligibility behavior.
+The validator remains pure and creates no state.
 
 The separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` API records a
@@ -157,8 +160,9 @@ capacity evidence eligible, satisfy a live gate, authorize a command, or enable
 supervisor dispatch. They reuse existing `run_events`, add no SQLite migration
 or run creation/status transition, and persist no registration body or raw
 proposal content, path, argv, workspace, run directory, or artifact content.
-They create no worktree, Git/command/process invocation, or worker. Baseline
-results and generated/vendor exclusions remain deferred.
+They create no worktree, Git/command/process invocation, or worker. The chain
+remains pinned to frozen registration evidence v1; schema-v2 registrations fail
+before an event append. Baseline results remain deferred.
 
 The third slice is the library-only `ordomata.repository_proposal_inspection`
 API `inspect_repository_proposal_evidence(database_path, *, run_id)`. Its
@@ -242,9 +246,18 @@ indistinguishable without a trusted anchor. The verifier persists or repairs
 nothing, enforces or authorizes nothing, and has no worker, repository, command,
 route, billing, network, harness, dispatch, or live effect.
 
+The sixth bounded Phase 3 slice adds the separate repository-registration
+schema-v2 contract. Its required `generated_paths` and `vendor_paths` are
+bounded, canonical literal deny/classification roots strictly below allowed
+paths. They are pairwise non-overlapping, disjoint from protected/sensitive
+paths, and reject case aliases, traversal, glob/expansion syntax, symlinks, and
+special files. Nonempty categories are digest-bound, but raw paths remain
+absent from evidence. They do not choose routes, suppress changes, attest
+provenance, or enable execution. Schema v1 and proposal lineage remain frozen.
+
 The next recommended bounded slice is pure schema/validator support for
-generated/vendor exclusions in repository registrations, still with no
-execution or worker enablement.
+controller-supplied baseline command-result attestations in schema v3,
+still without command execution, routing, or proposal-lineage widening.
 
 ## Adaptive promoted-profile routing (target)
 

@@ -502,9 +502,11 @@ deployment, live-harness, supervisor-worker, or Class 2/3 effects. The existing
 Class 0/1 gate remains an independent prerequisite and cannot be widened by any
 PEP.
 
-The first repository-registration slice is implemented as the standalone
-`schemas/repository-registration.schema.json` schema-v1 contract and the pure
-`repository_registration` validator. From a controller-supplied ordinary Git
+The repository-registration boundary preserves the standalone
+`schemas/repository-registration.schema.json` schema-v1 contract and adds the
+separate `schemas/repository-registration-v2.schema.json` contract. The pure
+`repository_registration` validator dispatches on an exact integer version.
+From a controller-supplied ordinary Git
 root it derives stable repository and filesystem references, validates exact
 argv-array (not shell-text) declarations for format, lint, type-check, test, and
 build, and canonicalizes protected and allowed repository-relative POSIX paths.
@@ -519,10 +521,22 @@ commit, push, PR, and promotion actions. Its privacy-bounded evidence contains
 bounded digest references, version metadata, and fixed
 `validation_mode: "read_only"`, `dispatch_enabled: false`, and
 `authority_granted: false` facts rather than local paths or declarations.
-Baseline command results, generated/vendor exclusions, bare executable
-resolution and content attestation, and future `shell=False` action-boundary
-execution remain deferred. The validator remains pure, has no CLI or sample
-registration, creates no state, and authorizes or executes nothing.
+
+Schema v2 adds required, bounded `generated_paths` and `vendor_paths`
+arrays to the path policy. Entries are canonical literal repository-relative
+deny/classification roots strictly below exactly one allowed root, never glob,
+ignore, discovery, or matching rules. They are sorted and digest-bound; overlap
+within or across categories, protected or credential-sensitive overlap,
+case-fold aliases, traversal, expansion syntax, symlinks, and special files
+fail closed. Missing leaves are accepted without creation. Generated
+classification attests no reproducibility, and vendor classification attests
+no provenance, integrity, or license. Neither category hides changes or grants
+authority. Schema v1 remains unchanged, and the existing proposal-evidence
+chain remains pinned to registration evidence v1, so v2 fails before any event
+append. Baseline command results, bare executable resolution and content
+attestation, and future `shell=False` action-boundary execution remain
+deferred. The validator remains pure, has no CLI or sample registration,
+creates no state, and authorizes or executes nothing.
 
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
@@ -644,9 +658,13 @@ trusted anchor. It persists and repairs nothing, enforces and authorizes
 nothing, and has no worker, repository, command, route, billing, network,
 harness, dispatch, or live effect.
 
+The sixth bounded Phase 3 slice is that schema-v2 exclusion contract. It adds no
+automatic exclusion discovery, ignore behavior, persistence, repair, execution,
+worker, route, billing, network, harness, dispatch, or live effect.
+
 The next recommended bounded slice is pure schema/validator support for
-generated/vendor exclusions in repository registrations, still with no
-execution or worker enablement.
+controller-supplied baseline command-result attestations in schema v3,
+still without command execution or proposal-lineage widening.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor

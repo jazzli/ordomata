@@ -50,11 +50,12 @@ The repository already provides the foundation this plan extends:
 - isolated per-run directories and read-only/tool-disabled synthesis runs;
 - append-only SQLite runs, events, artifacts, schedule claims, and leases, with
   transactional baseline initialization and frozen migration-ledger integrity;
-- a pure schema-v1 repository-registration validator plus library-only,
-  controller-owned repository-proposal selection and binding: an existing
-  `CREATED` `repository-proposal-disabled` run receives exactly two statusless,
-  content-addressed events after fresh registration validation and an explicit
-  canonical proposal digest, with exact readback and no dispatch or authority;
+- pure, version-dispatched validation for frozen repository-registration schema
+  v1 and separate schema v2, plus library-only, controller-owned repository-
+  proposal selection and binding pinned to v1 evidence: an existing `CREATED`
+  `repository-proposal-disabled` run receives exactly two statusless, content-
+  addressed events after fresh registration validation and an explicit canonical
+  proposal digest, with exact readback and no dispatch or authority;
 - library-only, source-preserving inspection that proves one caller-named
   repository-proposal run from one read-only SQLite snapshot and returns only
   bounded single-run coverage, validated linkage, and fixed privacy-safe
@@ -158,16 +159,23 @@ Class 0/1 requests for the exact profile-backed controller-owned `MockRunner`,
 while new attempts still require Class 1 admission and publication remains an
 owner-private Class 1 local effect.
 
-The first Phase 3 repository-registration slice is implemented as a standalone
-schema-v1 contract and pure read-only validator. It reduces a strict controller-
+The first Phase 3 repository-registration slice preserves a standalone
+schema-v1 contract, and the sixth adds a separate schema-v2 contract. The pure
+read-only validator dispatches on an exact integer version and reduces a strict controller-
 supplied ordinary Git root to stable repository/filesystem references;
 validates exact verification argv-array (not shell-text) declarations,
 canonical protected/allowed paths, bounded resource limits, fixed local-
 container/network-disabled isolation, and patch-only review policy; and returns
 digest-only evidence declaring read-only use, disabled dispatch, and no granted
 authority. Git and Ordomata state paths are always protected, while traversal
-and symlink escapes fail closed. The validator remains pure, creates no state,
-and authorizes or executes nothing.
+and symlink escapes fail closed. Schema v2 requires bounded literal
+`generated_paths` and `vendor_paths` deny/classification roots strictly
+beneath allowed paths. They are canonical and digest-bound, cannot overlap
+within or across categories or with protected/sensitive paths, and reject case
+aliases, glob/expansion syntax, symlinks, and special files. Missing leaves are
+accepted without creation. These declarations attest neither generation nor
+vendor provenance and cannot hide a diff or authorize a change. The validator
+remains pure, creates no state, and authorizes or executes nothing.
 
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
@@ -185,8 +193,8 @@ proposal content and registration/path/argv/workspace/run-directory values are
 not. The events reuse existing `run_events` and add no migration, run creation
 or status transition, authorization decision or action receipt, worktree,
 command/process/worker/supervisor dispatch, routing, billing, harness, or live-
-route effect. Baseline command results and generated/vendor exclusions remain
-deferred.
+route effect. This chain remains pinned to frozen registration evidence v1 and
+rejects v2 before any event append. Baseline command results remain deferred.
 
 The third Phase 3 slice is the library-only
 `ordomata.repository_proposal_inspection` API
@@ -277,9 +285,16 @@ trusted anchor. The verifier persists or repairs nothing, enforces or authorizes
 nothing, and creates no worker, repository, command, route, billing, network,
 harness, dispatch, or live effect.
 
+The sixth bounded Phase 3 slice is the schema-v2 generated/vendor exclusion
+contract described above. Nonempty categories are bound into path-policy and
+registration digests, while raw paths remain absent from evidence. It performs
+no automatic exclusion discovery, ignore-file inference, persistence, repair,
+execution, worker, route, billing, network, harness, dispatch, authorization, or
+live effect. Schema v1 and proposal lineage remain frozen.
+
 The next recommended bounded slice is pure schema/validator support for
-generated/vendor exclusions in repository registrations, still with no
-execution or worker enablement.
+controller-supplied baseline command-result attestations in schema v3,
+still without command execution or proposal-lineage widening.
 
 The target semantics for Class 3 standing envelopes, irreversible actions,
 the non-delegable root-authority kernel, consequential outbox execution,
@@ -718,9 +733,10 @@ satisfied.
 
 **Implementation checkpoint — read-only registration, proposal evidence,
 single-run inspection, inert admission shadow, and independent shadow-contract
-verification, not worker-cell enablement:** standalone
-`schemas/repository-registration.schema.json` schema v1 and the pure
-`ordomata.repository_registration` validator implement the initial contract
+verification, not worker-cell enablement:** frozen
+`schemas/repository-registration.schema.json` schema v1, separate
+`schemas/repository-registration-v2.schema.json`, and the pure
+`ordomata.repository_registration` validator implement the current contract
 boundary. They validate a controller-supplied ordinary Git root and stable
 repository/filesystem references; format, lint, type-check, test, and build as
 exact argv-array (not shell-text) declarations; canonical protected and allowed
@@ -730,7 +746,11 @@ limits; fixed local-container/network-disabled isolation; and patch-only/no-
 Git-publication review policy. Case-insensitive aliases of controller-owned
 paths, traversal, and symlink escapes fail closed. Registration versions are
 bounded canonical SemVer; credential/billing option names, known shell
-launchers, and protected relative executables are rejected. The result is
+launchers, and protected relative executables are rejected. V2 additionally
+requires canonical, bounded literal generated/vendor carve-outs strictly below
+allowed paths. They are pairwise non-overlapping, disjoint from
+protected/sensitive paths, and provide only deny/classification metadata—not
+ignore, generation, provenance, or permission semantics. The result is
 digest-only evidence with fixed read-only, dispatch-disabled, and no-authority
 facts. The validator creates no state and authorizes or executes nothing.
 
@@ -761,10 +781,11 @@ reported replay failure still requires a constructible replay boundary. Its
 fixed value-free findings and `contract_valid` establish internal consistency only;
 without a trusted anchor, coherent forgery or replay remains indistinguishable.
 It performs no durable reinspection, freshness proof, persistence, repair,
-enforcement, authorization, or action. Baseline results and generated/vendor
-exclusions remain deferred, as do bare executable resolution and content
-attestation, future `shell=False` action-boundary execution, and every worker-
-cell deliverable below.
+enforcement, authorization, or action. The proposal chain remains registration-
+evidence-v1-only, so v2 fails before an event append. Baseline results remain
+deferred, as do bare executable resolution and content attestation, future
+`shell=False` action-boundary execution, and every worker-cell deliverable
+below.
 
 ### Deliverables
 
@@ -775,7 +796,8 @@ cell deliverable below.
     authority;
   - baseline command results;
   - protected and allowed paths;
-  - generated/vendor exclusions;
+  - generated/vendor exclusions (schema v2 validation implemented; operational
+    consumption remains deferred);
   - resource, timeout, network, and artifact limits;
   - required isolation backend;
   - review-only branch/patch policy.
