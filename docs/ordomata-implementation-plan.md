@@ -51,8 +51,10 @@ The repository already provides the foundation this plan extends:
 - append-only SQLite runs, events, artifacts, schedule claims, and leases, with
   transactional baseline initialization and frozen migration-ledger integrity;
 - pure, version-dispatched validation for frozen repository-registration schema
-  v1 and separate schema v2, plus library-only, controller-owned repository-
-  proposal selection and binding pinned to v1 evidence: an existing `CREATED`
+  v1 and separate schemas v2/v3, including generated/vendor exclusions and
+  aggregate-only controller-supplied baseline results, plus library-only,
+  controller-owned repository-proposal selection and binding pinned to v1
+  evidence: an existing `CREATED`
   `repository-proposal-disabled` run receives exactly two statusless, content-
   addressed events after fresh registration validation and an explicit canonical
   proposal digest, with exact readback and no dispatch or authority;
@@ -160,7 +162,8 @@ while new attempts still require Class 1 admission and publication remains an
 owner-private Class 1 local effect.
 
 The first Phase 3 repository-registration slice preserves a standalone
-schema-v1 contract, and the sixth adds a separate schema-v2 contract. The pure
+schema-v1 contract, the sixth adds a separate schema-v2 contract, and the
+seventh adds schema v3. The pure
 read-only validator dispatches on an exact integer version and reduces a strict controller-
 supplied ordinary Git root to stable repository/filesystem references;
 validates exact verification argv-array (not shell-text) declarations,
@@ -176,6 +179,26 @@ aliases, glob/expansion syntax, symlinks, and special files. Missing leaves are
 accepted without creation. These declarations attest neither generation nor
 vendor provenance and cannot hide a diff or authorize a change. The validator
 remains pure, creates no state, and authorizes or executes nothing.
+
+Schema v3 preserves the v2 path policy and requires a controller-supplied
+baseline result for every declared verification command. Each result is linked
+exactly once by command kind, identifier, and a digest of the exact canonical
+command declaration, and all results share one bounded opaque snapshot digest.
+The result grammar accepts bounded integer timing and exactly one tagged
+`exited`, `signaled`, or `timed_out` termination. A timeout must carry the
+controller-supplied `termination_confirmed: true` assertion. It derives pass
+only from an exited zero code and accepts no caller-supplied success, output or
+output hash, environment, path, message, or arbitrary metadata. The canonical
+aggregate binds declaration-ordered observations to the repository reference
+and complete verification-command digest.
+
+V3 validation establishes internal consistency only. It does not authenticate
+the controller-supplied observations, compare their times with the current
+clock, recompute the snapshot, resolve an executable/toolchain, or establish
+reproducibility. Privacy-bounded evidence exposes only aggregate baseline
+evidence with fixed controller-supplied source, bounded result count,
+`baseline_authenticity_verified: false`, and
+`baseline_freshness_verified: false`, never the snapshot or individual results.
 
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
@@ -194,7 +217,8 @@ not. The events reuse existing `run_events` and add no migration, run creation
 or status transition, authorization decision or action receipt, worktree,
 command/process/worker/supervisor dispatch, routing, billing, harness, or live-
 route effect. This chain remains pinned to frozen registration evidence v1 and
-rejects v2 before any event append. Baseline command results remain deferred.
+rejects v2 and v3 before any event append. Executable resolution and
+executable/toolchain identity or content attestation remain deferred.
 
 The third Phase 3 slice is the library-only
 `ordomata.repository_proposal_inspection` API
@@ -292,9 +316,16 @@ no automatic exclusion discovery, ignore-file inference, persistence, repair,
 execution, worker, route, billing, network, harness, dispatch, authorization, or
 live effect. Schema v1 and proposal lineage remain frozen.
 
+The seventh bounded Phase 3 slice is the schema-v3 baseline contract described
+above. It performs no snapshot computation, executable resolution, command
+execution, persistence, repair, worker, route, billing, network, harness,
+dispatch, authorization, or live effect. Schemas v1 and v2 retain their exact
+canonical/evidence meanings, and proposal lineage remains v1-only.
+
 The next recommended bounded slice is pure schema/validator support for
-controller-supplied baseline command-result attestations in schema v3,
-still without command execution or proposal-lineage widening.
+controller-supplied executable/toolchain identity attestations in schema v4,
+still without executable resolution, command execution, or proposal-lineage
+widening.
 
 The target semantics for Class 3 standing envelopes, irreversible actions,
 the non-delegable root-authority kernel, consequential outbox execution,
@@ -735,7 +766,8 @@ satisfied.
 single-run inspection, inert admission shadow, and independent shadow-contract
 verification, not worker-cell enablement:** frozen
 `schemas/repository-registration.schema.json` schema v1, separate
-`schemas/repository-registration-v2.schema.json`, and the pure
+`schemas/repository-registration-v2.schema.json` and
+`schemas/repository-registration-v3.schema.json`, and the pure
 `ordomata.repository_registration` validator implement the current contract
 boundary. They validate a controller-supplied ordinary Git root and stable
 repository/filesystem references; format, lint, type-check, test, and build as
@@ -753,6 +785,16 @@ protected/sensitive paths, and provide only deny/classification metadata—not
 ignore, generation, provenance, or permission semantics. The result is
 digest-only evidence with fixed read-only, dispatch-disabled, and no-authority
 facts. The validator creates no state and authorizes or executes nothing.
+
+Schema v3 additionally requires exact one-to-one command-result linkage under
+one opaque snapshot digest. Its bounded integer observations use tagged exited,
+signaled, or timed-out termination; a timeout carries the controller-supplied
+`termination_confirmed: true` assertion. Results contain no supplied success,
+output/output hash, environment, path, message, or arbitrary metadata. The
+validator canonicalizes and digest-binds the aggregate but explicitly does not
+authenticate it, prove current freshness, recompute the snapshot, or resolve or
+execute an executable/toolchain. Outward evidence remains aggregate-only, with
+fixed false authenticity and freshness claims.
 
 The separate proposal-evidence API freshly revalidates that registration and
 binds its controller-owned selection plus an explicit canonical proposal
@@ -782,8 +824,8 @@ fixed value-free findings and `contract_valid` establish internal consistency on
 without a trusted anchor, coherent forgery or replay remains indistinguishable.
 It performs no durable reinspection, freshness proof, persistence, repair,
 enforcement, authorization, or action. The proposal chain remains registration-
-evidence-v1-only, so v2 fails before an event append. Baseline results remain
-deferred, as do bare executable resolution and content attestation, future
+evidence-v1-only, so v2 and v3 fail before an event append. Bare executable
+resolution and executable/toolchain identity or content attestation, future
 `shell=False` action-boundary execution, and every worker-cell deliverable
 below.
 
@@ -794,7 +836,8 @@ below.
   - controller-validated format, lint, type-check, test, and build argv-array
     declarations, which are configuration inputs rather than execution
     authority;
-  - baseline command results;
+  - baseline command results (schema v3 validation implemented; authenticated
+    provenance and operational consumption remain deferred);
   - protected and allowed paths;
   - generated/vendor exclusions (schema v2 validation implemented; operational
     consumption remains deferred);

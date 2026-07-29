@@ -34,7 +34,57 @@ REGISTRATION_SCHEMA = (
 REGISTRATION_SCHEMA_V2 = (
     REPOSITORY_ROOT / "schemas" / "repository-registration-v2.schema.json"
 )
+REGISTRATION_SCHEMA_V3 = (
+    REPOSITORY_ROOT / "schemas" / "repository-registration-v3.schema.json"
+)
 FIXED_VALIDATION_ERROR = "repository registration is invalid"
+FIXED_LOAD_ERROR = "repository registration could not be loaded"
+FIXED_SCHEMA_LOAD_ERROR = "repository registration schema could not be loaded"
+MAX_REGISTRATION_DOCUMENT_BYTES = 8 * 1024 * 1024
+MAX_SCHEMA_DOCUMENT_BYTES = 1024 * 1024
+MAX_DIRECT_SNAPSHOT_BYTES = 4 * 1024 * 1024
+FROZEN_REGISTRATION_SCHEMA_SHA256 = (
+    "9e778e6329d3ecd35c6a13bcfe9351c153c8d102db629b9cbe8000ea1e55afcc"
+)
+FROZEN_REGISTRATION_SCHEMA_V2_SHA256 = (
+    "8d93b0757779275927c2149541dad7e50799ea109994c6ca09847edff592cb10"
+)
+LEGACY_REGISTRATION_CANONICAL_KEYS = {
+    "isolation_requirements",
+    "kind",
+    "path_policy",
+    "registration_ref",
+    "registration_version",
+    "repository",
+    "resource_limits",
+    "review_policy",
+    "schema_version",
+    "verification_commands",
+}
+LEGACY_REGISTRATION_EVIDENCE_KEYS = {
+    "authority_granted",
+    "dispatch_enabled",
+    "filesystem_identity_ref",
+    "isolation_requirements_digest",
+    "kind",
+    "path_policy_digest",
+    "registration_digest",
+    "registration_ref",
+    "registration_version",
+    "repository_ref",
+    "resource_limits_digest",
+    "review_policy_digest",
+    "schema_version",
+    "validation_mode",
+    "verification_commands_digest",
+}
+V3_BASELINE_EVIDENCE_KEYS = {
+    "baseline_attestation_source",
+    "baseline_authenticity_verified",
+    "baseline_command_results_digest",
+    "baseline_freshness_verified",
+    "baseline_result_count",
+}
 
 
 class RepositoryRegistrationTests(unittest.TestCase):
@@ -175,6 +225,67 @@ class RepositoryRegistrationTests(unittest.TestCase):
         return payload
 
     @staticmethod
+    def _command_attestation_digest(
+        kind: str,
+        command: dict[str, object],
+    ) -> str:
+        return canonical_digest(
+            {
+                "command": {
+                    "argv": list(command["argv"]),
+                    "command_id": command["command_id"],
+                    "cwd": command["cwd"],
+                    "kind": kind,
+                },
+                "kind": "repository_verification_command",
+                "schema_version": 1,
+            }
+        )
+
+    @classmethod
+    def _baseline_for_payload(
+        cls,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        results: list[dict[str, object]] = []
+        sequence = 0
+        for kind in ("format", "lint", "type_check", "test", "build"):
+            for command in payload["verification_commands"][kind]:
+                started_at = 1_000 + sequence * 2_000
+                results.append(
+                    {
+                        "kind": kind,
+                        "command_id": command["command_id"],
+                        "command_digest": cls._command_attestation_digest(
+                            kind,
+                            command,
+                        ),
+                        "started_at_unix_ms": started_at,
+                        "completed_at_unix_ms": started_at + 1_000,
+                        "termination": {
+                            "kind": "exited",
+                            "exit_code": 0,
+                        },
+                    }
+                )
+                sequence += 1
+        return {
+            "kind": "repository_baseline_command_results",
+            "attestation_source": "controller_supplied",
+            "snapshot_digest": "sha256:" + "b" * 64,
+            "results": results,
+        }
+
+    @classmethod
+    def _v3_payload(cls) -> dict[str, object]:
+        payload = cls._v2_payload()
+        payload["schema_version"] = 3
+        payload["baseline_command_results"] = cls._baseline_for_payload(
+            payload
+        )
+        return payload
+
+    @staticmethod
     def _tree_snapshot(root: Path) -> tuple[tuple[object, ...], ...]:
         entries: list[tuple[object, ...]] = []
         for directory, directory_names, file_names in os.walk(
@@ -220,10 +331,10 @@ class RepositoryRegistrationTests(unittest.TestCase):
     def test_valid_registration_is_canonical_frozen_and_privacy_bounded(
         self,
     ) -> None:
-        self.assertEqual(REPOSITORY_REGISTRATION_SCHEMA_VERSION, 2)
+        self.assertEqual(REPOSITORY_REGISTRATION_SCHEMA_VERSION, 3)
         self.assertEqual(
             REPOSITORY_REGISTRATION_SUPPORTED_SCHEMA_VERSIONS,
-            frozenset({1, 2}),
+            frozenset({1, 2, 3}),
         )
         self.assertEqual(
             REPOSITORY_REGISTRATION_KIND,
@@ -307,41 +418,78 @@ class RepositoryRegistrationTests(unittest.TestCase):
             ):
                 self.assertNotIn(private_value, projection)
 
-    def test_schema_v1_is_frozen_and_v2_requires_both_exclusion_arrays(
+    def test_frozen_schemas_and_versioned_shapes_remain_disjoint(
         self,
     ) -> None:
+        self.assertEqual(
+            hashlib.sha256(REGISTRATION_SCHEMA.read_bytes()).hexdigest(),
+            FROZEN_REGISTRATION_SCHEMA_SHA256,
+        )
+        self.assertEqual(
+            hashlib.sha256(REGISTRATION_SCHEMA_V2.read_bytes()).hexdigest(),
+            FROZEN_REGISTRATION_SCHEMA_V2_SHA256,
+        )
         schema_v1 = json.loads(REGISTRATION_SCHEMA.read_text(encoding="utf-8"))
         schema_v2 = json.loads(
             REGISTRATION_SCHEMA_V2.read_text(encoding="utf-8")
         )
+        schema_v3 = json.loads(
+            REGISTRATION_SCHEMA_V3.read_text(encoding="utf-8")
+        )
         payload_v1 = self._payload()
         payload_v2 = self._v2_payload()
+        payload_v3 = self._v3_payload()
 
-        self.assertTrue(validate_instance(payload_v1, schema_v1).valid)
-        self.assertTrue(validate_instance(payload_v2, schema_v2).valid)
-        self.assertFalse(validate_instance(payload_v1, schema_v2).valid)
-        self.assertFalse(validate_instance(payload_v2, schema_v1).valid)
+        schemas = (schema_v1, schema_v2, schema_v3)
+        payloads = (payload_v1, payload_v2, payload_v3)
+        for payload_index, payload in enumerate(payloads):
+            for schema_index, schema in enumerate(schemas):
+                with self.subTest(
+                    payload_version=payload_index + 1,
+                    schema_version=schema_index + 1,
+                ):
+                    self.assertEqual(
+                        validate_instance(payload, schema).valid,
+                        payload_index == schema_index,
+                    )
 
         incomplete_v2_payloads = []
-        for missing in ("generated_paths", "vendor_paths"):
-            with self.subTest(missing=missing):
-                incomplete = deepcopy(payload_v2)
-                del incomplete["path_policy"][missing]
-                incomplete_v2_payloads.append(incomplete)
-                self.assertFalse(
-                    validate_instance(incomplete, schema_v2).valid
-                )
+        for version, baseline in ((2, payload_v2), (3, payload_v3)):
+            for missing in ("generated_paths", "vendor_paths"):
+                with self.subTest(version=version, missing=missing):
+                    incomplete = deepcopy(baseline)
+                    del incomplete["path_policy"][missing]
+                    incomplete_v2_payloads.append(incomplete)
+                    self.assertFalse(
+                        validate_instance(incomplete, schemas[version - 1]).valid
+                    )
+
+        incomplete_v3 = deepcopy(payload_v3)
+        del incomplete_v3["baseline_command_results"]
+        self.assertFalse(validate_instance(incomplete_v3, schema_v3).valid)
 
         widened_v1 = deepcopy(payload_v1)
         widened_v1["path_policy"]["generated_paths"] = []
         widened_v1["path_policy"]["vendor_paths"] = []
         self.assertFalse(validate_instance(widened_v1, schema_v1).valid)
 
+        for version, payload, schema in (
+            (1, payload_v1, schema_v1),
+            (2, payload_v2, schema_v2),
+        ):
+            widened = deepcopy(payload)
+            widened["baseline_command_results"] = deepcopy(
+                payload_v3["baseline_command_results"]
+            )
+            with self.subTest(version=version, field="baseline"):
+                self.assertFalse(validate_instance(widened, schema).valid)
+
         with tempfile.TemporaryDirectory() as temporary:
             root, _outside = self._repository(temporary)
             self._assert_invalid(root, widened_v1)
             for incomplete in incomplete_v2_payloads:
                 self._assert_invalid(root, incomplete)
+            self._assert_invalid(root, incomplete_v3)
 
     def test_v2_exclusions_are_canonical_digest_bound_and_private(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -428,6 +576,14 @@ class RepositoryRegistrationTests(unittest.TestCase):
                 self._payload(),
                 repository_root=root,
             )
+            self.assertEqual(
+                set(registration_v1.to_canonical()),
+                LEGACY_REGISTRATION_CANONICAL_KEYS,
+            )
+            self.assertEqual(
+                set(registration_v1.to_evidence()),
+                LEGACY_REGISTRATION_EVIDENCE_KEYS,
+            )
             path_policy_v1 = {
                 "allowed_paths": list(
                     registration_v1.path_policy.allowed_paths
@@ -453,6 +609,14 @@ class RepositoryRegistrationTests(unittest.TestCase):
                 repository_root=root,
             )
             self.assertEqual(
+                set(registration_v2.to_canonical()),
+                LEGACY_REGISTRATION_CANONICAL_KEYS,
+            )
+            self.assertEqual(
+                set(registration_v2.to_evidence()),
+                LEGACY_REGISTRATION_EVIDENCE_KEYS,
+            )
+            self.assertEqual(
                 registration_v2.path_policy.to_canonical(),
                 path_policy_v1,
             )
@@ -467,6 +631,548 @@ class RepositoryRegistrationTests(unittest.TestCase):
             self.assertEqual(
                 revalidate_repository_registration(registration_v2),
                 registration_v2,
+            )
+
+    def test_v3_baseline_is_canonical_digest_bound_and_private(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside = self._repository(temporary)
+            payload = self._v3_payload()
+            payload["baseline_command_results"]["results"].reverse()
+            registration = validate_repository_registration(
+                payload,
+                repository_root=root,
+            )
+            canonical = registration.to_canonical()
+            baseline = canonical["baseline_command_results"]
+
+            self.assertEqual(registration.schema_version, 3)
+            self.assertEqual(
+                set(canonical),
+                LEGACY_REGISTRATION_CANONICAL_KEYS
+                | {"baseline_command_results"},
+            )
+            self.assertEqual(
+                set(baseline),
+                {
+                    "attestation_source",
+                    "kind",
+                    "repository_ref",
+                    "results",
+                    "schema_version",
+                    "snapshot_digest",
+                    "verification_commands_digest",
+                },
+            )
+            self.assertEqual(
+                baseline["kind"],
+                "repository_baseline_command_results",
+            )
+            self.assertEqual(baseline["schema_version"], 1)
+            self.assertEqual(
+                baseline["attestation_source"],
+                "controller_supplied",
+            )
+            self.assertEqual(
+                baseline["repository_ref"],
+                registration.repository.repository_ref,
+            )
+            self.assertEqual(
+                baseline["verification_commands_digest"],
+                registration.verification_commands.digest,
+            )
+            self.assertEqual(
+                [result["command_id"] for result in baseline["results"]],
+                ["format-check", "unit-tests"],
+            )
+
+            evidence = registration.to_evidence()
+            self.assertEqual(
+                set(evidence),
+                LEGACY_REGISTRATION_EVIDENCE_KEYS
+                | V3_BASELINE_EVIDENCE_KEYS,
+            )
+            self.assertEqual(
+                evidence["baseline_command_results_digest"],
+                canonical_digest(baseline),
+            )
+            self.assertEqual(evidence["baseline_result_count"], 2)
+            self.assertEqual(
+                evidence["baseline_attestation_source"],
+                "controller_supplied",
+            )
+            self.assertIs(evidence["baseline_authenticity_verified"], False)
+            self.assertIs(evidence["baseline_freshness_verified"], False)
+            self.assertFalse(evidence["dispatch_enabled"])
+            self.assertFalse(evidence["authority_granted"])
+            projection = json.dumps(evidence, sort_keys=True)
+            for private_value in (
+                payload["baseline_command_results"]["snapshot_digest"],
+                "format-check",
+                "unit-tests",
+                "private-source-path-marker",
+                "private-test-path-marker",
+            ):
+                self.assertNotIn(private_value, projection)
+                self.assertNotIn(private_value, repr(registration))
+
+            reordered = self._v3_payload()
+            reordered_registration = validate_repository_registration(
+                reordered,
+                repository_root=root,
+            )
+            self.assertEqual(
+                registration.registration_digest,
+                reordered_registration.registration_digest,
+            )
+
+            changed_snapshot = self._v3_payload()
+            changed_snapshot["baseline_command_results"][
+                "snapshot_digest"
+            ] = "sha256:" + "c" * 64
+            changed = validate_repository_registration(
+                changed_snapshot,
+                repository_root=root,
+            )
+            self.assertNotEqual(
+                registration.registration_digest,
+                changed.registration_digest,
+            )
+            self.assertNotEqual(
+                evidence["baseline_command_results_digest"],
+                changed.to_evidence()["baseline_command_results_digest"],
+            )
+            self.assertEqual(
+                registration.verification_commands.digest,
+                changed.verification_commands.digest,
+            )
+            self.assertEqual(
+                registration.path_policy.digest,
+                changed.path_policy.digest,
+            )
+
+    def test_v3_baseline_coverage_order_and_command_digests_are_exact(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside = self._repository(temporary)
+            cases: list[tuple[str, dict[str, object]]] = []
+
+            missing = self._v3_payload()
+            missing["baseline_command_results"]["results"].pop()
+            cases.append(("missing", missing))
+
+            duplicate = self._v3_payload()
+            duplicate["baseline_command_results"]["results"].append(
+                deepcopy(
+                    duplicate["baseline_command_results"]["results"][0]
+                )
+            )
+            cases.append(("duplicate", duplicate))
+
+            wrong_id = self._v3_payload()
+            wrong_id["baseline_command_results"]["results"][0][
+                "command_id"
+            ] = "unknown-command"
+            cases.append(("unknown-command", wrong_id))
+
+            wrong_kind = self._v3_payload()
+            wrong_kind["baseline_command_results"]["results"][0][
+                "kind"
+            ] = "test"
+            cases.append(("wrong-category", wrong_kind))
+
+            stale_digest = self._v3_payload()
+            stale_digest["baseline_command_results"]["results"][0][
+                "command_digest"
+            ] = "sha256:" + "0" * 64
+            cases.append(("stale-command-digest", stale_digest))
+
+            stale_declaration = self._v3_payload()
+            stale_declaration["verification_commands"]["format"][0][
+                "argv"
+            ].append("private-changed-argument")
+            cases.append(("changed-command", stale_declaration))
+
+            for case, payload in cases:
+                with self.subTest(case=case):
+                    self._assert_invalid(root, payload)
+
+            reordered_declarations = self._v3_payload()
+            second_format = deepcopy(
+                reordered_declarations["verification_commands"]["format"][0]
+            )
+            second_format["command_id"] = "second-format-check"
+            second_format["argv"] = ["python3", "--version"]
+            reordered_declarations["verification_commands"]["format"].append(
+                second_format
+            )
+            reordered_declarations["baseline_command_results"] = (
+                self._baseline_for_payload(reordered_declarations)
+            )
+            baseline = validate_repository_registration(
+                reordered_declarations,
+                repository_root=root,
+            )
+
+            changed_order = deepcopy(reordered_declarations)
+            changed_order["verification_commands"]["format"].reverse()
+            changed_order["baseline_command_results"] = (
+                self._baseline_for_payload(changed_order)
+            )
+            changed = validate_repository_registration(
+                changed_order,
+                repository_root=root,
+            )
+            self.assertNotEqual(
+                baseline.registration_digest,
+                changed.registration_digest,
+            )
+            self.assertNotEqual(
+                baseline.verification_commands.digest,
+                changed.verification_commands.digest,
+            )
+
+    def test_v3_baseline_shape_and_tagged_terminations_fail_closed(
+        self,
+    ) -> None:
+        private_marker = "private-baseline-shape-marker"
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside = self._repository(temporary)
+
+            valid_terminations = (
+                {"kind": "exited", "exit_code": 0},
+                {"kind": "exited", "exit_code": 255},
+                {"kind": "signaled", "signal_number": 1},
+                {"kind": "signaled", "signal_number": 64},
+                {
+                    "kind": "timed_out",
+                    "timeout_seconds": 1,
+                    "termination_confirmed": True,
+                },
+            )
+            for termination in valid_terminations:
+                with self.subTest(valid=termination):
+                    payload = self._v3_payload()
+                    payload["baseline_command_results"]["results"][0][
+                        "termination"
+                    ] = termination
+                    validate_repository_registration(
+                        payload,
+                        repository_root=root,
+                    )
+
+            invalid_terminations: tuple[object, ...] = (
+                None,
+                [],
+                "exited",
+                {"kind": "exited"},
+                {"kind": "exited", "exit_code": -1},
+                {"kind": "exited", "exit_code": 256},
+                {"kind": "exited", "exit_code": True},
+                {"kind": "exited", "exit_code": 0.0},
+                {"kind": "exited", "exit_code": 0, private_marker: True},
+                {"kind": "signaled"},
+                {"kind": "signaled", "signal_number": 0},
+                {"kind": "signaled", "signal_number": 65},
+                {"kind": "signaled", "signal_number": True},
+                {"kind": "signaled", "signal_number": 1.0},
+                {
+                    "kind": "timed_out",
+                    "timeout_seconds": 0,
+                    "termination_confirmed": True,
+                },
+                {
+                    "kind": "timed_out",
+                    "timeout_seconds": 601,
+                    "termination_confirmed": True,
+                },
+                {
+                    "kind": "timed_out",
+                    "timeout_seconds": 1,
+                    "termination_confirmed": False,
+                },
+                {
+                    "kind": "timed_out",
+                    "timeout_seconds": 1,
+                    "termination_confirmed": 1,
+                },
+                {"kind": private_marker, "exit_code": 0},
+            )
+            for termination in invalid_terminations:
+                with self.subTest(invalid=termination):
+                    payload = self._v3_payload()
+                    payload["baseline_command_results"]["results"][0][
+                        "termination"
+                    ] = termination
+                    self._assert_invalid(
+                        root,
+                        payload,
+                        private_marker=private_marker,
+                    )
+
+            shape_cases: list[tuple[str, dict[str, object]]] = []
+            for field in (
+                "kind",
+                "attestation_source",
+                "snapshot_digest",
+                "results",
+            ):
+                payload = self._v3_payload()
+                del payload["baseline_command_results"][field]
+                shape_cases.append((f"missing-baseline-{field}", payload))
+            extra_baseline = self._v3_payload()
+            extra_baseline["baseline_command_results"][private_marker] = True
+            shape_cases.append(("extra-baseline", extra_baseline))
+            for field in (
+                "kind",
+                "command_id",
+                "command_digest",
+                "started_at_unix_ms",
+                "completed_at_unix_ms",
+                "termination",
+            ):
+                payload = self._v3_payload()
+                del payload["baseline_command_results"]["results"][0][field]
+                shape_cases.append((f"missing-result-{field}", payload))
+            extra_result = self._v3_payload()
+            extra_result["baseline_command_results"]["results"][0][
+                private_marker
+            ] = True
+            shape_cases.append(("extra-result", extra_result))
+            for case, value in (
+                ("baseline-null", None),
+                ("baseline-list", []),
+                ("baseline-string", private_marker),
+            ):
+                payload = self._v3_payload()
+                payload["baseline_command_results"] = value
+                shape_cases.append((case, payload))
+            for case, value in (
+                ("results-null", None),
+                ("results-object", {}),
+                ("results-string", private_marker),
+            ):
+                payload = self._v3_payload()
+                payload["baseline_command_results"]["results"] = value
+                shape_cases.append((case, payload))
+            scalar_result = self._v3_payload()
+            scalar_result["baseline_command_results"]["results"][0] = (
+                private_marker
+            )
+            shape_cases.append(("scalar-result", scalar_result))
+            wrong_source = self._v3_payload()
+            wrong_source["baseline_command_results"][
+                "attestation_source"
+            ] = private_marker
+            shape_cases.append(("wrong-source", wrong_source))
+            wrong_kind = self._v3_payload()
+            wrong_kind["baseline_command_results"]["kind"] = private_marker
+            shape_cases.append(("wrong-kind", wrong_kind))
+            for case, digest in (
+                ("prefixless", "0" * 64),
+                ("uppercase", "sha256:" + "A" * 64),
+                ("short", "sha256:" + "0" * 63),
+                ("wrong-algorithm", "sha512:" + "0" * 64),
+                ("boolean", True),
+            ):
+                payload = self._v3_payload()
+                payload["baseline_command_results"][
+                    "snapshot_digest"
+                ] = digest
+                shape_cases.append((f"snapshot-{case}", payload))
+
+            for case, payload in shape_cases:
+                with self.subTest(case=case):
+                    self._assert_invalid(
+                        root,
+                        payload,
+                        private_marker=private_marker,
+                    )
+
+    def test_v3_baseline_timestamps_obey_resource_envelope(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside = self._repository(temporary)
+            cases: list[tuple[str, object, object]] = (
+                ("boolean-start", True, 2_000),
+                ("float-start", 1_000.0, 2_000),
+                ("string-start", "1000", 2_000),
+                ("boolean-complete", 1_000, True),
+                ("float-complete", 1_000, 2_000.0),
+                ("negative-start", -1, 1_000),
+                ("negative-complete", -1, -1),
+                ("reverse", 2_001, 2_000),
+                ("wall-exceeded", 1_000, 601_001),
+            )
+            for case, started, completed in cases:
+                with self.subTest(case=case):
+                    payload = self._v3_payload()
+                    result = payload["baseline_command_results"]["results"][0]
+                    result["started_at_unix_ms"] = started
+                    result["completed_at_unix_ms"] = completed
+                    self._assert_invalid(root, payload)
+
+            timed_out_too_soon = self._v3_payload()
+            result = timed_out_too_soon["baseline_command_results"][
+                "results"
+            ][0]
+            result["started_at_unix_ms"] = 1_000
+            result["completed_at_unix_ms"] = 2_999
+            result["termination"] = {
+                "kind": "timed_out",
+                "timeout_seconds": 2,
+                "termination_confirmed": True,
+            }
+            self._assert_invalid(root, timed_out_too_soon)
+
+            exact_timeout = deepcopy(timed_out_too_soon)
+            exact_timeout["baseline_command_results"]["results"][0][
+                "completed_at_unix_ms"
+            ] = 3_000
+            validate_repository_registration(
+                exact_timeout,
+                repository_root=root,
+            )
+
+    def test_v3_baseline_maximum_coverage_is_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside = self._repository(temporary)
+            payload = self._v2_payload()
+            payload["schema_version"] = 3
+            for kind in ("format", "lint", "type_check", "test", "build"):
+                payload["verification_commands"][kind] = [
+                    {
+                        "command_id": f"{kind.replace('_', '-')}-{index:02d}",
+                        "argv": [
+                            "python3",
+                            "--version",
+                            f"private-{kind}-{index:02d}",
+                        ],
+                        "cwd": ".",
+                    }
+                    for index in range(16)
+                ]
+            payload["baseline_command_results"] = self._baseline_for_payload(
+                payload
+            )
+
+            schema_v3 = json.loads(
+                REGISTRATION_SCHEMA_V3.read_text(encoding="utf-8")
+            )
+            self.assertTrue(validate_instance(payload, schema_v3).valid)
+            registration = validate_repository_registration(
+                payload,
+                repository_root=root,
+            )
+            self.assertEqual(
+                registration.to_evidence()["baseline_result_count"],
+                80,
+            )
+            self.assertEqual(
+                len(
+                    registration.to_canonical()["baseline_command_results"][
+                        "results"
+                    ]
+                ),
+                80,
+            )
+
+            too_many = deepcopy(payload)
+            too_many["baseline_command_results"]["results"].append(
+                deepcopy(
+                    too_many["baseline_command_results"]["results"][0]
+                )
+            )
+            self._assert_invalid(root, too_many)
+
+    def test_v3_baseline_hostile_collections_and_typed_forgery_fail_closed(
+        self,
+    ) -> None:
+        private_marker = "private-baseline-hook-marker"
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside = self._repository(temporary)
+            hook = Path(temporary) / "private-baseline-hook-ran"
+
+            class ExplodingList(list[object]):
+                def __iter__(self):
+                    hook.write_text(private_marker, encoding="utf-8")
+                    raise AssertionError("caller list hook must not run")
+
+            class ExplodingDict(dict[str, object]):
+                def items(self):
+                    hook.write_text(private_marker, encoding="utf-8")
+                    raise AssertionError("caller mapping hook must not run")
+
+            hostile_payloads = []
+            hostile_baseline = self._v3_payload()
+            hostile_baseline["baseline_command_results"] = ExplodingDict(
+                hostile_baseline["baseline_command_results"]
+            )
+            hostile_payloads.append(hostile_baseline)
+
+            hostile_results = self._v3_payload()
+            hostile_results["baseline_command_results"]["results"] = (
+                ExplodingList(
+                    hostile_results["baseline_command_results"]["results"]
+                )
+            )
+            hostile_payloads.append(hostile_results)
+
+            hostile_result = self._v3_payload()
+            hostile_result["baseline_command_results"]["results"][0] = (
+                ExplodingDict(
+                    hostile_result["baseline_command_results"]["results"][0]
+                )
+            )
+            hostile_payloads.append(hostile_result)
+
+            for payload in hostile_payloads:
+                self._assert_invalid(
+                    root,
+                    payload,
+                    private_marker=private_marker,
+                )
+            self.assertFalse(hook.exists())
+
+            payload = self._v3_payload()
+            registration = validate_repository_registration(
+                payload,
+                repository_root=root,
+            )
+            self.assertEqual(
+                revalidate_repository_registration(registration),
+                registration,
+            )
+
+            forged_missing = replace(
+                registration,
+                baseline_command_results=None,
+            )
+            with self.assertRaisesRegex(
+                ValidationError,
+                FIXED_VALIDATION_ERROR,
+            ):
+                revalidate_repository_registration(forged_missing)
+
+            registration_v1 = validate_repository_registration(
+                self._payload(),
+                repository_root=root,
+            )
+            forged_v1 = replace(
+                registration_v1,
+                baseline_command_results=registration.baseline_command_results,
+            )
+            with self.assertRaisesRegex(
+                ValidationError,
+                FIXED_VALIDATION_ERROR,
+            ):
+                revalidate_repository_registration(forged_v1)
+
+            payload["baseline_command_results"]["results"][0][
+                "command_id"
+            ] = private_marker
+            self.assertEqual(
+                revalidate_repository_registration(registration),
+                registration,
             )
 
     def test_repository_identity_and_set_like_paths_are_digest_stable(
@@ -1390,7 +2096,113 @@ class RepositoryRegistrationTests(unittest.TestCase):
                     self.assertNotIn(str(path), projection)
                     self.assertNotIn(str(schema), projection)
 
-    def test_loader_dispatches_exact_v1_and_v2_schemas_without_fallback(
+    def test_loader_and_direct_snapshot_bounds_fail_with_fixed_errors(
+        self,
+    ) -> None:
+        private_marker = "private-registration-bound-marker"
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root, _outside = self._repository(temporary)
+            valid_path = base / "valid-registration.json"
+            valid_path.write_text(
+                json.dumps(self._payload(), sort_keys=True),
+                encoding="utf-8",
+            )
+
+            huge_integer_path = base / f"{private_marker}-integer.json"
+            huge_integer_path.write_text(
+                '{"schema_version":' + "9" * 5_000 + "}",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                ConfigurationError,
+                f"^{FIXED_LOAD_ERROR}$",
+            ) as huge_integer_error:
+                load_repository_registration(
+                    huge_integer_path,
+                    repository_root=root,
+                    definition_schema_path=REGISTRATION_SCHEMA,
+                )
+            self.assertNotIn(private_marker, str(huge_integer_error.exception))
+            self.assertNotIn(
+                str(huge_integer_path),
+                str(huge_integer_error.exception),
+            )
+
+            oversized_registration_path = (
+                base / f"{private_marker}-oversized-registration.json"
+            )
+            with oversized_registration_path.open("wb") as oversized:
+                oversized.seek(MAX_REGISTRATION_DOCUMENT_BYTES)
+                oversized.write(b"x")
+            self.assertEqual(
+                oversized_registration_path.stat().st_size,
+                MAX_REGISTRATION_DOCUMENT_BYTES + 1,
+            )
+            with self.assertRaisesRegex(
+                ConfigurationError,
+                f"^{FIXED_LOAD_ERROR}$",
+            ) as registration_error:
+                load_repository_registration(
+                    oversized_registration_path,
+                    repository_root=root,
+                    definition_schema_path=REGISTRATION_SCHEMA,
+                )
+            self.assertNotIn(private_marker, str(registration_error.exception))
+            self.assertNotIn(
+                str(oversized_registration_path),
+                str(registration_error.exception),
+            )
+
+            oversized_schema_path = (
+                base / f"{private_marker}-oversized-schema.json"
+            )
+            with oversized_schema_path.open("wb") as oversized:
+                oversized.seek(MAX_SCHEMA_DOCUMENT_BYTES)
+                oversized.write(b"x")
+            self.assertEqual(
+                oversized_schema_path.stat().st_size,
+                MAX_SCHEMA_DOCUMENT_BYTES + 1,
+            )
+            with self.assertRaisesRegex(
+                ConfigurationError,
+                f"^{FIXED_SCHEMA_LOAD_ERROR}$",
+            ) as schema_error:
+                load_repository_registration(
+                    valid_path,
+                    repository_root=root,
+                    definition_schema_path=oversized_schema_path,
+                )
+            self.assertNotIn(private_marker, str(schema_error.exception))
+            self.assertNotIn(
+                str(oversized_schema_path),
+                str(schema_error.exception),
+            )
+
+            oversized_text = self._payload()
+            oversized_text["registration_id"] = (
+                private_marker
+                + "x" * (MAX_DIRECT_SNAPSHOT_BYTES + 1)
+            )
+            oversized_key = self._payload()
+            oversized_key[
+                private_marker + "x" * (MAX_DIRECT_SNAPSHOT_BYTES + 1)
+            ] = None
+            huge_integer = self._payload()
+            huge_integer["schema_version"] = 1 << 4_096
+            for case, payload in (
+                ("oversized-text", oversized_text),
+                ("oversized-key", oversized_key),
+                ("huge-integer", huge_integer),
+            ):
+                with self.subTest(case=case):
+                    self._assert_invalid(
+                        root,
+                        payload,
+                        private_marker=private_marker,
+                    )
+
+    def test_loader_dispatches_exact_versioned_schemas_without_fallback(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1402,17 +2214,24 @@ class RepositoryRegistrationTests(unittest.TestCase):
             schemas.mkdir()
             schema_v1 = schemas / REGISTRATION_SCHEMA.name
             schema_v2 = schemas / REGISTRATION_SCHEMA_V2.name
+            schema_v3 = schemas / REGISTRATION_SCHEMA_V3.name
             schema_v1.write_bytes(REGISTRATION_SCHEMA.read_bytes())
             schema_v2.write_bytes(REGISTRATION_SCHEMA_V2.read_bytes())
+            schema_v3.write_bytes(REGISTRATION_SCHEMA_V3.read_bytes())
 
             path_v1 = configuration / "registration-v1.json"
             path_v2 = configuration / "registration-v2.json"
+            path_v3 = configuration / "registration-v3.json"
             path_v1.write_text(
                 json.dumps(self._payload(), sort_keys=True),
                 encoding="utf-8",
             )
             path_v2.write_text(
                 json.dumps(self._v2_payload(), sort_keys=True),
+                encoding="utf-8",
+            )
+            path_v3.write_text(
+                json.dumps(self._v3_payload(), sort_keys=True),
                 encoding="utf-8",
             )
 
@@ -1424,12 +2243,21 @@ class RepositoryRegistrationTests(unittest.TestCase):
                 path_v2,
                 repository_root=root,
             )
+            loaded_v3 = load_repository_registration(
+                path_v3,
+                repository_root=root,
+            )
             self.assertEqual(loaded_v1.schema_version, 1)
             self.assertEqual(loaded_v2.schema_version, 2)
+            self.assertEqual(loaded_v3.schema_version, 3)
 
             for case, path, schema in (
                 ("v1-with-v2", path_v1, schema_v2),
+                ("v1-with-v3", path_v1, schema_v3),
                 ("v2-with-v1", path_v2, schema_v1),
+                ("v2-with-v3", path_v2, schema_v3),
+                ("v3-with-v1", path_v3, schema_v1),
+                ("v3-with-v2", path_v3, schema_v2),
             ):
                 with self.subTest(case=case):
                     with self.assertRaisesRegex(
@@ -1442,21 +2270,45 @@ class RepositoryRegistrationTests(unittest.TestCase):
                             definition_schema_path=schema,
                         )
 
-            unsupported = self._v2_payload()
-            unsupported["schema_version"] = True
-            unsupported_path = configuration / "unsupported.json"
-            unsupported_path.write_text(
-                json.dumps(unsupported, sort_keys=True),
-                encoding="utf-8",
-            )
+            for case, version in (
+                ("boolean", True),
+                ("float", 3.0),
+                ("string", "3"),
+                ("unsupported", 4),
+            ):
+                with self.subTest(case=case):
+                    unsupported = self._v3_payload()
+                    unsupported["schema_version"] = version
+                    unsupported_path = configuration / f"{case}.json"
+                    unsupported_path.write_text(
+                        json.dumps(unsupported, sort_keys=True),
+                        encoding="utf-8",
+                    )
+                    with self.assertRaisesRegex(
+                        ConfigurationError,
+                        FIXED_VALIDATION_ERROR,
+                    ):
+                        load_repository_registration(
+                            unsupported_path,
+                            repository_root=root,
+                        )
+
+            schema_v3.unlink()
             with self.assertRaisesRegex(
                 ConfigurationError,
-                FIXED_VALIDATION_ERROR,
+                "repository registration schema could not be loaded",
             ):
                 load_repository_registration(
-                    unsupported_path,
+                    path_v3,
                     repository_root=root,
                 )
+            self.assertEqual(
+                load_repository_registration(
+                    path_v2,
+                    repository_root=root,
+                ).schema_version,
+                2,
+            )
 
             schema_v2.unlink()
             with self.assertRaisesRegex(
@@ -1548,6 +2400,16 @@ class RepositoryRegistrationTests(unittest.TestCase):
                     self._v2_payload(),
                     repository_root=root,
                 )
+                registration_v3 = validate_repository_registration(
+                    self._v3_payload(),
+                    repository_root=root,
+                )
+                refreshed_v3 = revalidate_repository_registration(
+                    registration_v3
+                )
+                evidence_v3 = fresh_repository_registration_evidence(
+                    registration_v3
+                )
                 loaded = load_repository_registration(
                     registration_path,
                     repository_root=root,
@@ -1563,6 +2425,10 @@ class RepositoryRegistrationTests(unittest.TestCase):
                 registration.registration_digest,
             )
             self.assertEqual(registration_v2.schema_version, 2)
+            self.assertEqual(refreshed_v3, registration_v3)
+            self.assertEqual(evidence_v3["schema_version"], 3)
+            self.assertFalse(evidence_v3["baseline_authenticity_verified"])
+            self.assertFalse(evidence_v3["baseline_freshness_verified"])
             for observed in (
                 run,
                 popen,

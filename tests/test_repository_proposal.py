@@ -226,6 +226,60 @@ class RepositoryProposalTests(unittest.TestCase):
             },
         }
 
+    @staticmethod
+    def _registration_command_digest(
+        kind: str,
+        command: dict[str, object],
+    ) -> str:
+        return canonical_digest(
+            {
+                "command": {
+                    "argv": list(command["argv"]),
+                    "command_id": command["command_id"],
+                    "cwd": command["cwd"],
+                    "kind": kind,
+                },
+                "kind": "repository_verification_command",
+                "schema_version": 1,
+            }
+        )
+
+    @classmethod
+    def _registration_v3_payload(cls) -> dict[str, object]:
+        payload = cls._registration_payload()
+        payload["schema_version"] = 3
+        payload["path_policy"]["generated_paths"] = []
+        payload["path_policy"]["vendor_paths"] = []
+        results: list[dict[str, object]] = []
+        sequence = 0
+        for kind in ("format", "lint", "type_check", "test", "build"):
+            for command in payload["verification_commands"][kind]:
+                started_at = 1_000 + sequence * 2_000
+                results.append(
+                    {
+                        "kind": kind,
+                        "command_id": command["command_id"],
+                        "command_digest": cls._registration_command_digest(
+                            kind,
+                            command,
+                        ),
+                        "started_at_unix_ms": started_at,
+                        "completed_at_unix_ms": started_at + 1_000,
+                        "termination": {
+                            "kind": "exited",
+                            "exit_code": 0,
+                        },
+                    }
+                )
+                sequence += 1
+        payload["baseline_command_results"] = {
+            "kind": "repository_baseline_command_results",
+            "attestation_source": "controller_supplied",
+            "snapshot_digest": "sha256:" + "b" * 64,
+            "results": results,
+        }
+        return payload
+
     @classmethod
     def _registration(
         cls,
@@ -986,34 +1040,53 @@ class RepositoryProposalTests(unittest.TestCase):
                     self.assertEqual(len(state.list_events(run.run_id)), 1)
         self.assertEqual(invoked, [])
 
-    def test_registration_schema_v2_is_not_bindable_to_v1_lineage(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            base = Path(temporary)
-            root = self._repository(base)
-            payload = self._registration_payload()
-            payload["schema_version"] = 2
-            payload["path_policy"]["generated_paths"] = []
-            payload["path_policy"]["vendor_paths"] = []
-            registration = self._registration(root, payload=payload)
+    def test_registration_schema_v2_and_v3_are_not_bindable_to_v1_lineage(
+        self,
+    ) -> None:
+        for schema_version in (2, 3):
+            with (
+                self.subTest(schema_version=schema_version),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                base = Path(temporary)
+                root = self._repository(base)
+                if schema_version == 2:
+                    payload = self._registration_payload()
+                    payload["schema_version"] = 2
+                    payload["path_policy"]["generated_paths"] = []
+                    payload["path_policy"]["vendor_paths"] = []
+                else:
+                    payload = self._registration_v3_payload()
+                registration = self._registration(root, payload=payload)
 
-            with SQLiteStateStore(base / "state.sqlite3") as state:
-                run = self._create_run(state)
-                with self.assertRaisesRegex(
-                    ValidationError,
-                    "repository proposal evidence is invalid",
-                ):
-                    bind_repository_proposal_attempt(
-                        state,
-                        run_id=run.run_id,
-                        registration=registration,
+                with SQLiteStateStore(base / "state.sqlite3") as state:
+                    run = self._create_run(state)
+                    with (
+                        patch(
+                            "ordomata.repository_proposal."
+                            "_append_required_event_once",
+                            side_effect=AssertionError(
+                                "unsupported registration must fail before append"
+                            ),
+                        ) as append,
+                        self.assertRaisesRegex(
+                            ValidationError,
+                            "repository proposal evidence is invalid",
+                        ),
+                    ):
+                        bind_repository_proposal_attempt(
+                            state,
+                            run_id=run.run_id,
+                            registration=registration,
+                        )
+                    append.assert_not_called()
+                    events = state.list_events(run.run_id)
+                    self.assertEqual(len(events), 1)
+                    self.assertEqual(events[0].status, RunStatus.CREATED)
+                    self.assertEqual(
+                        state.current_status(run.run_id),
+                        RunStatus.CREATED,
                     )
-                events = state.list_events(run.run_id)
-                self.assertEqual(len(events), 1)
-                self.assertEqual(events[0].status, RunStatus.CREATED)
-                self.assertEqual(
-                    state.current_status(run.run_id),
-                    RunStatus.CREATED,
-                )
 
     def test_registration_evidence_schema_version_rejects_boolean(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
