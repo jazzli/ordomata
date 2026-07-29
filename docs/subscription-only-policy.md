@@ -132,8 +132,8 @@ billing route, or live gate; invoke no harness; and enable no credit, overage,
 API, cloud, comparison, supervisor, or external-action fallback. Schema-v1
 through v5 histories retain their prior billing and authorization meanings.
 
-The frozen schema-v1 and separate schema-v2/schema-v3 repository-registration
-contracts plus pure version-dispatched validation deterministically validate
+The frozen schema-v1 through schema-v3 and separate schema-v4 repository-
+registration contracts plus pure version-dispatched validation deterministically validate
 and hash a controller-supplied ordinary Git
 identity, stable filesystem reference, exact verification argv-array (not
 shell-text) declarations, canonical protected/allowed paths, bounded resource
@@ -156,6 +156,23 @@ bounded result count, `baseline_authenticity_verified: false`, and
 `baseline_freshness_verified: false`; it exposes no snapshot or individual
 result.
 
+V4 preserves v3 and adds one bounded controller-supplied executable/toolchain
+identity claim for each declared command. Claims are exactly command-linked and
+carry only opaque executable and toolchain identity digests. Canonicalization
+derives a syntax-only, command-context-bound declared-executable reference and
+binds the aggregate to the repository, complete verification-command set, and
+exact v3 baseline aggregate. The supplied digests have no standardized or
+trusted preimage or provenance. Cross-context transplantation can validate but
+changes the aggregate, same-context replay remains indistinguishable, and the
+baseline link proves co-declaration rather than the executable/toolchain bytes
+used by the process. Aggregate-only evidence explicitly reports authenticity,
+freshness, resolution, content, completeness, and execution correspondence as
+false. V4 identity-block validation adds no PATH or environment lookup,
+runtime-cwd or symlink resolution, stat/content read, shebang/interpreter/
+launcher/module/plugin/dynamic-loader/package/version inspection, or execution.
+Existing registration root and repository-relative path/executable safety
+checks are unchanged.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration and binds it plus an explicit canonical
 `proposal_digest` to an existing immutable Class 0/1
@@ -176,9 +193,10 @@ worktree, Git/command/process invocation, worker/supervisor dispatch, harness
 call, network request, or live eligibility. It cannot satisfy route, capacity,
 identity, paid-continuation, environment, isolation, circuit, or explicit live-
 gate prerequisites. The chain remains pinned to frozen registration evidence
-v1 and rejects schema-v2 and schema-v3 registrations before any event append.
-Baseline observations cannot satisfy route, capacity, identity, paid-
-continuation, environment, isolation, circuit, or explicit live-gate evidence.
+v1 and rejects schema-v2 through schema-v4 registrations before any event
+append. Baseline observations and executable/toolchain identity claims cannot
+satisfy route, capacity, identity, paid-continuation, environment, isolation,
+circuit, or explicit live-gate evidence.
 
 The third slice is the library-only `ordomata.repository_proposal_inspection`
 API `inspect_repository_proposal_evidence(database_path, *, run_id)`. Its
@@ -286,10 +304,14 @@ harness, or create subscription, billing, capacity, or route evidence. Schemas
 v1 and v2 retain their prior meanings, and frozen schema v1 remains the only
 proposal-lineage version.
 
-The next recommended bounded slice is pure schema/validator support for
-controller-supplied executable/toolchain identity attestations in schema v4,
-still without executable resolution, command execution, subscription evidence,
-or proposal-lineage widening.
+The eighth bounded Phase 3 slice adds the schema-v4 opaque executable/toolchain
+identity-claim contract described above. It creates no trusted identity,
+resolution, content, completeness, execution, subscription, billing, capacity,
+route, or live-gate evidence. Frozen schemas v1 through v3 retain their prior
+meanings, frozen schema v1 remains the only proposal-lineage version, and only
+Class 0/1 effects remain enabled. Trusted controller-owned resolution and
+content-manifest receipts remain a separate future boundary before execution or
+proposal-lineage widening.
 
 `compare-run` is an opt-in execution workflow, not a bypass. It requires the same live gate and current evidence for every selected profile before creating comparison records. Trials use one immutable sanitized Class 0 snapshot, randomized repetition blocks, fresh sessions and workspaces, no shared outputs, and no external actions. Reports expose raw automated dimensions and separate human-review fields; they do not declare a winner or auto-promote a profile.
 

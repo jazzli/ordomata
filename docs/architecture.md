@@ -505,7 +505,8 @@ PEP.
 The repository-registration boundary preserves the standalone
 `schemas/repository-registration.schema.json` schema-v1 contract and adds the
 separate `schemas/repository-registration-v2.schema.json` and
-`schemas/repository-registration-v3.schema.json` contracts. The pure
+`schemas/repository-registration-v3.schema.json` contracts, all frozen, plus
+the separate `schemas/repository-registration-v4.schema.json` contract. The pure
 `repository_registration` validator dispatches on an exact integer version.
 From a controller-supplied ordinary Git
 root it derives stable repository and filesystem references, validates exact
@@ -533,8 +534,8 @@ fail closed. Missing leaves are accepted without creation. Generated
 classification attests no reproducibility, and vendor classification attests
 no provenance, integrity, or license. Neither category hides changes or grants
 authority. Schema v1 remains unchanged, and the existing proposal-evidence
-chain remains pinned to registration evidence v1, so v2 and v3 fail before any
-event append.
+chain remains pinned to registration evidence v1, so v2 through v4 fail before
+any event append.
 
 Schema v3 preserves the v2 path-policy semantics and requires a
 controller-supplied baseline command-result block. It covers every declared
@@ -562,6 +563,33 @@ individual observations. Bare executable resolution and
 executable/toolchain content attestation, and future `shell=False` action-
 boundary execution remain deferred. The validator remains pure, has no CLI or
 sample registration, creates no state, and authorizes or executes nothing.
+
+Schema v4 preserves the v3 baseline contract and adds one bounded
+controller-supplied executable/toolchain identity claim for every declared
+command. Each identity repeats the exact command kind, identifier, and
+domain-separated command digest and carries only opaque
+`executable_identity_digest` and `toolchain_identity_digest` values. The
+validator canonicalizes claims in declaration order and derives a syntax-only
+declared-executable reference bound to the exact command context, together with
+the repository reference, complete verification-command digest, and exact v3
+baseline aggregate digest. Those derived values bind the aggregate to its
+current registration context; they provide no standardized or trusted digest
+preimage or provenance. Cross-context transplantation can still validate but
+produces a different aggregate, while same-context replay is indistinguishable.
+Binding the baseline proves co-declaration only, not that its process used the
+claimed executable or toolchain bytes.
+
+Outward v4 evidence is aggregate-only: fixed controller-supplied source, one
+bounded identity count, one aggregate digest, and explicit false facts for
+authenticity, freshness, executable resolution, content verification,
+toolchain completeness, and baseline-execution correspondence. It exposes no
+individual identity or declared-executable reference. V4 identity-block
+validation adds no PATH, PATHEXT, environment, runtime-cwd, executable metadata
+or content, symlink, shebang, interpreter, launcher, module, plugin, dynamic-
+loader, package, or version inspection and executes nothing. Existing
+registration root and repository-relative path/executable safety checks are
+unchanged. These claims are descriptive PIP input, never authorization or an
+action receipt.
 
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
@@ -693,10 +721,16 @@ execution, persistence, repair, worker, route, billing, network, harness,
 dispatch, authority, or live effect. Frozen schemas v1 and v2 retain their
 prior canonical and evidence meanings, and proposal lineage remains v1-only.
 
-The next recommended bounded slice is pure schema/validator support for
-controller-supplied executable/toolchain identity attestations in schema v4,
-still without executable resolution, command execution, or proposal-lineage
-widening.
+The eighth bounded Phase 3 slice is the schema-v4 opaque executable/toolchain
+identity-claim contract described above. It adds no additional PATH or
+environment lookup, resolution, stat or content inspection, chain or package
+discovery, command execution, persistence, repair, worker, route, billing,
+network, harness,
+dispatch, authority, or live effect. Frozen schemas v1 through v3 retain their
+prior canonical and evidence meanings, and proposal lineage remains v1-only.
+Trusted resolution and content-manifest receipts remain a separate future
+boundary before execution or proposal-lineage widening. Only Class 0/1 effects
+remain enabled.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor

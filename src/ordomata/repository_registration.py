@@ -25,13 +25,19 @@ from .redaction import contains_credential_material
 from .schema import parse_json_document, require_valid
 
 
-REPOSITORY_REGISTRATION_SCHEMA_VERSION = 3
-REPOSITORY_REGISTRATION_SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2, 3})
+REPOSITORY_REGISTRATION_SCHEMA_VERSION = 4
+REPOSITORY_REGISTRATION_SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2, 3, 4})
 REPOSITORY_REGISTRATION_KIND = "repository_registration"
 REPOSITORY_REGISTRATION_EVIDENCE_KIND = "repository_registration_validation"
 BASELINE_COMMAND_RESULTS_KIND = "repository_baseline_command_results"
 BASELINE_COMMAND_RESULTS_SCHEMA_VERSION = 1
 BASELINE_COMMAND_RESULTS_ATTESTATION_SOURCE = "controller_supplied"
+EXECUTABLE_TOOLCHAIN_IDENTITIES_KIND = (
+    "repository_executable_toolchain_identities"
+)
+EXECUTABLE_TOOLCHAIN_IDENTITIES_SCHEMA_VERSION = 1
+EXECUTABLE_TOOLCHAIN_IDENTITIES_ATTESTATION_SOURCE = "controller_supplied"
+DECLARED_EXECUTABLE_KIND = "repository_declared_executable"
 
 _INVALID_MESSAGE = "repository registration is invalid"
 _LOAD_MESSAGE = "repository registration could not be loaded"
@@ -48,6 +54,7 @@ _WINDOWS_ABSOLUTE_PATH_PATTERN = re.compile(r"[A-Za-z]:[\\/]")
 _BARE_EXECUTABLE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}")
 _COMMAND_KINDS = ("format", "lint", "type_check", "test", "build")
 _MAX_BASELINE_RESULTS = 80
+_MAX_EXECUTABLE_TOOLCHAIN_IDENTITIES = 80
 _MAX_UNIX_MILLISECONDS = 9_007_199_254_740_991
 _MAX_REGISTRATION_DOCUMENT_BYTES = 8 * 1024 * 1024
 _MAX_SCHEMA_DOCUMENT_BYTES = 1024 * 1024
@@ -70,6 +77,7 @@ _SCHEMA_FILENAME_BY_VERSION = {
     1: "repository-registration.schema.json",
     2: "repository-registration-v2.schema.json",
     3: "repository-registration-v3.schema.json",
+    4: "repository-registration-v4.schema.json",
 }
 _SHELL_PROGRAMS = frozenset(
     {
@@ -277,6 +285,42 @@ class BaselineCommandResults:
 
 
 @dataclass(frozen=True, slots=True)
+class ExecutableToolchainIdentity:
+    """One opaque controller claim linked to a declared command."""
+
+    kind: str
+    command_id: str = field(repr=False)
+    command_digest: str = field(repr=False)
+    declared_executable_kind: str
+    declared_executable_ref: str = field(repr=False)
+    executable_identity_digest: str = field(repr=False)
+    toolchain_identity_digest: str = field(repr=False)
+
+    def to_canonical(self) -> dict[str, Any]:
+        return _executable_toolchain_identity_projection(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutableToolchainIdentities:
+    """Opaque identity claims with controller-derived context bindings."""
+
+    kind: str
+    schema_version: int
+    attestation_source: str
+    repository_ref: str = field(repr=False)
+    verification_commands_digest: str = field(repr=False)
+    baseline_command_results_digest: str = field(repr=False)
+    identities: tuple[ExecutableToolchainIdentity, ...] = field(repr=False)
+
+    def to_canonical(self) -> dict[str, Any]:
+        return _executable_toolchain_identities_projection(self)
+
+    @property
+    def digest(self) -> str:
+        return canonical_digest(self.to_canonical())
+
+
+@dataclass(frozen=True, slots=True)
 class RepositoryPathPolicy:
     allowed_paths: tuple[str, ...] = field(repr=False)
     protected_paths: tuple[str, ...] = field(repr=False)
@@ -389,6 +433,9 @@ class RepositoryRegistration:
         default=None,
         repr=False,
     )
+    executable_toolchain_identities: ExecutableToolchainIdentities | None = (
+        field(default=None, repr=False)
+    )
 
     @property
     def registration_ref(self) -> str:
@@ -454,6 +501,7 @@ def _require_typed_registration_snapshot(
                 or type(command.command_id) is not str
                 or type(command.kind) is not str
                 or type(command.argv) is not tuple
+                or not command.argv
                 or any(type(argument) is not str for argument in command.argv)
                 or type(command.cwd) is not str
             ):
@@ -523,6 +571,11 @@ def _require_typed_registration_snapshot(
             raise _InvalidRegistration
     else:
         _require_typed_baseline_snapshot(registration)
+    if registration.schema_version in {1, 2, 3}:
+        if registration.executable_toolchain_identities is not None:
+            raise _InvalidRegistration
+    else:
+        _require_typed_executable_toolchain_snapshot(registration)
 
 
 def _verification_commands_projection(
@@ -631,6 +684,81 @@ def _baseline_command_results_document_projection(
     }
 
 
+def _declared_executable_syntax_kind(command: VerificationCommand) -> str:
+    if "/" not in command.argv[0]:
+        return "path_search"
+    return "repository_relative"
+
+
+def _declared_executable_ref(command: VerificationCommand) -> str:
+    return canonical_digest(
+        {
+            "command_digest": _verification_command_digest(command),
+            "declared_executable": command.argv[0],
+            "kind": DECLARED_EXECUTABLE_KIND,
+            "schema_version": 1,
+        }
+    )
+
+
+def _executable_toolchain_identity_projection(
+    identity: ExecutableToolchainIdentity,
+) -> dict[str, Any]:
+    return {
+        "command_digest": identity.command_digest,
+        "command_id": identity.command_id,
+        "declared_executable_kind": identity.declared_executable_kind,
+        "declared_executable_ref": identity.declared_executable_ref,
+        "executable_identity_digest": identity.executable_identity_digest,
+        "kind": identity.kind,
+        "toolchain_identity_digest": identity.toolchain_identity_digest,
+    }
+
+
+def _executable_toolchain_identities_projection(
+    identities: ExecutableToolchainIdentities,
+) -> dict[str, Any]:
+    return {
+        "attestation_source": identities.attestation_source,
+        "baseline_command_results_digest": (
+            identities.baseline_command_results_digest
+        ),
+        "identities": [
+            _executable_toolchain_identity_projection(identity)
+            for identity in identities.identities
+        ],
+        "kind": identities.kind,
+        "repository_ref": identities.repository_ref,
+        "schema_version": identities.schema_version,
+        "verification_commands_digest": (
+            identities.verification_commands_digest
+        ),
+    }
+
+
+def _executable_toolchain_identities_document_projection(
+    identities: ExecutableToolchainIdentities,
+) -> dict[str, Any]:
+    return {
+        "attestation_source": identities.attestation_source,
+        "identities": [
+            {
+                "command_digest": identity.command_digest,
+                "command_id": identity.command_id,
+                "executable_identity_digest": (
+                    identity.executable_identity_digest
+                ),
+                "kind": identity.kind,
+                "toolchain_identity_digest": (
+                    identity.toolchain_identity_digest
+                ),
+            }
+            for identity in identities.identities
+        ],
+        "kind": identities.kind,
+    }
+
+
 def _require_typed_baseline_snapshot(
     registration: RepositoryRegistration,
 ) -> None:
@@ -726,6 +854,78 @@ def _require_typed_baseline_snapshot(
             raise _InvalidRegistration
 
 
+def _require_typed_executable_toolchain_snapshot(
+    registration: RepositoryRegistration,
+) -> None:
+    identities = registration.executable_toolchain_identities
+    baseline = registration.baseline_command_results
+    if (
+        type(identities) is not ExecutableToolchainIdentities
+        or type(identities.kind) is not str
+        or identities.kind != EXECUTABLE_TOOLCHAIN_IDENTITIES_KIND
+        or type(identities.schema_version) is not int
+        or identities.schema_version
+        != EXECUTABLE_TOOLCHAIN_IDENTITIES_SCHEMA_VERSION
+        or type(identities.attestation_source) is not str
+        or identities.attestation_source
+        != EXECUTABLE_TOOLCHAIN_IDENTITIES_ATTESTATION_SOURCE
+        or type(identities.repository_ref) is not str
+        or identities.repository_ref != registration.repository.repository_ref
+        or type(identities.verification_commands_digest) is not str
+        or identities.verification_commands_digest
+        != canonical_digest(
+            _verification_commands_projection(
+                registration.verification_commands
+            )
+        )
+        or type(baseline) is not BaselineCommandResults
+        or type(identities.baseline_command_results_digest) is not str
+        or identities.baseline_command_results_digest
+        != canonical_digest(_baseline_command_results_projection(baseline))
+        or type(identities.identities) is not tuple
+    ):
+        raise _InvalidRegistration
+    commands = tuple(
+        command
+        for kind in _COMMAND_KINDS
+        for command in getattr(registration.verification_commands, kind)
+    )
+    if (
+        len(identities.identities) != len(commands)
+        or not 1
+        <= len(identities.identities)
+        <= _MAX_EXECUTABLE_TOOLCHAIN_IDENTITIES
+    ):
+        raise _InvalidRegistration
+    for identity, command in zip(
+        identities.identities,
+        commands,
+        strict=True,
+    ):
+        if (
+            type(identity) is not ExecutableToolchainIdentity
+            or type(identity.kind) is not str
+            or identity.kind != command.kind
+            or type(identity.command_id) is not str
+            or identity.command_id != command.command_id
+            or type(identity.command_digest) is not str
+            or identity.command_digest != _verification_command_digest(command)
+            or type(identity.declared_executable_kind) is not str
+            or identity.declared_executable_kind
+            != _declared_executable_syntax_kind(command)
+            or type(identity.declared_executable_ref) is not str
+            or identity.declared_executable_ref
+            != _declared_executable_ref(command)
+            or type(identity.executable_identity_digest) is not str
+            or _DIGEST_PATTERN.fullmatch(identity.executable_identity_digest)
+            is None
+            or type(identity.toolchain_identity_digest) is not str
+            or _DIGEST_PATTERN.fullmatch(identity.toolchain_identity_digest)
+            is None
+        ):
+            raise _InvalidRegistration
+
+
 def _path_policy_projection(policy: RepositoryPathPolicy) -> dict[str, Any]:
     projection: dict[str, Any] = {
         "allowed_paths": list(policy.allowed_paths),
@@ -748,7 +948,7 @@ def _path_policy_document_projection(
         if policy.generated_paths or policy.vendor_paths:
             raise _InvalidRegistration
         return projection
-    if schema_version in {2, 3}:
+    if schema_version in {2, 3, 4}:
         projection.setdefault("generated_paths", [])
         projection.setdefault("vendor_paths", [])
         return projection
@@ -822,12 +1022,19 @@ def _registration_canonical_projection(
             registration.verification_commands
         ),
     }
-    if registration.schema_version == 3:
+    if registration.schema_version in {3, 4}:
         baseline = registration.baseline_command_results
         if baseline is None:
             raise _InvalidRegistration
         projection["baseline_command_results"] = (
             _baseline_command_results_projection(baseline)
+        )
+    if registration.schema_version == 4:
+        identities = registration.executable_toolchain_identities
+        if identities is None:
+            raise _InvalidRegistration
+        projection["executable_toolchain_identities"] = (
+            _executable_toolchain_identities_projection(identities)
         )
     return projection
 
@@ -858,7 +1065,7 @@ def _registration_evidence_projection(
             canonical["verification_commands"]
         ),
     }
-    if registration.schema_version == 3:
+    if registration.schema_version in {3, 4}:
         baseline = registration.baseline_command_results
         if baseline is None:
             raise _InvalidRegistration
@@ -873,6 +1080,31 @@ def _registration_evidence_projection(
                 ),
                 "baseline_freshness_verified": False,
                 "baseline_result_count": len(baseline.results),
+            }
+        )
+    if registration.schema_version == 4:
+        identities = registration.executable_toolchain_identities
+        if identities is None:
+            raise _InvalidRegistration
+        projection.update(
+            {
+                "executable_toolchain_attestation_source": (
+                    EXECUTABLE_TOOLCHAIN_IDENTITIES_ATTESTATION_SOURCE
+                ),
+                "executable_toolchain_authenticity_verified": False,
+                "executable_toolchain_content_verified": False,
+                "executable_toolchain_execution_correspondence_verified": (
+                    False
+                ),
+                "executable_toolchain_freshness_verified": False,
+                "executable_toolchain_identities_digest": canonical_digest(
+                    _executable_toolchain_identities_projection(identities)
+                ),
+                "executable_toolchain_identity_count": len(
+                    identities.identities
+                ),
+                "executable_toolchain_resolution_verified": False,
+                "toolchain_completeness_verified": False,
             }
         )
     return projection
@@ -1559,6 +1791,107 @@ def _build_baseline_command_results(
     )
 
 
+def _build_executable_toolchain_identities(
+    raw: Any,
+    *,
+    repository: RepositoryIdentity,
+    commands: VerificationCommands,
+    baseline: BaselineCommandResults,
+) -> ExecutableToolchainIdentities:
+    supplied = _require_exact_keys(
+        raw,
+        frozenset({"attestation_source", "identities", "kind"}),
+    )
+    if (
+        supplied["kind"] != EXECUTABLE_TOOLCHAIN_IDENTITIES_KIND
+        or supplied["attestation_source"]
+        != EXECUTABLE_TOOLCHAIN_IDENTITIES_ATTESTATION_SOURCE
+    ):
+        raise _InvalidRegistration
+    declared_commands = tuple(
+        command
+        for kind in _COMMAND_KINDS
+        for command in getattr(commands, kind)
+    )
+    raw_identities = supplied["identities"]
+    if (
+        type(raw_identities) is not list
+        or len(raw_identities) != len(declared_commands)
+        or not 1
+        <= len(raw_identities)
+        <= _MAX_EXECUTABLE_TOOLCHAIN_IDENTITIES
+    ):
+        raise _InvalidRegistration
+    command_by_key = {
+        (command.kind, command.command_id): command
+        for command in declared_commands
+    }
+    identity_by_key: dict[
+        tuple[str, str], ExecutableToolchainIdentity
+    ] = {}
+    for raw_identity in raw_identities:
+        supplied_identity = _require_exact_keys(
+            raw_identity,
+            frozenset(
+                {
+                    "command_digest",
+                    "command_id",
+                    "executable_identity_digest",
+                    "kind",
+                    "toolchain_identity_digest",
+                }
+            ),
+        )
+        kind = supplied_identity["kind"]
+        command_id = supplied_identity["command_id"]
+        if type(kind) is not str or type(command_id) is not str:
+            raise _InvalidRegistration
+        key = (kind, command_id)
+        if key in identity_by_key or key not in command_by_key:
+            raise _InvalidRegistration
+        command = command_by_key[key]
+        command_digest = _verification_command_digest(command)
+        if _require_digest(supplied_identity["command_digest"]) != (
+            command_digest
+        ):
+            raise _InvalidRegistration
+        identity_by_key[key] = ExecutableToolchainIdentity(
+            kind=kind,
+            command_id=command_id,
+            command_digest=command_digest,
+            declared_executable_kind=_declared_executable_syntax_kind(
+                command
+            ),
+            declared_executable_ref=_declared_executable_ref(command),
+            executable_identity_digest=_require_digest(
+                supplied_identity["executable_identity_digest"]
+            ),
+            toolchain_identity_digest=_require_digest(
+                supplied_identity["toolchain_identity_digest"]
+            ),
+        )
+    if frozenset(identity_by_key) != frozenset(command_by_key):
+        raise _InvalidRegistration
+    return ExecutableToolchainIdentities(
+        kind=EXECUTABLE_TOOLCHAIN_IDENTITIES_KIND,
+        schema_version=EXECUTABLE_TOOLCHAIN_IDENTITIES_SCHEMA_VERSION,
+        attestation_source=(
+            EXECUTABLE_TOOLCHAIN_IDENTITIES_ATTESTATION_SOURCE
+        ),
+        repository_ref=repository.repository_ref,
+        verification_commands_digest=canonical_digest(
+            _verification_commands_projection(commands)
+        ),
+        baseline_command_results_digest=canonical_digest(
+            _baseline_command_results_projection(baseline)
+        ),
+        identities=tuple(
+            identity_by_key[(command.kind, command.command_id)]
+            for command in declared_commands
+        ),
+    )
+
+
 def _build_path_policy(
     raw: Any,
     *,
@@ -1566,7 +1899,7 @@ def _build_path_policy(
     schema_version: int,
 ) -> RepositoryPathPolicy:
     expected_keys = {"allowed_paths", "protected_paths"}
-    if schema_version in {2, 3}:
+    if schema_version in {2, 3, 4}:
         expected_keys.update(_EXCLUSION_PATH_NAMES)
     elif schema_version != 1:
         raise _InvalidRegistration
@@ -1612,7 +1945,7 @@ def _build_path_policy(
         raise _InvalidRegistration
     generated: tuple[str, ...] = ()
     vendor: tuple[str, ...] = ()
-    if schema_version in {2, 3}:
+    if schema_version in {2, 3, 4}:
         generated = _build_exclusion_paths(
             policy["generated_paths"],
             root=root,
@@ -1805,8 +2138,10 @@ def _validate_repository_registration(
         "isolation_requirements",
         "review_policy",
     }
-    if schema_version == 3:
+    if schema_version in {3, 4}:
         expected_keys.add("baseline_command_results")
+    if schema_version == 4:
+        expected_keys.add("executable_toolchain_identities")
     registration = _require_exact_keys(raw, frozenset(expected_keys))
     if registration["kind"] != REPOSITORY_REGISTRATION_KIND:
         raise _InvalidRegistration
@@ -1831,12 +2166,24 @@ def _validate_repository_registration(
     )
     resource_limits = _build_resource_limits(registration["resource_limits"])
     baseline_command_results = None
-    if schema_version == 3:
+    if schema_version in {3, 4}:
         baseline_command_results = _build_baseline_command_results(
             registration["baseline_command_results"],
             repository=repository,
             commands=verification_commands,
             resource_limits=resource_limits,
+        )
+    executable_toolchain_identities = None
+    if schema_version == 4:
+        if baseline_command_results is None:
+            raise _InvalidRegistration
+        executable_toolchain_identities = (
+            _build_executable_toolchain_identities(
+                registration["executable_toolchain_identities"],
+                repository=repository,
+                commands=verification_commands,
+                baseline=baseline_command_results,
+            )
         )
     return RepositoryRegistration(
         schema_version=schema_version,
@@ -1856,6 +2203,7 @@ def _validate_repository_registration(
         ),
         review_policy=_build_review_policy(registration["review_policy"]),
         baseline_command_results=baseline_command_results,
+        executable_toolchain_identities=executable_toolchain_identities,
     )
 
 
@@ -1925,12 +2273,21 @@ def revalidate_repository_registration(
                 registration.review_policy
             ),
         }
-        if registration.schema_version == 3:
+        if registration.schema_version in {3, 4}:
             baseline = registration.baseline_command_results
             if baseline is None:
                 raise _InvalidRegistration
             document["baseline_command_results"] = (
                 _baseline_command_results_document_projection(baseline)
+            )
+        if registration.schema_version == 4:
+            identities = registration.executable_toolchain_identities
+            if identities is None:
+                raise _InvalidRegistration
+            document["executable_toolchain_identities"] = (
+                _executable_toolchain_identities_document_projection(
+                    identities
+                )
             )
         refreshed = _validate_repository_registration(
             document,
@@ -2033,6 +2390,10 @@ __all__ = [
     "BASELINE_COMMAND_RESULTS_ATTESTATION_SOURCE",
     "BASELINE_COMMAND_RESULTS_KIND",
     "BASELINE_COMMAND_RESULTS_SCHEMA_VERSION",
+    "DECLARED_EXECUTABLE_KIND",
+    "EXECUTABLE_TOOLCHAIN_IDENTITIES_ATTESTATION_SOURCE",
+    "EXECUTABLE_TOOLCHAIN_IDENTITIES_KIND",
+    "EXECUTABLE_TOOLCHAIN_IDENTITIES_SCHEMA_VERSION",
     "REPOSITORY_REGISTRATION_EVIDENCE_KIND",
     "REPOSITORY_REGISTRATION_KIND",
     "REPOSITORY_REGISTRATION_SCHEMA_VERSION",
@@ -2040,6 +2401,8 @@ __all__ = [
     "BaselineCommandResult",
     "BaselineCommandResults",
     "BaselineCommandTermination",
+    "ExecutableToolchainIdentities",
+    "ExecutableToolchainIdentity",
     "RepositoryIdentity",
     "RepositoryIsolationRequirements",
     "RepositoryPathPolicy",

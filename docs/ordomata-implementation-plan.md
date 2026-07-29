@@ -163,7 +163,7 @@ owner-private Class 1 local effect.
 
 The first Phase 3 repository-registration slice preserves a standalone
 schema-v1 contract, the sixth adds a separate schema-v2 contract, and the
-seventh adds schema v3. The pure
+seventh adds schema v3; the eighth adds separate schema v4. The pure
 read-only validator dispatches on an exact integer version and reduces a strict controller-
 supplied ordinary Git root to stable repository/filesystem references;
 validates exact verification argv-array (not shell-text) declarations,
@@ -200,6 +200,30 @@ evidence with fixed controller-supplied source, bounded result count,
 `baseline_authenticity_verified: false`, and
 `baseline_freshness_verified: false`, never the snapshot or individual results.
 
+Schema v4 preserves the v3 contract and requires one controller-supplied
+executable/toolchain identity claim for every declared command. Each is linked
+by exact command kind, identifier, and domain-separated command digest and
+carries only bounded opaque `executable_identity_digest` and
+`toolchain_identity_digest` values. Canonicalization follows declaration order
+and derives a syntax-only declared-executable reference bound to the exact
+command context plus the repository reference, complete verification-command
+digest, and exact v3 baseline aggregate digest. The identity digests have no
+standardized or trusted preimage or provenance. Derived context binding does
+not prevent cross-context transplantation—the claim block can validate with a
+different aggregate—or same-context replay. The baseline link proves only
+co-declaration, not that its process used the claimed executable or toolchain
+bytes.
+
+V4 evidence exposes only controller-supplied source, aggregate digest, and a
+bounded identity count. Authenticity, freshness, resolution, content,
+toolchain completeness, and execution correspondence are explicit false facts;
+individual identities and declared-executable references remain private. V4
+identity-block validation adds no PATH, PATHEXT, environment, runtime-cwd,
+stat, content, symlink, shebang, interpreter, launcher, module, plugin,
+dynamic-loader, package, or version inspection and executes nothing. Existing
+registration root and repository-relative path/executable safety checks are
+unchanged.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -217,8 +241,9 @@ not. The events reuse existing `run_events` and add no migration, run creation
 or status transition, authorization decision or action receipt, worktree,
 command/process/worker/supervisor dispatch, routing, billing, harness, or live-
 route effect. This chain remains pinned to frozen registration evidence v1 and
-rejects v2 and v3 before any event append. Executable resolution and
-executable/toolchain identity or content attestation remain deferred.
+rejects v2 through v4 before any event append. Trusted executable resolution,
+content and completeness attestation, and execution receipts remain deferred.
+Only Class 0/1 effects remain enabled.
 
 The third Phase 3 slice is the library-only
 `ordomata.repository_proposal_inspection` API
@@ -322,9 +347,14 @@ execution, persistence, repair, worker, route, billing, network, harness,
 dispatch, authorization, or live effect. Schemas v1 and v2 retain their exact
 canonical/evidence meanings, and proposal lineage remains v1-only.
 
-The next recommended bounded slice is pure schema/validator support for
-controller-supplied executable/toolchain identity attestations in schema v4,
-still without executable resolution, command execution, or proposal-lineage
+The eighth bounded Phase 3 slice is the schema-v4 opaque executable/toolchain
+identity-claim contract described above. It performs no additional identity
+lookup, resolution, or inspection and no execution, persistence, repair,
+worker, route, billing, network, harness, dispatch, authorization, or live
+effect. Frozen schemas v1 through v3
+retain their exact canonical/evidence meanings, and proposal lineage remains
+v1-only. Trusted controller-owned resolution and content-manifest receipts
+remain a separate future boundary before execution or proposal-lineage
 widening.
 
 The target semantics for Class 3 standing envelopes, irreversible actions,
@@ -767,7 +797,8 @@ single-run inspection, inert admission shadow, and independent shadow-contract
 verification, not worker-cell enablement:** frozen
 `schemas/repository-registration.schema.json` schema v1, separate
 `schemas/repository-registration-v2.schema.json` and
-`schemas/repository-registration-v3.schema.json`, and the pure
+`schemas/repository-registration-v3.schema.json`, all frozen, plus
+`schemas/repository-registration-v4.schema.json`, and the pure
 `ordomata.repository_registration` validator implement the current contract
 boundary. They validate a controller-supplied ordinary Git root and stable
 repository/filesystem references; format, lint, type-check, test, and build as
@@ -795,6 +826,22 @@ validator canonicalizes and digest-binds the aggregate but explicitly does not
 authenticate it, prove current freshness, recompute the snapshot, or resolve or
 execute an executable/toolchain. Outward evidence remains aggregate-only, with
 fixed false authenticity and freshness claims.
+
+Schema v4 preserves v3 and requires exactly one controller-supplied opaque
+executable/toolchain identity claim per declared command. Exact kind,
+identifier, and command-digest linkage is mandatory. Canonicalization derives a
+syntax-only, command-context-bound declared-executable reference and binds the
+aggregate to the repository, complete verification-command set, and exact v3
+baseline aggregate. The supplied executable and toolchain digests have no
+standardized or trusted preimage or provenance. Cross-context transplantation
+can validate with a different aggregate, same-context replay remains
+indistinguishable, and baseline binding proves co-declaration rather than the
+bytes used during execution. Aggregate-only evidence reports authenticity,
+freshness, resolution, content, completeness, and execution correspondence as
+false. The identity block adds no PATH/environment lookup, stat/content read,
+symlink/shebang or interpreter/launcher/module/plugin/loader/package
+inspection, or execution. Existing registration root and repository-relative
+path/executable safety checks are unchanged.
 
 The separate proposal-evidence API freshly revalidates that registration and
 binds its controller-owned selection plus an explicit canonical proposal
@@ -824,10 +871,10 @@ fixed value-free findings and `contract_valid` establish internal consistency on
 without a trusted anchor, coherent forgery or replay remains indistinguishable.
 It performs no durable reinspection, freshness proof, persistence, repair,
 enforcement, authorization, or action. The proposal chain remains registration-
-evidence-v1-only, so v2 and v3 fail before an event append. Bare executable
-resolution and executable/toolchain identity or content attestation, future
+evidence-v1-only, so v2 through v4 fail before an event append. Trusted
+executable resolution, content and toolchain-completeness receipts, future
 `shell=False` action-boundary execution, and every worker-cell deliverable
-below.
+below remain deferred. Only Class 0/1 effects remain enabled.
 
 ### Deliverables
 
@@ -838,6 +885,9 @@ below.
     authority;
   - baseline command results (schema v3 validation implemented; authenticated
     provenance and operational consumption remain deferred);
+  - opaque executable/toolchain identity claims (schema v4 validation
+    implemented; trusted resolution, content, completeness, provenance, and
+    operational consumption remain deferred);
   - protected and allowed paths;
   - generated/vendor exclusions (schema v2 validation implemented; operational
     consumption remains deferred);

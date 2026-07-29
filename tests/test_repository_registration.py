@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -16,9 +17,14 @@ from unittest.mock import patch
 from ordomata.authorization import canonical_digest
 from ordomata.errors import ConfigurationError, ValidationError
 from ordomata.repository_registration import (
+    EXECUTABLE_TOOLCHAIN_IDENTITIES_ATTESTATION_SOURCE,
+    EXECUTABLE_TOOLCHAIN_IDENTITIES_KIND,
+    EXECUTABLE_TOOLCHAIN_IDENTITIES_SCHEMA_VERSION,
     REPOSITORY_REGISTRATION_KIND,
     REPOSITORY_REGISTRATION_SCHEMA_VERSION,
     REPOSITORY_REGISTRATION_SUPPORTED_SCHEMA_VERSIONS,
+    ExecutableToolchainIdentities,
+    ExecutableToolchainIdentity,
     fresh_repository_registration_evidence,
     load_repository_registration,
     revalidate_repository_registration,
@@ -37,6 +43,9 @@ REGISTRATION_SCHEMA_V2 = (
 REGISTRATION_SCHEMA_V3 = (
     REPOSITORY_ROOT / "schemas" / "repository-registration-v3.schema.json"
 )
+REGISTRATION_SCHEMA_V4 = (
+    REPOSITORY_ROOT / "schemas" / "repository-registration-v4.schema.json"
+)
 FIXED_VALIDATION_ERROR = "repository registration is invalid"
 FIXED_LOAD_ERROR = "repository registration could not be loaded"
 FIXED_SCHEMA_LOAD_ERROR = "repository registration schema could not be loaded"
@@ -48,6 +57,9 @@ FROZEN_REGISTRATION_SCHEMA_SHA256 = (
 )
 FROZEN_REGISTRATION_SCHEMA_V2_SHA256 = (
     "8d93b0757779275927c2149541dad7e50799ea109994c6ca09847edff592cb10"
+)
+FROZEN_REGISTRATION_SCHEMA_V3_SHA256 = (
+    "9b9f8175de30eb56086526fbf7e885c2616088f470f73b8e8872e073ea48f1cb"
 )
 LEGACY_REGISTRATION_CANONICAL_KEYS = {
     "isolation_requirements",
@@ -84,6 +96,17 @@ V3_BASELINE_EVIDENCE_KEYS = {
     "baseline_command_results_digest",
     "baseline_freshness_verified",
     "baseline_result_count",
+}
+V4_EXECUTABLE_TOOLCHAIN_EVIDENCE_KEYS = {
+    "executable_toolchain_attestation_source",
+    "executable_toolchain_authenticity_verified",
+    "executable_toolchain_content_verified",
+    "executable_toolchain_execution_correspondence_verified",
+    "executable_toolchain_freshness_verified",
+    "executable_toolchain_identities_digest",
+    "executable_toolchain_identity_count",
+    "executable_toolchain_resolution_verified",
+    "toolchain_completeness_verified",
 }
 
 
@@ -286,6 +309,69 @@ class RepositoryRegistrationTests(unittest.TestCase):
         return payload
 
     @staticmethod
+    def _declared_executable_ref(
+        *,
+        command_digest: str,
+        declared_executable: str,
+    ) -> str:
+        return canonical_digest(
+            {
+                "command_digest": command_digest,
+                "declared_executable": declared_executable,
+                "kind": "repository_declared_executable",
+                "schema_version": 1,
+            }
+        )
+
+    @classmethod
+    def _executable_toolchain_identities_for_payload(
+        cls,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        identities: list[dict[str, object]] = []
+        for kind in ("format", "lint", "type_check", "test", "build"):
+            for command in payload["verification_commands"][kind]:
+                command_id = command["command_id"]
+                identities.append(
+                    {
+                        "kind": kind,
+                        "command_id": command_id,
+                        "command_digest": cls._command_attestation_digest(
+                            kind,
+                            command,
+                        ),
+                        "executable_identity_digest": canonical_digest(
+                            {
+                                "claimed_executable_identity": (
+                                    f"{kind}:{command_id}"
+                                )
+                            }
+                        ),
+                        "toolchain_identity_digest": canonical_digest(
+                            {
+                                "claimed_toolchain_identity": (
+                                    f"{kind}:{command_id}"
+                                )
+                            }
+                        ),
+                    }
+                )
+        return {
+            "kind": "repository_executable_toolchain_identities",
+            "attestation_source": "controller_supplied",
+            "identities": identities,
+        }
+
+    @classmethod
+    def _v4_payload(cls) -> dict[str, object]:
+        payload = cls._v3_payload()
+        payload["schema_version"] = 4
+        payload["executable_toolchain_identities"] = (
+            cls._executable_toolchain_identities_for_payload(payload)
+        )
+        return payload
+
+    @staticmethod
     def _tree_snapshot(root: Path) -> tuple[tuple[object, ...], ...]:
         entries: list[tuple[object, ...]] = []
         for directory, directory_names, file_names in os.walk(
@@ -331,10 +417,10 @@ class RepositoryRegistrationTests(unittest.TestCase):
     def test_valid_registration_is_canonical_frozen_and_privacy_bounded(
         self,
     ) -> None:
-        self.assertEqual(REPOSITORY_REGISTRATION_SCHEMA_VERSION, 3)
+        self.assertEqual(REPOSITORY_REGISTRATION_SCHEMA_VERSION, 4)
         self.assertEqual(
             REPOSITORY_REGISTRATION_SUPPORTED_SCHEMA_VERSIONS,
-            frozenset({1, 2, 3}),
+            frozenset({1, 2, 3, 4}),
         )
         self.assertEqual(
             REPOSITORY_REGISTRATION_KIND,
@@ -429,6 +515,10 @@ class RepositoryRegistrationTests(unittest.TestCase):
             hashlib.sha256(REGISTRATION_SCHEMA_V2.read_bytes()).hexdigest(),
             FROZEN_REGISTRATION_SCHEMA_V2_SHA256,
         )
+        self.assertEqual(
+            hashlib.sha256(REGISTRATION_SCHEMA_V3.read_bytes()).hexdigest(),
+            FROZEN_REGISTRATION_SCHEMA_V3_SHA256,
+        )
         schema_v1 = json.loads(REGISTRATION_SCHEMA.read_text(encoding="utf-8"))
         schema_v2 = json.loads(
             REGISTRATION_SCHEMA_V2.read_text(encoding="utf-8")
@@ -436,12 +526,16 @@ class RepositoryRegistrationTests(unittest.TestCase):
         schema_v3 = json.loads(
             REGISTRATION_SCHEMA_V3.read_text(encoding="utf-8")
         )
+        schema_v4 = json.loads(
+            REGISTRATION_SCHEMA_V4.read_text(encoding="utf-8")
+        )
         payload_v1 = self._payload()
         payload_v2 = self._v2_payload()
         payload_v3 = self._v3_payload()
+        payload_v4 = self._v4_payload()
 
-        schemas = (schema_v1, schema_v2, schema_v3)
-        payloads = (payload_v1, payload_v2, payload_v3)
+        schemas = (schema_v1, schema_v2, schema_v3, schema_v4)
+        payloads = (payload_v1, payload_v2, payload_v3, payload_v4)
         for payload_index, payload in enumerate(payloads):
             for schema_index, schema in enumerate(schemas):
                 with self.subTest(
@@ -454,7 +548,11 @@ class RepositoryRegistrationTests(unittest.TestCase):
                     )
 
         incomplete_v2_payloads = []
-        for version, baseline in ((2, payload_v2), (3, payload_v3)):
+        for version, baseline in (
+            (2, payload_v2),
+            (3, payload_v3),
+            (4, payload_v4),
+        ):
             for missing in ("generated_paths", "vendor_paths"):
                 with self.subTest(version=version, missing=missing):
                     incomplete = deepcopy(baseline)
@@ -467,6 +565,17 @@ class RepositoryRegistrationTests(unittest.TestCase):
         incomplete_v3 = deepcopy(payload_v3)
         del incomplete_v3["baseline_command_results"]
         self.assertFalse(validate_instance(incomplete_v3, schema_v3).valid)
+
+        incomplete_v4_baseline = deepcopy(payload_v4)
+        del incomplete_v4_baseline["baseline_command_results"]
+        self.assertFalse(
+            validate_instance(incomplete_v4_baseline, schema_v4).valid
+        )
+        incomplete_v4_identities = deepcopy(payload_v4)
+        del incomplete_v4_identities["executable_toolchain_identities"]
+        self.assertFalse(
+            validate_instance(incomplete_v4_identities, schema_v4).valid
+        )
 
         widened_v1 = deepcopy(payload_v1)
         widened_v1["path_policy"]["generated_paths"] = []
@@ -484,12 +593,30 @@ class RepositoryRegistrationTests(unittest.TestCase):
             with self.subTest(version=version, field="baseline"):
                 self.assertFalse(validate_instance(widened, schema).valid)
 
+        widened_identity_payloads = []
+        for version, payload, schema in (
+            (1, payload_v1, schema_v1),
+            (2, payload_v2, schema_v2),
+            (3, payload_v3, schema_v3),
+        ):
+            widened = deepcopy(payload)
+            widened["executable_toolchain_identities"] = deepcopy(
+                payload_v4["executable_toolchain_identities"]
+            )
+            widened_identity_payloads.append(widened)
+            with self.subTest(version=version, field="toolchain-identities"):
+                self.assertFalse(validate_instance(widened, schema).valid)
+
         with tempfile.TemporaryDirectory() as temporary:
             root, _outside = self._repository(temporary)
             self._assert_invalid(root, widened_v1)
             for incomplete in incomplete_v2_payloads:
                 self._assert_invalid(root, incomplete)
             self._assert_invalid(root, incomplete_v3)
+            self._assert_invalid(root, incomplete_v4_baseline)
+            self._assert_invalid(root, incomplete_v4_identities)
+            for widened in widened_identity_payloads:
+                self._assert_invalid(root, widened)
 
     def test_v2_exclusions_are_canonical_digest_bound_and_private(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -749,6 +876,517 @@ class RepositoryRegistrationTests(unittest.TestCase):
                 registration.path_policy.digest,
                 changed.path_policy.digest,
             )
+
+    def test_v4_executable_toolchain_identities_are_linked_and_private(
+        self,
+    ) -> None:
+        self.assertEqual(
+            EXECUTABLE_TOOLCHAIN_IDENTITIES_KIND,
+            "repository_executable_toolchain_identities",
+        )
+        self.assertEqual(EXECUTABLE_TOOLCHAIN_IDENTITIES_SCHEMA_VERSION, 1)
+        self.assertEqual(
+            EXECUTABLE_TOOLCHAIN_IDENTITIES_ATTESTATION_SOURCE,
+            "controller_supplied",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside = self._repository(temporary)
+            payload = self._v4_payload()
+            payload["executable_toolchain_identities"][
+                "identities"
+            ].reverse()
+            registration = validate_repository_registration(
+                payload,
+                repository_root=root,
+            )
+            self.assertIsInstance(
+                registration.executable_toolchain_identities,
+                ExecutableToolchainIdentities,
+            )
+            canonical = registration.to_canonical()
+            baseline = canonical["baseline_command_results"]
+            identities = canonical["executable_toolchain_identities"]
+            self.assertEqual(
+                set(canonical),
+                LEGACY_REGISTRATION_CANONICAL_KEYS
+                | {
+                    "baseline_command_results",
+                    "executable_toolchain_identities",
+                },
+            )
+            self.assertEqual(
+                set(identities),
+                {
+                    "attestation_source",
+                    "baseline_command_results_digest",
+                    "identities",
+                    "kind",
+                    "repository_ref",
+                    "schema_version",
+                    "verification_commands_digest",
+                },
+            )
+            self.assertEqual(
+                identities["kind"],
+                EXECUTABLE_TOOLCHAIN_IDENTITIES_KIND,
+            )
+            self.assertEqual(
+                identities["schema_version"],
+                EXECUTABLE_TOOLCHAIN_IDENTITIES_SCHEMA_VERSION,
+            )
+            self.assertEqual(
+                identities["attestation_source"],
+                EXECUTABLE_TOOLCHAIN_IDENTITIES_ATTESTATION_SOURCE,
+            )
+            self.assertEqual(
+                identities["repository_ref"],
+                registration.repository.repository_ref,
+            )
+            self.assertEqual(
+                identities["verification_commands_digest"],
+                registration.verification_commands.digest,
+            )
+            self.assertEqual(
+                identities["baseline_command_results_digest"],
+                canonical_digest(baseline),
+            )
+            self.assertEqual(
+                [identity["command_id"] for identity in identities["identities"]],
+                ["format-check", "unit-tests"],
+            )
+            for identity in identities["identities"]:
+                self.assertEqual(
+                    set(identity),
+                    {
+                        "command_digest",
+                        "command_id",
+                        "declared_executable_kind",
+                        "declared_executable_ref",
+                        "executable_identity_digest",
+                        "kind",
+                        "toolchain_identity_digest",
+                    },
+                )
+                self.assertEqual(
+                    identity["declared_executable_kind"],
+                    "path_search",
+                )
+                source_command = next(
+                    command
+                    for command in payload["verification_commands"][
+                        identity["kind"]
+                    ]
+                    if command["command_id"] == identity["command_id"]
+                )
+                self.assertEqual(
+                    identity["declared_executable_ref"],
+                    self._declared_executable_ref(
+                        command_digest=identity["command_digest"],
+                        declared_executable=source_command["argv"][0],
+                    ),
+                )
+
+            evidence = registration.to_evidence()
+            self.assertEqual(
+                set(evidence),
+                LEGACY_REGISTRATION_EVIDENCE_KEYS
+                | V3_BASELINE_EVIDENCE_KEYS
+                | V4_EXECUTABLE_TOOLCHAIN_EVIDENCE_KEYS,
+            )
+            self.assertEqual(
+                evidence["executable_toolchain_identities_digest"],
+                canonical_digest(identities),
+            )
+            self.assertEqual(
+                evidence["executable_toolchain_identity_count"],
+                2,
+            )
+            self.assertEqual(
+                evidence["executable_toolchain_attestation_source"],
+                "controller_supplied",
+            )
+            for false_fact in (
+                "executable_toolchain_authenticity_verified",
+                "executable_toolchain_content_verified",
+                "executable_toolchain_execution_correspondence_verified",
+                "executable_toolchain_freshness_verified",
+                "executable_toolchain_resolution_verified",
+                "toolchain_completeness_verified",
+            ):
+                self.assertIs(evidence[false_fact], False)
+
+            projection = json.dumps(evidence, sort_keys=True)
+            private_values = (
+                payload["baseline_command_results"]["snapshot_digest"],
+                "format-check",
+                "unit-tests",
+                "python3",
+                payload["executable_toolchain_identities"]["identities"][0][
+                    "executable_identity_digest"
+                ],
+                payload["executable_toolchain_identities"]["identities"][0][
+                    "toolchain_identity_digest"
+                ],
+            )
+            for private_value in private_values:
+                self.assertNotIn(private_value, projection)
+                self.assertNotIn(private_value, repr(registration))
+                self.assertNotIn(
+                    private_value,
+                    repr(registration.executable_toolchain_identities),
+                )
+
+            registration_v3 = validate_repository_registration(
+                self._v3_payload(),
+                repository_root=root,
+            )
+            self.assertEqual(
+                registration_v3.to_canonical()["baseline_command_results"],
+                baseline,
+            )
+            self.assertEqual(
+                registration_v3.to_evidence()["baseline_command_results_digest"],
+                evidence["baseline_command_results_digest"],
+            )
+
+            reordered = validate_repository_registration(
+                self._v4_payload(),
+                repository_root=root,
+            )
+            self.assertEqual(
+                registration.registration_digest,
+                reordered.registration_digest,
+            )
+
+            changed_payload = self._v4_payload()
+            changed_payload["executable_toolchain_identities"]["identities"][0][
+                "executable_identity_digest"
+            ] = "sha256:" + "c" * 64
+            changed = validate_repository_registration(
+                changed_payload,
+                repository_root=root,
+            )
+            self.assertNotEqual(
+                evidence["executable_toolchain_identities_digest"],
+                changed.to_evidence()["executable_toolchain_identities_digest"],
+            )
+            self.assertNotEqual(
+                registration.registration_digest,
+                changed.registration_digest,
+            )
+            for section in (
+                "baseline_command_results",
+                "isolation_requirements",
+                "path_policy",
+                "resource_limits",
+                "review_policy",
+                "verification_commands",
+            ):
+                self.assertEqual(canonical[section], changed.to_canonical()[section])
+
+    def test_v4_identity_coverage_and_declaration_links_are_exact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside = self._repository(temporary)
+            cases: list[tuple[str, dict[str, object]]] = []
+
+            missing = self._v4_payload()
+            missing["executable_toolchain_identities"]["identities"].pop()
+            cases.append(("missing", missing))
+
+            duplicate = self._v4_payload()
+            duplicate["executable_toolchain_identities"]["identities"][1] = (
+                deepcopy(
+                    duplicate["executable_toolchain_identities"]["identities"][
+                        0
+                    ]
+                )
+            )
+            cases.append(("duplicate", duplicate))
+
+            wrong_id = self._v4_payload()
+            wrong_id["executable_toolchain_identities"]["identities"][0][
+                "command_id"
+            ] = "unknown-command"
+            cases.append(("unknown-command", wrong_id))
+
+            wrong_kind = self._v4_payload()
+            wrong_kind["executable_toolchain_identities"]["identities"][0][
+                "kind"
+            ] = "test"
+            cases.append(("wrong-kind", wrong_kind))
+
+            stale_digest = self._v4_payload()
+            stale_digest["executable_toolchain_identities"]["identities"][0][
+                "command_digest"
+            ] = "sha256:" + "0" * 64
+            cases.append(("stale-command-digest", stale_digest))
+
+            stale_after_declaration_change = self._v4_payload()
+            stale_after_declaration_change["verification_commands"]["format"][
+                0
+            ]["argv"].append("private-changed-argument")
+            stale_after_declaration_change["baseline_command_results"] = (
+                self._baseline_for_payload(stale_after_declaration_change)
+            )
+            cases.append(
+                ("stale-after-declaration-change", stale_after_declaration_change)
+            )
+
+            for case, payload in cases:
+                with self.subTest(case=case):
+                    self._assert_invalid(root, payload)
+
+            baseline = validate_repository_registration(
+                self._v4_payload(),
+                repository_root=root,
+            )
+            fully_rebound = self._v4_payload()
+            fully_rebound["verification_commands"]["format"][0]["argv"].append(
+                "private-changed-argument"
+            )
+            fully_rebound["baseline_command_results"] = self._baseline_for_payload(
+                fully_rebound
+            )
+            fully_rebound["executable_toolchain_identities"] = (
+                self._executable_toolchain_identities_for_payload(fully_rebound)
+            )
+            changed = validate_repository_registration(
+                fully_rebound,
+                repository_root=root,
+            )
+            baseline_identity = baseline.to_canonical()[
+                "executable_toolchain_identities"
+            ]["identities"][0]
+            changed_identity = changed.to_canonical()[
+                "executable_toolchain_identities"
+            ]["identities"][0]
+            self.assertNotEqual(
+                baseline_identity["command_digest"],
+                changed_identity["command_digest"],
+            )
+            self.assertNotEqual(
+                baseline_identity["declared_executable_ref"],
+                changed_identity["declared_executable_ref"],
+            )
+            self.assertNotEqual(
+                baseline.registration_digest,
+                changed.registration_digest,
+            )
+
+            relative_executable = (
+                root / "private-source-path-marker" / "private-check-tool"
+            )
+            relative_executable.write_text("controller fixture\n", encoding="utf-8")
+            relative_executable.chmod(0o700)
+            repository_relative = self._v4_payload()
+            repository_relative["verification_commands"]["format"][0]["argv"][
+                0
+            ] = "private-source-path-marker/private-check-tool"
+            repository_relative["baseline_command_results"] = (
+                self._baseline_for_payload(repository_relative)
+            )
+            repository_relative["executable_toolchain_identities"] = (
+                self._executable_toolchain_identities_for_payload(
+                    repository_relative
+                )
+            )
+            relative = validate_repository_registration(
+                repository_relative,
+                repository_root=root,
+            )
+            relative_identity = relative.to_canonical()[
+                "executable_toolchain_identities"
+            ]["identities"][0]
+            self.assertEqual(
+                relative_identity["declared_executable_kind"],
+                "repository_relative",
+            )
+            self.assertEqual(
+                relative_identity["declared_executable_ref"],
+                self._declared_executable_ref(
+                    command_digest=relative_identity["command_digest"],
+                    declared_executable=(
+                        "private-source-path-marker/private-check-tool"
+                    ),
+                ),
+            )
+
+            swapped_claims = self._v4_payload()
+            claim_records = swapped_claims["executable_toolchain_identities"][
+                "identities"
+            ]
+            for field in (
+                "executable_identity_digest",
+                "toolchain_identity_digest",
+            ):
+                claim_records[0][field], claim_records[1][field] = (
+                    claim_records[1][field],
+                    claim_records[0][field],
+                )
+            swapped = validate_repository_registration(
+                swapped_claims,
+                repository_root=root,
+            )
+            self.assertNotEqual(
+                baseline.registration_digest,
+                swapped.registration_digest,
+            )
+            self.assertIs(
+                swapped.to_evidence()[
+                    "executable_toolchain_authenticity_verified"
+                ],
+                False,
+            )
+
+            shared_claims = self._v4_payload()
+            shared_records = shared_claims["executable_toolchain_identities"][
+                "identities"
+            ]
+            for field in (
+                "executable_identity_digest",
+                "toolchain_identity_digest",
+            ):
+                shared_records[1][field] = shared_records[0][field]
+            validate_repository_registration(shared_claims, repository_root=root)
+
+    def test_v4_identity_shape_privacy_and_digest_syntax_fail_closed(
+        self,
+    ) -> None:
+        private_marker = "private-toolchain-shape-marker"
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside = self._repository(temporary)
+            cases: list[tuple[str, dict[str, object]]] = []
+
+            for field in ("kind", "attestation_source", "identities"):
+                payload = self._v4_payload()
+                del payload["executable_toolchain_identities"][field]
+                cases.append((f"missing-block-{field}", payload))
+
+            extra_block = self._v4_payload()
+            extra_block["executable_toolchain_identities"][private_marker] = (
+                private_marker
+            )
+            cases.append(("extra-block-field", extra_block))
+
+            for field in (
+                "kind",
+                "command_id",
+                "command_digest",
+                "executable_identity_digest",
+                "toolchain_identity_digest",
+            ):
+                payload = self._v4_payload()
+                del payload["executable_toolchain_identities"]["identities"][0][
+                    field
+                ]
+                cases.append((f"missing-identity-{field}", payload))
+
+            for forbidden in (
+                "PATH",
+                "argv",
+                "complete",
+                "content_digest",
+                "declared_executable_kind",
+                "declared_executable_ref",
+                "env",
+                "message",
+                "output",
+                "output_digest",
+                "package_name",
+                "package_version",
+                "path",
+                "reason",
+                "resolved_path",
+                "stderr",
+                "stdout",
+                "timestamp",
+                "trusted",
+                "verified",
+                "version_output",
+            ):
+                payload = self._v4_payload()
+                payload["executable_toolchain_identities"]["identities"][0][
+                    forbidden
+                ] = private_marker
+                cases.append((f"forbidden-{forbidden}", payload))
+
+            wrong_block_kind = self._v4_payload()
+            wrong_block_kind["executable_toolchain_identities"]["kind"] = (
+                private_marker
+            )
+            cases.append(("wrong-block-kind", wrong_block_kind))
+            wrong_source = self._v4_payload()
+            wrong_source["executable_toolchain_identities"][
+                "attestation_source"
+            ] = private_marker
+            cases.append(("wrong-attestation-source", wrong_source))
+            for field, value in (
+                ("kind", True),
+                ("command_id", True),
+                ("command_id", [private_marker]),
+            ):
+                payload = self._v4_payload()
+                payload["executable_toolchain_identities"]["identities"][0][
+                    field
+                ] = value
+                cases.append((f"identity-{field}-{type(value).__name__}", payload))
+
+            for case, value in (
+                ("block-null", None),
+                ("block-list", []),
+                ("block-string", private_marker),
+            ):
+                payload = self._v4_payload()
+                payload["executable_toolchain_identities"] = value
+                cases.append((case, payload))
+            for case, value in (
+                ("identities-null", None),
+                ("identities-object", {}),
+                ("identities-string", private_marker),
+            ):
+                payload = self._v4_payload()
+                payload["executable_toolchain_identities"]["identities"] = value
+                cases.append((case, payload))
+            scalar_identity = self._v4_payload()
+            scalar_identity["executable_toolchain_identities"]["identities"][
+                0
+            ] = private_marker
+            cases.append(("scalar-identity", scalar_identity))
+
+            invalid_digests: tuple[tuple[str, object], ...] = (
+                ("prefixless", "0" * 64),
+                ("uppercase", "sha256:" + "A" * 64),
+                ("short", "sha256:" + "0" * 63),
+                ("trailing-newline", "sha256:" + "0" * 64 + "\n"),
+                ("wrong-algorithm", "sha512:" + "0" * 64),
+                ("boolean", True),
+                ("float", 1.0),
+            )
+            schema_v4 = json.loads(
+                REGISTRATION_SCHEMA_V4.read_text(encoding="utf-8")
+            )
+            for field in (
+                "command_digest",
+                "executable_identity_digest",
+                "toolchain_identity_digest",
+            ):
+                for case, value in invalid_digests:
+                    payload = self._v4_payload()
+                    payload["executable_toolchain_identities"]["identities"][0][
+                        field
+                    ] = value
+                    self.assertFalse(
+                        validate_instance(payload, schema_v4).valid
+                    )
+                    cases.append((f"{field}-{case}", payload))
+
+            for case, payload in cases:
+                with self.subTest(case=case):
+                    self._assert_invalid(
+                        root,
+                        payload,
+                        private_marker=private_marker,
+                    )
 
     def test_v3_baseline_coverage_order_and_command_digests_are_exact(
         self,
@@ -1084,6 +1722,65 @@ class RepositoryRegistrationTests(unittest.TestCase):
             )
             self._assert_invalid(root, too_many)
 
+    def test_v4_executable_toolchain_identity_coverage_is_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside = self._repository(temporary)
+            payload = self._v2_payload()
+            payload["schema_version"] = 4
+            for kind in ("format", "lint", "type_check", "test", "build"):
+                payload["verification_commands"][kind] = [
+                    {
+                        "command_id": f"{kind.replace('_', '-')}-{index:02d}",
+                        "argv": [
+                            "python3",
+                            "--version",
+                            f"private-{kind}-{index:02d}",
+                        ],
+                        "cwd": ".",
+                    }
+                    for index in range(16)
+                ]
+            payload["baseline_command_results"] = self._baseline_for_payload(
+                payload
+            )
+            payload["executable_toolchain_identities"] = (
+                self._executable_toolchain_identities_for_payload(payload)
+            )
+
+            schema_v4 = json.loads(
+                REGISTRATION_SCHEMA_V4.read_text(encoding="utf-8")
+            )
+            self.assertTrue(validate_instance(payload, schema_v4).valid)
+            registration = validate_repository_registration(
+                payload,
+                repository_root=root,
+            )
+            self.assertEqual(
+                registration.to_evidence()[
+                    "executable_toolchain_identity_count"
+                ],
+                80,
+            )
+            self.assertEqual(
+                len(
+                    registration.to_canonical()[
+                        "executable_toolchain_identities"
+                    ]["identities"]
+                ),
+                80,
+            )
+
+            too_many = deepcopy(payload)
+            too_many["executable_toolchain_identities"]["identities"].append(
+                deepcopy(
+                    too_many["executable_toolchain_identities"]["identities"][
+                        0
+                    ]
+                )
+            )
+            self.assertFalse(validate_instance(too_many, schema_v4).valid)
+            self._assert_invalid(root, too_many)
+
     def test_v3_baseline_hostile_collections_and_typed_forgery_fail_closed(
         self,
     ) -> None:
@@ -1173,6 +1870,205 @@ class RepositoryRegistrationTests(unittest.TestCase):
             self.assertEqual(
                 revalidate_repository_registration(registration),
                 registration,
+            )
+
+    def test_v4_identity_hostile_collections_and_typed_forgery_fail_closed(
+        self,
+    ) -> None:
+        private_marker = "private-toolchain-hook-marker"
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside = self._repository(temporary)
+            hook = Path(temporary) / "private-toolchain-hook-ran"
+
+            class ExplodingList(list[object]):
+                def __iter__(self):
+                    hook.write_text(private_marker, encoding="utf-8")
+                    raise AssertionError("caller list hook must not run")
+
+            class ExplodingDict(dict[str, object]):
+                def items(self):
+                    hook.write_text(private_marker, encoding="utf-8")
+                    raise AssertionError("caller mapping hook must not run")
+
+            class ExplodingString(str):
+                def __str__(self):
+                    hook.write_text(private_marker, encoding="utf-8")
+                    raise AssertionError("caller string hook must not run")
+
+            hostile_payloads = []
+            hostile_block = self._v4_payload()
+            hostile_block["executable_toolchain_identities"] = ExplodingDict(
+                hostile_block["executable_toolchain_identities"]
+            )
+            hostile_payloads.append(hostile_block)
+
+            hostile_identities = self._v4_payload()
+            hostile_identities["executable_toolchain_identities"][
+                "identities"
+            ] = ExplodingList(
+                hostile_identities["executable_toolchain_identities"][
+                    "identities"
+                ]
+            )
+            hostile_payloads.append(hostile_identities)
+
+            hostile_identity = self._v4_payload()
+            hostile_identity["executable_toolchain_identities"]["identities"][
+                0
+            ] = ExplodingDict(
+                hostile_identity["executable_toolchain_identities"][
+                    "identities"
+                ][0]
+            )
+            hostile_payloads.append(hostile_identity)
+
+            hostile_digest = self._v4_payload()
+            hostile_digest["executable_toolchain_identities"]["identities"][0][
+                "executable_identity_digest"
+            ] = ExplodingString("sha256:" + "a" * 64)
+            hostile_payloads.append(hostile_digest)
+
+            for payload in hostile_payloads:
+                self._assert_invalid(
+                    root,
+                    payload,
+                    private_marker=private_marker,
+                )
+            self.assertFalse(hook.exists())
+
+            registration = validate_repository_registration(
+                self._v4_payload(),
+                repository_root=root,
+            )
+            identities = registration.executable_toolchain_identities
+            self.assertIsInstance(identities, ExecutableToolchainIdentities)
+            self.assertIsInstance(
+                identities.identities[0],
+                ExecutableToolchainIdentity,
+            )
+            self.assertEqual(
+                revalidate_repository_registration(registration),
+                registration,
+            )
+
+            forged_missing = replace(
+                registration,
+                executable_toolchain_identities=None,
+            )
+            with self.assertRaisesRegex(
+                ValidationError,
+                FIXED_VALIDATION_ERROR,
+            ):
+                revalidate_repository_registration(forged_missing)
+
+            for schema_version, legacy_payload in (
+                (1, self._payload()),
+                (2, self._v2_payload()),
+                (3, self._v3_payload()),
+            ):
+                with self.subTest(forged_schema_version=schema_version):
+                    legacy_registration = validate_repository_registration(
+                        legacy_payload,
+                        repository_root=root,
+                    )
+                    forged_legacy = replace(
+                        legacy_registration,
+                        executable_toolchain_identities=identities,
+                    )
+                    with self.assertRaisesRegex(
+                        ValidationError,
+                        FIXED_VALIDATION_ERROR,
+                    ):
+                        revalidate_repository_registration(forged_legacy)
+
+            for field, value in (
+                ("command_digest", "sha256:" + "0" * 64),
+                ("declared_executable_kind", "repository_relative"),
+                ("declared_executable_ref", "sha256:" + "0" * 64),
+                ("executable_identity_digest", "sha256:" + "A" * 64),
+                ("toolchain_identity_digest", "sha256:" + "A" * 64),
+            ):
+                with self.subTest(forged_identity_field=field):
+                    forged_identity = replace(
+                        identities.identities[0],
+                        **{field: value},
+                    )
+                    forged_record = replace(
+                        registration,
+                        executable_toolchain_identities=replace(
+                            identities,
+                            identities=(
+                                forged_identity,
+                                *identities.identities[1:],
+                            ),
+                        ),
+                    )
+                    with self.assertRaisesRegex(
+                        ValidationError,
+                        FIXED_VALIDATION_ERROR,
+                    ):
+                        revalidate_repository_registration(forged_record)
+
+            for field in (
+                "repository_ref",
+                "verification_commands_digest",
+                "baseline_command_results_digest",
+            ):
+                with self.subTest(forged_identity_block_field=field):
+                    forged_block = replace(
+                        registration,
+                        executable_toolchain_identities=replace(
+                            identities,
+                            **{field: "sha256:" + "0" * 64},
+                        ),
+                    )
+                    with self.assertRaisesRegex(
+                        ValidationError,
+                        FIXED_VALIDATION_ERROR,
+                    ):
+                        revalidate_repository_registration(forged_block)
+
+            empty_argv_command = replace(
+                registration.verification_commands.format[0],
+                argv=(),
+            )
+            forged_empty_argv = replace(
+                registration,
+                verification_commands=replace(
+                    registration.verification_commands,
+                    format=(empty_argv_command,),
+                ),
+            )
+            with self.assertRaisesRegex(
+                ValidationError,
+                FIXED_VALIDATION_ERROR,
+            ):
+                revalidate_repository_registration(forged_empty_argv)
+
+            forged_baseline = replace(
+                registration,
+                baseline_command_results=replace(
+                    registration.baseline_command_results,
+                    snapshot_digest="sha256:" + "c" * 64,
+                ),
+            )
+            with self.assertRaisesRegex(
+                ValidationError,
+                FIXED_VALIDATION_ERROR,
+            ):
+                revalidate_repository_registration(forged_baseline)
+
+            payload = self._v4_payload()
+            immutable = validate_repository_registration(
+                payload,
+                repository_root=root,
+            )
+            payload["executable_toolchain_identities"]["identities"][0][
+                "command_id"
+            ] = private_marker
+            self.assertEqual(
+                revalidate_repository_registration(immutable),
+                immutable,
             )
 
     def test_repository_identity_and_set_like_paths_are_digest_stable(
@@ -2215,13 +3111,16 @@ class RepositoryRegistrationTests(unittest.TestCase):
             schema_v1 = schemas / REGISTRATION_SCHEMA.name
             schema_v2 = schemas / REGISTRATION_SCHEMA_V2.name
             schema_v3 = schemas / REGISTRATION_SCHEMA_V3.name
+            schema_v4 = schemas / REGISTRATION_SCHEMA_V4.name
             schema_v1.write_bytes(REGISTRATION_SCHEMA.read_bytes())
             schema_v2.write_bytes(REGISTRATION_SCHEMA_V2.read_bytes())
             schema_v3.write_bytes(REGISTRATION_SCHEMA_V3.read_bytes())
+            schema_v4.write_bytes(REGISTRATION_SCHEMA_V4.read_bytes())
 
             path_v1 = configuration / "registration-v1.json"
             path_v2 = configuration / "registration-v2.json"
             path_v3 = configuration / "registration-v3.json"
+            path_v4 = configuration / "registration-v4.json"
             path_v1.write_text(
                 json.dumps(self._payload(), sort_keys=True),
                 encoding="utf-8",
@@ -2234,50 +3133,54 @@ class RepositoryRegistrationTests(unittest.TestCase):
                 json.dumps(self._v3_payload(), sort_keys=True),
                 encoding="utf-8",
             )
+            path_v4.write_text(
+                json.dumps(self._v4_payload(), sort_keys=True),
+                encoding="utf-8",
+            )
 
-            loaded_v1 = load_repository_registration(
-                path_v1,
-                repository_root=root,
-            )
-            loaded_v2 = load_repository_registration(
-                path_v2,
-                repository_root=root,
-            )
-            loaded_v3 = load_repository_registration(
-                path_v3,
-                repository_root=root,
-            )
-            self.assertEqual(loaded_v1.schema_version, 1)
-            self.assertEqual(loaded_v2.schema_version, 2)
-            self.assertEqual(loaded_v3.schema_version, 3)
-
-            for case, path, schema in (
-                ("v1-with-v2", path_v1, schema_v2),
-                ("v1-with-v3", path_v1, schema_v3),
-                ("v2-with-v1", path_v2, schema_v1),
-                ("v2-with-v3", path_v2, schema_v3),
-                ("v3-with-v1", path_v3, schema_v1),
-                ("v3-with-v2", path_v3, schema_v2),
-            ):
-                with self.subTest(case=case):
-                    with self.assertRaisesRegex(
-                        ConfigurationError,
-                        FIXED_VALIDATION_ERROR,
-                    ):
+            paths = {1: path_v1, 2: path_v2, 3: path_v3, 4: path_v4}
+            schema_paths = {
+                1: schema_v1,
+                2: schema_v2,
+                3: schema_v3,
+                4: schema_v4,
+            }
+            for version, path in paths.items():
+                with self.subTest(version=version):
+                    self.assertEqual(
                         load_repository_registration(
                             path,
                             repository_root=root,
-                            definition_schema_path=schema,
-                        )
+                        ).schema_version,
+                        version,
+                    )
+
+            for payload_version, path in paths.items():
+                for schema_version, schema in schema_paths.items():
+                    if payload_version == schema_version:
+                        continue
+                    with self.subTest(
+                        payload_version=payload_version,
+                        schema_version=schema_version,
+                    ):
+                        with self.assertRaisesRegex(
+                            ConfigurationError,
+                            FIXED_VALIDATION_ERROR,
+                        ):
+                            load_repository_registration(
+                                path,
+                                repository_root=root,
+                                definition_schema_path=schema,
+                            )
 
             for case, version in (
                 ("boolean", True),
-                ("float", 3.0),
-                ("string", "3"),
-                ("unsupported", 4),
+                ("float", 4.0),
+                ("string", "4"),
+                ("unsupported", 5),
             ):
                 with self.subTest(case=case):
-                    unsupported = self._v3_payload()
+                    unsupported = self._v4_payload()
                     unsupported["schema_version"] = version
                     unsupported_path = configuration / f"{case}.json"
                     unsupported_path.write_text(
@@ -2292,6 +3195,23 @@ class RepositoryRegistrationTests(unittest.TestCase):
                             unsupported_path,
                             repository_root=root,
                         )
+
+            schema_v4.unlink()
+            with self.assertRaisesRegex(
+                ConfigurationError,
+                "repository registration schema could not be loaded",
+            ):
+                load_repository_registration(
+                    path_v4,
+                    repository_root=root,
+                )
+            self.assertEqual(
+                load_repository_registration(
+                    path_v3,
+                    repository_root=root,
+                ).schema_version,
+                3,
+            )
 
             schema_v3.unlink()
             with self.assertRaisesRegex(
@@ -2345,15 +3265,42 @@ class RepositoryRegistrationTests(unittest.TestCase):
                     side_effect=AssertionError("validation must not start a process"),
                 ) as popen,
                 patch.object(
+                    subprocess,
+                    "call",
+                    side_effect=AssertionError("validation must not call a process"),
+                ) as call,
+                patch.object(
+                    subprocess,
+                    "check_call",
+                    side_effect=AssertionError("validation must not call a process"),
+                ) as check_call,
+                patch.object(
+                    subprocess,
+                    "check_output",
+                    side_effect=AssertionError("validation must not read output"),
+                ) as check_output,
+                patch.object(
                     asyncio,
                     "create_subprocess_exec",
                     side_effect=AssertionError("validation must not start a worker"),
                 ) as create_subprocess,
                 patch.object(
+                    asyncio,
+                    "create_subprocess_shell",
+                    side_effect=AssertionError("validation must not use a shell"),
+                ) as create_subprocess_shell,
+                patch.object(
                     os,
                     "system",
                     side_effect=AssertionError("validation must not use a shell"),
                 ) as system,
+                patch.object(
+                    shutil,
+                    "which",
+                    side_effect=AssertionError(
+                        "validation must not resolve a bare executable"
+                    ),
+                ) as which,
                 patch.object(
                     Path,
                     "mkdir",
@@ -2410,6 +3357,16 @@ class RepositoryRegistrationTests(unittest.TestCase):
                 evidence_v3 = fresh_repository_registration_evidence(
                     registration_v3
                 )
+                registration_v4 = validate_repository_registration(
+                    self._v4_payload(),
+                    repository_root=root,
+                )
+                refreshed_v4 = revalidate_repository_registration(
+                    registration_v4
+                )
+                evidence_v4 = fresh_repository_registration_evidence(
+                    registration_v4
+                )
                 loaded = load_repository_registration(
                     registration_path,
                     repository_root=root,
@@ -2429,11 +3386,27 @@ class RepositoryRegistrationTests(unittest.TestCase):
             self.assertEqual(evidence_v3["schema_version"], 3)
             self.assertFalse(evidence_v3["baseline_authenticity_verified"])
             self.assertFalse(evidence_v3["baseline_freshness_verified"])
+            self.assertEqual(refreshed_v4, registration_v4)
+            self.assertEqual(evidence_v4["schema_version"], 4)
+            for false_fact in (
+                "executable_toolchain_authenticity_verified",
+                "executable_toolchain_content_verified",
+                "executable_toolchain_execution_correspondence_verified",
+                "executable_toolchain_freshness_verified",
+                "executable_toolchain_resolution_verified",
+                "toolchain_completeness_verified",
+            ):
+                self.assertIs(evidence_v4[false_fact], False)
             for observed in (
                 run,
                 popen,
+                call,
+                check_call,
+                check_output,
                 create_subprocess,
+                create_subprocess_shell,
                 system,
+                which,
                 mkdir,
                 write_text,
                 write_bytes,

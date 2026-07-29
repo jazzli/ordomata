@@ -281,6 +281,45 @@ class RepositoryProposalTests(unittest.TestCase):
         return payload
 
     @classmethod
+    def _registration_v4_payload(cls) -> dict[str, object]:
+        payload = cls._registration_v3_payload()
+        payload["schema_version"] = 4
+        identities: list[dict[str, object]] = []
+        for kind in ("format", "lint", "type_check", "test", "build"):
+            for command in payload["verification_commands"][kind]:
+                command_id = command["command_id"]
+                identities.append(
+                    {
+                        "kind": kind,
+                        "command_id": command_id,
+                        "command_digest": cls._registration_command_digest(
+                            kind,
+                            command,
+                        ),
+                        "executable_identity_digest": canonical_digest(
+                            {
+                                "claimed_executable_identity": (
+                                    f"{kind}:{command_id}"
+                                )
+                            }
+                        ),
+                        "toolchain_identity_digest": canonical_digest(
+                            {
+                                "claimed_toolchain_identity": (
+                                    f"{kind}:{command_id}"
+                                )
+                            }
+                        ),
+                    }
+                )
+        payload["executable_toolchain_identities"] = {
+            "kind": "repository_executable_toolchain_identities",
+            "attestation_source": "controller_supplied",
+            "identities": identities,
+        }
+        return payload
+
+    @classmethod
     def _registration(
         cls,
         root: Path,
@@ -1040,10 +1079,10 @@ class RepositoryProposalTests(unittest.TestCase):
                     self.assertEqual(len(state.list_events(run.run_id)), 1)
         self.assertEqual(invoked, [])
 
-    def test_registration_schema_v2_and_v3_are_not_bindable_to_v1_lineage(
+    def test_registration_schema_v2_through_v4_are_not_bindable_to_v1_lineage(
         self,
     ) -> None:
-        for schema_version in (2, 3):
+        for schema_version in (2, 3, 4):
             with (
                 self.subTest(schema_version=schema_version),
                 tempfile.TemporaryDirectory() as temporary,
@@ -1055,8 +1094,10 @@ class RepositoryProposalTests(unittest.TestCase):
                     payload["schema_version"] = 2
                     payload["path_policy"]["generated_paths"] = []
                     payload["path_policy"]["vendor_paths"] = []
-                else:
+                elif schema_version == 3:
                     payload = self._registration_v3_payload()
+                else:
+                    payload = self._registration_v4_payload()
                 registration = self._registration(root, payload=payload)
 
                 with SQLiteStateStore(base / "state.sqlite3") as state:

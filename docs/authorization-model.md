@@ -189,8 +189,8 @@ Policy activation, Git/remote publication, deployment, and other shared effects
 remain separate unimplemented typed actions whose exact resource version and
 digest must receive fresh authorization and any required approval.
 
-The repository-registration boundary preserves frozen schema v1 and adds
-separate schemas v2 and v3. Its pure read-only validator dispatches on an exact
+The repository-registration boundary preserves frozen schemas v1 through v3
+and adds separate schema v4. Its pure read-only validator dispatches on an exact
 integer version and validates a controller-supplied ordinary Git
 root, stable repository/filesystem references, exact argv-array (not shell-
 text) verification declarations, canonical protected/allowed paths with
@@ -225,6 +225,29 @@ remain absent. These facts cannot satisfy
 an authorization, freshness, containment, command, execution, or action-receipt
 predicate.
 
+Schema v4 adds bounded executable/toolchain identity claims as descriptive PIP
+input. Every declared command has exactly one kind-, identifier-, and command-
+digest-linked claim carrying opaque executable and toolchain identity digests.
+The controller derives a syntax-only declared-executable reference bound to the
+exact command context and binds the canonical aggregate to the repository,
+complete verification-command set, and exact v3 baseline aggregate. This is
+context binding, not provenance: the opaque digests have no standardized or
+trusted preimage, and the baseline link proves only co-declaration, not that the
+observed process used those bytes. Cross-context transplantation can validate
+but changes the aggregate; same-context replay remains indistinguishable.
+
+V4 evidence exposes only the fixed controller-supplied source, aggregate digest,
+and bounded count, with authenticity, freshness, resolution, content,
+toolchain completeness, and execution correspondence all explicitly false. It
+contains no individual identity or declared-executable reference. The v4
+identity-block validator adds no PATH, PATHEXT, environment, runtime-cwd,
+executable metadata or content, symlink, shebang, interpreter, launcher,
+module, plugin, dynamic-loader, package, or version inspection and does not
+execute a command. Existing registration root and repository-relative path/
+executable safety checks are unchanged. These facts cannot satisfy an ABAC
+attribute, authorization, command PEP, action receipt, or Class 2/3 effect;
+only Class 0/1 remains enabled.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -254,9 +277,9 @@ SQLite migration, run creation or status transition, worktree, Git/command/
 process invocation, worker or supervisor dispatch, route/profile selection,
 billing/capacity/circuit fact, harness call, or live eligibility. The frozen
 registration schema-v1 evidence meaning remains the only version accepted by
-this proposal chain. Schema-v2 and schema-v3 registrations fail before any
-event append. Executable resolution and executable/toolchain identity or
-content attestation remain deferred.
+this proposal chain. Schema-v2 through schema-v4 registrations fail before any
+event append. Trusted executable resolution, content and completeness
+attestation, and execution receipts remain deferred.
 
 The third slice is the library-only `ordomata.repository_proposal_inspection`
 API `inspect_repository_proposal_evidence(database_path, *, run_id)`. It
@@ -367,10 +390,14 @@ ABAC attribute, permission, execution fact, or effect. Schemas v1 and v2 retain
 their exact canonical and evidence meanings, and proposal evidence remains
 v1-only.
 
-The next recommended bounded slice is pure schema/validator support for
-controller-supplied executable/toolchain identity attestations in schema v4,
-still without resolution, execution, authorization, or proposal-lineage
-widening.
+The eighth bounded Phase 3 slice adds the schema-v4 opaque executable/toolchain
+identity-claim contract described above. It establishes no authenticated
+identity, current freshness, resolution, content, complete toolchain,
+execution fact, ABAC attribute, permission, or effect. Frozen schemas v1
+through v3 retain their exact canonical and evidence meanings, and proposal
+evidence remains v1-only. Trusted controller-owned resolution and content-
+manifest receipts remain a separate future boundary before execution or
+proposal-lineage widening.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
@@ -698,10 +725,13 @@ violation, not an instruction to follow.
 4. **Partly implemented; continuous mediation planned — typed contracts.** The
    first task effect is typed independently of `PermissionClass`, the supervisor
    has focused flow and controller-bookkeeping shadow attributes, and the
-   frozen schema-v1 and separate schema-v2/schema-v3 repository-registration
-   contracts produce digest-only, no-authority validation evidence; v3 baseline
+   frozen schema-v1 through schema-v3 and separate schema-v4 repository-
+   registration contracts produce digest-only, no-authority validation
+   evidence; v3 baseline
    evidence is aggregate-only and explicitly unauthenticated and not freshness-
-   verified. Controller-owned
+   verified, while v4 identity evidence is aggregate-only with authenticity,
+   freshness, resolution, content, completeness, and execution correspondence
+   explicitly false. Controller-owned
    durable repository-registration selection and proposal-attempt binding remain
    pinned to v1 evidence and are implemented as two content-addressed,
    statusless PIP events for the fixed dispatch-disabled sentinel run.
