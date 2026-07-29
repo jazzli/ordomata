@@ -138,10 +138,42 @@ parallel because it cannot exercise worker authority.
   no SQLite migration; and creates no run/status transition, worktree, command,
   worker, supervisor dispatch, authorization, billing/route change, or live
   eligibility.
-- The next recommended bounded slice is an independent read-only repository-
-  proposal evidence inspector for exact cardinality, ordering, digest/replay,
-  durable-run/component linkage, disabled semantics, and privacy-safe findings,
-  still with no repair, worktree, command, worker, authorization, or dispatch.
+- Independent single-run repository-proposal inspection is implemented in the
+  library-only `ordomata.repository_proposal_inspection` API
+  `inspect_repository_proposal_evidence(database_path, *, run_id)`. Its
+  privacy-bounded `RepositoryProposalInspectionReport` fixes
+  `inspection_scope: "single_run"` and reports `clean`, `coverage`,
+  `truncated`, a capped event count, permission class/current status, optional
+  validated proposal/registration/repository references and version, optional
+  selection/binding digests and sequences, and bounded fixed-code findings.
+  Its mapping also fixes read-only inspection/validation, no repair, disabled
+  dispatch, and no granted authority, and reports evidence completeness and
+  finding count.
+  Only exact `CREATED`-only or `CREATED`-plus-selection prefixes are incomplete;
+  the exact clean three-event chain is complete; all other histories are
+  invalid. `clean` requires complete, untruncated, finding-free evidence, while
+  more than four events sets `truncated` because the capped inspection cannot
+  cover the history.
+  One result proves only its caller-named run, never the whole database.
+- Inspection stages the exact signed main file and optional WAL into owner-
+  private temporary storage under a fixed controller-owned 512 MiB combined
+  ceiling; oversized state fails before copy. A no-WAL snapshot opens through
+  an immutable read-only URI, while an in-budget WAL pair opens read-only.
+  SQLite opens only the staged identity, and before/after source signatures
+  detect concurrent changes. One query-only SQLite snapshot independently
+  replays cardinality/order, digests, durable-run/component/proposal linkage,
+  and fixed disabled/no-authority semantics; creates no source schema or
+  sidecars; performs no repair or live-filesystem registration revalidation;
+  and emits no raw identifiers, SQLite diagnostics, paths, argv, proposal or
+  registration content, workspace/run-directory values, or artifact content.
+  It is not an external tamper anchor and has no run/status/event,
+  authorization, worktree, Git/command/process, worker/supervisor, routing,
+  billing/capacity/circuit, harness/network, dispatch, or live effect.
+- The next recommended bounded slice is a controller-owned, non-enforcing
+  repository-proposal admission ABAC shadow bound only to clean, complete
+  inspection evidence and fixed Class 0/1 attributes/policy. It still grants no
+  authority and creates no repository, command, worker, route, billing, or
+  dispatch effect.
 - Extend the three durable enforcing decision/action-receipt chains beyond the
   narrow profile-backed built-in-mock admission, dispatch, and publication
   boundaries only after semantics and parity stabilize.

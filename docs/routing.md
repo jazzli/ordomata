@@ -160,11 +160,47 @@ proposal content, path, argv, workspace, run directory, or artifact content.
 They create no worktree, Git/command/process invocation, or worker. Baseline
 results and generated/vendor exclusions remain deferred.
 
-The next recommended bounded slice is an independent read-only repository-
-proposal evidence inspector for exact cardinality/order, content-addressed
-digest and component-link replay, durable-run linkage, fixed disabled
-semantics, and privacy-safe findings, with no repair, worktree, command, worker,
-authorization, route, billing, or dispatch effect.
+The third slice is the library-only `ordomata.repository_proposal_inspection`
+API `inspect_repository_proposal_evidence(database_path, *, run_id)`. Its
+privacy-bounded `RepositoryProposalInspectionReport` fixes
+`inspection_scope: "single_run"` and exposes `run_ref`, permission class,
+current status, `clean`, `coverage`, `truncated`, capped event count, optional
+validated proposal/registration/repository references and version, optional
+selection/binding digests and sequences, and bounded fixed-code findings. Its
+mapping also fixes read-only inspection/validation, no repair, disabled
+dispatch, and no granted authority, and reports evidence completeness and
+finding count. An exact protocol-recoverable `CREATED`-only or
+`CREATED`-plus-selection evidence prefix is incomplete; only the exact clean three-event
+chain is complete; every other history is invalid. `clean` requires complete,
+untruncated, finding-free
+evidence. More than four events sets `truncated` because the capped inspection
+cannot cover the history, and one result never claims whole-database coverage.
+
+The exact signed main file and optional WAL are staged into owner-private
+temporary storage under a fixed controller-owned 512 MiB combined ceiling;
+oversized state fails before copy. A no-WAL snapshot opens through an immutable
+read-only URI, while an in-budget WAL pair opens read-only. SQLite opens only
+the staged identity, and before/after source signatures detect concurrent
+changes. One query-only SQLite snapshot independently replays
+cardinality/order, content-addressed identifiers and canonical
+payload digests, durable-run, proposal, and registration-component links, and
+fixed Class 0/1, runner, `CREATED`, read-only, dispatch-disabled, and
+no-authority facts. It never instantiates `SQLiteStateStore`, creates source
+schema or sidecars, repairs state, revalidates registration against the live
+filesystem, or acts as an external tamper anchor. Fixed findings and errors
+expose no raw identifiers, SQLite diagnostics, paths, argv, registration or
+proposal content, workspace/run-directory values, or artifact content.
+
+A clean inspection cannot alter candidates, rank or choose a profile, make
+billing/capacity evidence eligible, satisfy a live gate, or enable dispatch.
+Inspection creates no source database/schema/sidecar or migration and persists
+no run/status/event or authorization evidence. It creates no worktree and
+performs no Git/command/process invocation, worker/supervisor dispatch, route,
+billing, harness/network, or live effect. The next recommended bounded slice is
+a controller-owned, non-enforcing repository-proposal admission ABAC shadow
+bound only to clean, complete inspection evidence and fixed Class 0/1
+attributes/policy, still with no authority or repository, command, worker,
+route, billing, or dispatch effect.
 
 ## Adaptive promoted-profile routing (target)
 
