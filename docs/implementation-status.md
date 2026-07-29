@@ -215,6 +215,33 @@ package, or version inspection and executes nothing. Existing registration
 root and repository-relative path/executable safety checks are unchanged.
 Frozen schemas v1 through v3 retain their exact meanings.
 
+Implemented separately, the library-only
+`ordomata.repository_executable_resolution` schema-v1 receipt accepts only a
+freshly revalidated exact schema-v4 registration. Its fixed
+`controller_measured` / `posix_nofollow_v1` resolver searches bare executable
+names only in at most 32 explicit controller-supplied absolute directories;
+ambient `PATH`, empty or relative entries, implicit cwd, and suffix expansion
+are absent. Slash-containing declarations initially require `cwd: "."` and
+resolve from the registered repository root. Pinned directory descriptors,
+exact-spelling and no-follow lookup, descriptor-relative traversal, complete
+direct-file hashing, metadata/namespace/search-precedence rechecks, and final
+registration revalidation reject symlinks, special or sparse files, missing
+execute bits, and detected drift/races. Measurements are bounded to 64 MiB per
+unique file and 256 MiB total.
+
+The receipt binds the exact registration, repository, command, baseline,
+schema-v4 opaque-identity aggregate, and resolution-context digests. Evidence
+exposes only aggregate digests and bounded measurement, unique-file, and byte
+counts. It is point-in-time and non-reusable, with current freshness,
+authenticity/provenance, effective invocability, interpreter and dependency
+coverage, toolchain completeness, repository-snapshot/baseline correspondence,
+and future execution correspondence all false. Authority, dispatch, action-
+receipt status, persistence, route/billing/capacity facts, live eligibility,
+CLI exposure, and execution are also absent. Evidence fixes
+`sequential_resolution_measurement_complete: true` and
+`atomic_snapshot_verified: false`; completion describes the sequential
+measurement only, not an atomic filesystem snapshot.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -239,7 +266,8 @@ action receipt, worktree, Git/subprocess/command invocation, worker or
 supervisor dispatch, profile route, billing/capacity/circuit change, harness
 call, or live eligibility. The proposal chain remains pinned to frozen
 registration evidence v1 and rejects v2 through v4 before any event append.
-Trusted executable resolution, content and toolchain-completeness receipts, and
+The separate executable-resolution receipt is not proposal evidence and does
+not widen this chain. Complete interpreter/dependency/toolchain manifests and
 future `shell=False` execution remain deferred. Only Class 0/1 effects remain
 enabled.
 
@@ -355,10 +383,17 @@ The eighth bounded Phase 3 slice is the schema-v4 opaque executable/toolchain
 identity-claim contract described above. It performs no additional resolution,
 stat or content inspection, dependency discovery, command execution,
 persistence, repair, worker, route, billing, network, harness, dispatch,
-authority, or live effect. Frozen schemas v1 through v3 retain their exact canonical/evidence
-meanings, and proposal lineage remains v1-only. Trusted resolution and content-
-manifest receipts remain a separate future boundary before execution or
-proposal-lineage widening.
+authority, or live effect. Frozen schemas v1 through v3 retain their exact
+canonical/evidence meanings, and proposal lineage remains v1-only.
+
+The ninth bounded Phase 3 slice is the separate schema-v1 executable-resolution
+receipt described above. It freshly revalidates only schema v4, measures direct
+`argv[0]` files under bounded descriptor-based
+`controller_measured` / `posix_nofollow_v1` semantics, and emits aggregate-only
+point-in-time evidence. It changes no registration schema or proposal lineage
+and adds no persistence, authority, dispatch, action receipt, route, billing,
+live eligibility, or execution. Complete interpreter/dependency manifests,
+action-time remeasurement, and execution remain future boundaries.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and

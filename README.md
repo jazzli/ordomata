@@ -61,6 +61,10 @@ records.
   Chief-of-Staff attempts, including canonical candidates, fixed rejection
   codes, raw metric tiers, policy/profile/configuration refs, and the selected
   overrides digest;
+- pure repository-registration validation for frozen schemas v1 through v4,
+  plus the separate library-only schema-v1 direct-executable resolver that
+  freshly revalidates exact v4 and returns only bounded, sequential,
+  aggregate evidence without authority or execution;
 - controller-owned, dispatch-disabled repository-proposal evidence: the
   `bind_repository_proposal_attempt` library API freshly revalidates one
   registration, requires an explicit canonical proposal digest for an existing
@@ -258,6 +262,34 @@ remains pure: it creates no run, state/event record, authorization, worktree,
 command, worker, route, or live-model eligibility and authorizes or executes
 nothing.
 
+The separate library-only
+`ordomata.repository_executable_resolution` API implements a schema-v1 direct-
+executable measurement receipt. It accepts only an exact schema-v4 registration,
+freshly revalidates it, and uses the fixed `controller_measured` source and
+`posix_nofollow_v1` scope. Bare executable names are resolved only through at
+most 32 controller-supplied absolute search directories; ambient `PATH`, empty
+or relative entries, suffix expansion, and current-directory fallback are
+absent. A slash-containing `argv[0]` initially requires command `cwd` to be `.`
+and resolves from the registered repository root. Directory descriptors,
+descriptor-relative traversal, exact entry spelling, no-follow opens, complete
+bounded reads, metadata comparison, namespace reopen, and final registration
+revalidation bind each direct file to its command and resolution context.
+Symlinks, special files, sparse files, missing execute bits, and detected
+drift/races fail closed. Measurement is capped at 64 MiB per unique file and
+256 MiB in total.
+
+The outward projection exposes only aggregate receipt/context digests and
+bounded measurement, unique-file, and byte counts. It fixes
+`sequential_resolution_measurement_complete: true` and
+`atomic_snapshot_verified: false`: the point-in-time receipt is sequential and
+non-reusable, not an atomic filesystem snapshot. Current freshness,
+authenticity or provenance, effective
+invocability, shebang/interpreter/launcher and dependency coverage, toolchain
+completeness, repository-snapshot or baseline correspondence, and future
+execution correspondence remain false. It grants no authority, dispatch,
+action receipt, route, billing/capacity fact, or live eligibility and adds no
+CLI, persistence, subprocess, or execution path.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -288,9 +320,10 @@ authorization decision or action receipt, worktree, Git or subprocess call,
 worker or supervisor dispatch, profile route, billing/capacity/circuit fact, or
 live eligibility. Proposal lineage remains pinned to frozen registration
 evidence v1, so schema-v2 through schema-v4 registrations fail before any
-proposal event append. Trusted executable resolution, content and toolchain-
-completeness receipts, and any future `shell=False` action-boundary execution
-remain deferred. Only Class 0/1 effects remain enabled.
+proposal event append. The separate point-in-time executable-resolution receipt
+is not proposal evidence and does not widen that lineage. Complete interpreter,
+dependency, and toolchain manifests plus any future `shell=False` action-
+boundary execution remain deferred. Only Class 0/1 effects remain enabled.
 
 The third slice is the library-only `ordomata.repository_proposal_inspection`
 API `inspect_repository_proposal_evidence(database_path, *, run_id)`. It
@@ -419,9 +452,15 @@ correspondence explicitly false. It performs no additional identity lookup or
 inspection and no execution, persistence, dispatch, authorization, or live
 effect. Existing registration path-safety checks remain unchanged. Frozen schemas v1
 through v3 retain their exact meanings, and proposal evidence remains v1-only.
-Trusted controller-owned resolution and content-manifest receipts remain a
-separate future boundary; they must precede any command execution or proposal-
-lineage widening.
+
+The ninth bounded Phase 3 slice is the separate schema-v1 executable-resolution
+receipt described above. It freshly revalidates only schema v4 and measures the
+direct `argv[0]` files under bounded explicit search roots and descriptor-based
+`controller_measured` / `posix_nofollow_v1` semantics. Aggregate-only evidence
+is point-in-time and non-reusable; it creates no authority, persistence,
+proposal lineage, command execution, route, billing, or live effect. Complete
+interpreter and dependency/toolchain coverage, action-time remeasurement, and
+execution remain future boundaries.
 
 ## Quick start
 

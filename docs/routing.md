@@ -167,6 +167,30 @@ symlink, shebang, interpreter, launcher, module, plugin, loader, package, or
 version inspection and executes nothing. Existing registration root and
 repository-relative path/executable safety checks are unchanged.
 
+The separate library-only schema-v1 receipt in
+`ordomata.repository_executable_resolution` now freshly revalidates only an
+exact schema-v4 registration and measures its direct `argv[0]` files under the
+fixed `controller_measured` / `posix_nofollow_v1` profile. Bare names search
+only at most 32 ordered controller-supplied absolute directories; there is no
+ambient `PATH`, empty/relative entry, implicit cwd, or suffix expansion. Slash-
+containing declarations initially require `cwd: "."` and resolve from the
+registered repository root. Pinned directory descriptors, no-follow
+descriptor-relative lookup, complete file hashing, metadata/namespace/
+precedence rechecks, and final registration revalidation reject symlinks,
+special or sparse files, missing execute bits, and detected drift/races. The
+content limits are 64 MiB per unique file and 256 MiB total.
+
+Receipt evidence is aggregate-only and fixes
+`sequential_resolution_measurement_complete: true` with
+`atomic_snapshot_verified: false`. It is a sequential, point-in-time,
+non-reusable observation, not an atomic filesystem snapshot. It does
+not verify current freshness, provenance/authenticity, effective invocability,
+interpreter or dependency identity, complete toolchain, repository-snapshot or
+baseline correspondence, or future execution correspondence. In particular,
+it is not route/profile eligibility, authorization, dispatch, action-receipt,
+billing/capacity, circuit, or live-run evidence and creates no CLI,
+persistence, subprocess, or execution path.
+
 The separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` API records a
 **repository-registration selection**, not an execution-profile or model
@@ -295,9 +319,15 @@ identity-claim contract described above. It adds no executable resolution,
 content or dependency-chain inspection, command execution, route choice, or
 establish eligibility or authority. Frozen schemas v1 through v3 retain their
 prior meanings, proposal lineage remains v1-only, and only Class 0/1 effects
-remain enabled. Trusted controller-owned resolution and content-manifest
-receipts remain a separate future boundary before routing consumption,
-execution, or proposal-lineage widening.
+remain enabled.
+
+The ninth bounded Phase 3 slice adds the separate schema-v1 direct-executable
+receipt described above. Its fresh schema-v4 revalidation and bounded
+descriptor measurement produce only aggregate, point-in-time, non-reusable PIP
+evidence. Routing cannot consume it as eligibility, and it changes no
+registration schema, proposal lineage, persistence, authority, billing, live
+gate, or execution path. Complete interpreter/dependency manifests, action-
+time remeasurement, and execution remain future boundaries.
 
 ## Adaptive promoted-profile routing (target)
 

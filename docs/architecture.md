@@ -560,9 +560,11 @@ baseline digest, bounded result count, and
 `baseline_authenticity_verified: false` plus
 `baseline_freshness_verified: false`; it exposes neither the snapshot nor
 individual observations. Bare executable resolution and
-executable/toolchain content attestation, and future `shell=False` action-
-boundary execution remain deferred. The validator remains pure, has no CLI or
-sample registration, creates no state, and authorizes or executes nothing.
+executable/toolchain content attestation are not properties of this validator;
+the separate direct-file measurement receipt described below does not change
+those v3 facts. Future `shell=False` action-boundary execution remains deferred.
+The validator remains pure, has no CLI or sample registration, creates no
+state, and authorizes or executes nothing.
 
 Schema v4 preserves the v3 baseline contract and adds one bounded
 controller-supplied executable/toolchain identity claim for every declared
@@ -590,6 +592,34 @@ loader, package, or version inspection and executes nothing. Existing
 registration root and repository-relative path/executable safety checks are
 unchanged. These claims are descriptive PIP input, never authorization or an
 action receipt.
+
+The separate library-only
+`ordomata.repository_executable_resolution.resolve_repository_executables`
+boundary produces an independently versioned schema-v1 receipt. It rejects
+registration schemas v1 through v3 before inspecting resolution inputs,
+freshly revalidates exact schema v4, and binds the registration, repository,
+verification-command, baseline, opaque-identity aggregate, and resolution-
+context digests. Its fixed source/scope pair is `controller_measured` and
+`posix_nofollow_v1`. Bare names use only bounded, ordered, controller-supplied
+absolute search directories; ambient `PATH`, relative or empty entries,
+implicit cwd, and suffix expansion are excluded. Slash-containing declarations
+initially require `cwd: "."` and resolve from the registered repository root.
+
+Resolution pins directories, walks repository-relative components by
+descriptor, rejects symlinks and non-regular, non-executable, or sparse
+entries, hashes the complete selected direct file, and rechecks metadata,
+namespace selection, search precedence, directory identity, and the
+registration. Per-unique-file and aggregate content limits are 64 MiB and
+256 MiB. These checks reject detected drift/races; they do not establish an
+atomic view of a mutable filesystem. Evidence exposes only aggregate digests
+and bounded counts and fixes `sequential_resolution_measurement_complete: true`
+with `atomic_snapshot_verified: false`. The receipt is point-in-time and
+non-reusable: it verifies neither current
+freshness, provenance/authenticity, effective invocability, interpreter or
+dependency identity, toolchain completeness, repository-snapshot/baseline
+correspondence, nor future execution correspondence. It is not authority, an
+action receipt, routing or billing evidence, or live eligibility and adds no
+CLI, persistence, subprocess, or execution path.
 
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
@@ -728,9 +758,15 @@ discovery, command execution, persistence, repair, worker, route, billing,
 network, harness,
 dispatch, authority, or live effect. Frozen schemas v1 through v3 retain their
 prior canonical and evidence meanings, and proposal lineage remains v1-only.
-Trusted resolution and content-manifest receipts remain a separate future
-boundary before execution or proposal-lineage widening. Only Class 0/1 effects
-remain enabled.
+
+The ninth bounded Phase 3 slice is the separate schema-v1 direct-executable
+resolution receipt described above. It measures direct `argv[0]` bytes for a
+fresh exact schema-v4 registration under bounded explicit search roots and
+descriptor-based `controller_measured` / `posix_nofollow_v1` semantics. Its
+aggregate evidence is point-in-time, non-reusable, non-authorizing, and outside
+proposal lineage. Complete interpreter, dependency, and toolchain manifests,
+action-time remeasurement, and execution remain future boundaries. Only Class
+0/1 effects remain enabled.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor
