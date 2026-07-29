@@ -132,17 +132,39 @@ The standalone schema-v1 repository-registration contract and pure read-only
 validator are implemented. They validate a controller-supplied ordinary Git
 root, stable repository/filesystem references, exact verification argv-array
 (not shell-text) declarations, canonical protected/allowed paths, bounded
-resource limits, fixed local-
-container/network-disabled isolation, and patch-only review policy, then return
-digest-only evidence that declares `dispatch_enabled: false` and
-`authority_granted: false`. They do not participate in profile selection,
-create routing or run evidence, invoke Git, a subprocess, or a worker, enable
-supervisor dispatch, or change live-route eligibility. Baseline results and
-generated/vendor exclusions remain deferred.
+resource limits, fixed local-container/network-disabled isolation, and patch-
+only review policy, then return digest-only evidence declaring
+`dispatch_enabled: false` and `authority_granted: false`. The validator remains
+pure and creates no state.
 
-The next recommended bounded slice is controller-owned registration selection
-and digest-only attempt binding for a dispatch-disabled repository proposal,
-with exact durable readback but still no worktree, command, worker, or authority.
+The separate
+`ordomata.repository_proposal.bind_repository_proposal_attempt` API records a
+**repository-registration selection**, not an execution-profile or model
+selection. For an existing immutable Class 0/1
+`repository-proposal-disabled` run with only its initial `CREATED` status, it
+freshly revalidates one registration, requires an explicit canonical
+`proposal_digest`, and appends the content-addressed, statusless
+`repository_registration_selection` event followed by the content-addressed,
+statusless `repository_proposal_attempt_binding` event. Each append atomically
+requires current status `CREATED` and the exact ordered predecessor event IDs.
+Commit failures roll back before reconciliation, and the exact identifiers,
+payloads, order, links, and status must read back from one consistent SQLite
+snapshot before the API succeeds.
+
+These events are proposal lineage, not routing or admission evidence. They
+cannot change route candidates, score or choose a profile, make billing or
+capacity evidence eligible, satisfy a live gate, authorize a command, or enable
+supervisor dispatch. They reuse existing `run_events`, add no SQLite migration
+or run creation/status transition, and persist no registration body or raw
+proposal content, path, argv, workspace, run directory, or artifact content.
+They create no worktree, Git/command/process invocation, or worker. Baseline
+results and generated/vendor exclusions remain deferred.
+
+The next recommended bounded slice is an independent read-only repository-
+proposal evidence inspector for exact cardinality/order, content-addressed
+digest and component-link replay, durable-run linkage, fixed disabled
+semantics, and privacy-safe findings, with no repair, worktree, command, worker,
+authorization, route, billing, or dispatch effect.
 
 ## Adaptive promoted-profile routing (target)
 

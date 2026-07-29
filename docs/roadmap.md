@@ -114,20 +114,34 @@ parallel because it cannot exercise worker authority.
   histories retain their frozen meanings.
 - The standalone schema-v1 repository-registration contract and pure read-only
   validator are implemented. They derive stable repository/filesystem
-  references from a controller-supplied ordinary Git root; validate exact argv-array
-  (not shell-text) verification declarations, canonical protected/allowed
-  paths, bounded resource
-  limits, fixed local-container/network-disabled isolation, and patch-only
-  review policy; and return digest-only evidence that explicitly grants no
-  authority or dispatch. Mandatory `.git`, `.ordomata`, and `.agentops`
-  protection plus traversal/symlink rejection fail closed. There is no CLI,
-  persistence, attempt binding, worktree, command, worker, supervisor dispatch,
-  billing change, or live-route change. Baselines and generated/vendor
-  exclusions remain deferred.
-- The next recommended bounded slice is controller-owned registration selection
-  and digest-only attempt binding for a dispatch-disabled repository proposal,
-  with exact durable readback but still no worktree, command, worker, or
-  authority.
+  references from a controller-supplied ordinary Git root; validate exact argv-
+  array (not shell-text) verification declarations, canonical protected/
+  allowed paths, bounded resource limits, fixed local-container/network-
+  disabled isolation, and patch-only review policy; and return digest-only
+  evidence that explicitly grants no authority or dispatch. Mandatory `.git`,
+  `.ordomata`, and `.agentops` protection plus traversal/symlink rejection fail
+  closed. The validator remains pure and creates no state. Baselines and
+  generated/vendor exclusions remain deferred.
+- Controller-owned repository-proposal evidence is also implemented. For an
+  existing immutable Class 0/1 `repository-proposal-disabled` run with only its
+  initial `CREATED` event,
+  `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
+  revalidates one registration, requires an explicit canonical proposal
+  digest, appends a content-addressed, statusless
+  `repository_registration_selection` event followed by a content-addressed,
+  statusless `repository_proposal_attempt_binding`, and requires exact
+  readback from one consistent SQLite snapshot. Each append atomically requires
+  current status `CREATED` and the exact ordered predecessor event IDs; commit
+  failures roll back before reconciliation. It reuses existing `run_events`;
+  persists no registration body or raw proposal content, path, argv, workspace,
+  run directory, identifier, or artifact content; adds
+  no SQLite migration; and creates no run/status transition, worktree, command,
+  worker, supervisor dispatch, authorization, billing/route change, or live
+  eligibility.
+- The next recommended bounded slice is an independent read-only repository-
+  proposal evidence inspector for exact cardinality, ordering, digest/replay,
+  durable-run/component linkage, disabled semantics, and privacy-safe findings,
+  still with no repair, worktree, command, worker, authorization, or dispatch.
 - Extend the three durable enforcing decision/action-receipt chains beyond the
   narrow profile-backed built-in-mock admission, dispatch, and publication
   boundaries only after semantics and parity stabilize.
@@ -190,6 +204,14 @@ not implement a repository
 worker, live model loop, subprocess execution, network access, Class 2/3
 actions, or OS scheduling, so Phase 2 is not complete.
 
+The implemented repository-proposal selection and binding records are inert
+PIP lineage for an existing `CREATED` sentinel run. Each append atomically
+requires that status and the exact ordered predecessor event IDs, then one
+consistent snapshot proves exact readback. The records store only a canonical
+`proposal_digest`, never raw proposal content. They do not satisfy repository
+containment, worker admission, command authorization, or dispatch
+prerequisites.
+
 Start with machine-verifiable, low-risk work in isolated Git worktrees:
 
 1. formatting-only fixes;
@@ -199,7 +221,11 @@ Start with machine-verifiable, low-risk work in isolated Git worktrees:
 5. evidence-backed bug fixes;
 6. bounded repository housekeeping.
 
-Each repository registration records authoritative commands, baseline failures, protected paths, resource limits, and a review-only branch/PR policy. A run must prove no outside-worktree writes and no false green.
+Each completed repository registration will record controller-validated command
+declarations, baseline failures, protected paths, resource limits, and a
+review-only branch/PR policy. Those declarations are configuration inputs, not
+authority to execute. A future worker run must prove no outside-worktree writes
+and no false green.
 
 Worker cells use a pluggable isolation contract and observed pre/post
 attestation. Once containment is proven, an implementer may use a general

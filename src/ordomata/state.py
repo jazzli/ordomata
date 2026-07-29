@@ -187,6 +187,15 @@ class RunEventRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class RunStateSnapshot:
+    """One transactionally consistent read of a run and its event history."""
+
+    run: RunRecord
+    events: tuple[RunEventRecord, ...]
+    current_status: RunStatus
+
+
+@dataclass(frozen=True, slots=True)
 class ArtifactRecord:
     """Immutable metadata pointing at an artifact; content is not persisted."""
 
@@ -890,14 +899,35 @@ class SQLiteStateStore:
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
         with self._lock:
+            if self._connection.in_transaction:
+                raise StateStoreError("state connection already has an open transaction")
             self._connection.execute("BEGIN IMMEDIATE")
             try:
                 yield self._connection
             except BaseException:
-                self._connection.rollback()
+                self._discard_open_transaction()
                 raise
-            else:
+            try:
                 self._connection.commit()
+            except BaseException:
+                self._discard_open_transaction()
+                raise
+
+    def _discard_open_transaction(self) -> None:
+        """Best-effort rollback that never leaves readable uncommitted state."""
+
+        try:
+            if not self._connection.in_transaction:
+                return
+            self._connection.rollback()
+            if not self._connection.in_transaction:
+                return
+        except BaseException:
+            pass
+        try:
+            self._connection.close()
+        except BaseException:
+            pass
 
     @staticmethod
     def _baseline_schema() -> str:
@@ -1221,6 +1251,57 @@ class SQLiteStateStore:
     ) -> RunEventRecord:
         """Append an event, validating status transitions inside one transaction."""
 
+        return self._append_event(
+            run_id,
+            event_type,
+            payload,
+            status=status,
+            event_id=event_id,
+            occurred_at=occurred_at,
+            unique_event_type=False,
+        )
+
+    def append_event_once(
+        self,
+        run_id: str,
+        event_type: str,
+        payload: Any | None = None,
+        *,
+        status: RunStatus | None = None,
+        event_id: str | None = None,
+        occurred_at: float | None = None,
+        required_current_status: RunStatus | None = None,
+        required_event_ids: tuple[str, ...] | None = None,
+    ) -> RunEventRecord:
+        """Append once under optional status and exact-history preconditions."""
+
+        return self._append_event(
+            run_id,
+            event_type,
+            payload,
+            status=status,
+            event_id=event_id,
+            occurred_at=occurred_at,
+            unique_event_type=True,
+            required_current_status=required_current_status,
+            required_event_ids=required_event_ids,
+        )
+
+    def _append_event(
+        self,
+        run_id: str,
+        event_type: str,
+        payload: Any | None,
+        *,
+        status: RunStatus | None,
+        event_id: str | None,
+        occurred_at: float | None,
+        unique_event_type: bool,
+        required_current_status: RunStatus | None = None,
+        required_event_ids: tuple[str, ...] | None = None,
+    ) -> RunEventRecord:
+        """Append one validated event under the requested cardinality rule."""
+
         _validate_text(run_id, "run_id")
         _validate_text(event_type, "event_type", maximum=256)
         selected_event_id = event_id or uuid4().hex
@@ -1229,12 +1310,67 @@ class SQLiteStateStore:
         timestamp = self._now(occurred_at)
         if status is not None and not isinstance(status, RunStatus):
             raise ValidationError("status must be a RunStatus")
+        if required_current_status is not None and not isinstance(
+            required_current_status,
+            RunStatus,
+        ):
+            raise ValidationError("required_current_status must be a RunStatus")
+        if required_event_ids is not None:
+            if type(required_event_ids) is not tuple or any(
+                type(required_event_id) is not str
+                for required_event_id in required_event_ids
+            ):
+                raise ValidationError("required_event_ids must be a tuple of strings")
+            for required_event_id in required_event_ids:
+                _validate_text(required_event_id, "required_event_id")
 
         with self._transaction() as connection:
             if connection.execute(
                 "SELECT 1 FROM runs WHERE run_id = ?", (run_id,)
             ).fetchone() is None:
                 raise RecordNotFoundError(f"run not found: {run_id}")
+            if required_current_status is not None:
+                current = connection.execute(
+                    """
+                    SELECT status FROM run_events
+                    WHERE run_id = ? AND status IS NOT NULL
+                    ORDER BY sequence DESC LIMIT 1
+                    """,
+                    (run_id,),
+                ).fetchone()
+                if (
+                    current is None
+                    or RunStatus(current["status"]) is not required_current_status
+                ):
+                    raise InvalidStateTransition(
+                        "required current run status is not satisfied"
+                    )
+            if required_event_ids is not None:
+                current_event_ids = tuple(
+                    row["event_id"]
+                    for row in connection.execute(
+                        """
+                        SELECT event_id FROM run_events
+                        WHERE run_id = ? ORDER BY sequence
+                        """,
+                        (run_id,),
+                    ).fetchall()
+                )
+                if current_event_ids != required_event_ids:
+                    raise InvalidStateTransition(
+                        "required prior run event history is not satisfied"
+                    )
+            if unique_event_type and connection.execute(
+                """
+                SELECT 1 FROM run_events
+                WHERE run_id = ? AND event_type = ?
+                LIMIT 1
+                """,
+                (run_id, event_type),
+            ).fetchone() is not None:
+                raise DuplicateRecordError(
+                    f"event type already exists for run: {event_type}"
+                )
             if status is not None:
                 current = connection.execute(
                     """
@@ -1303,6 +1439,56 @@ class SQLiteStateStore:
                 (run_id,),
             ).fetchall()
         return tuple(self._event_from_row(row) for row in rows)
+
+    def get_run_snapshot(self, run_id: str) -> RunStateSnapshot:
+        """Read one immutable run and its ordered events in one SQLite snapshot."""
+
+        _validate_text(run_id, "run_id")
+        with self._lock:
+            if self._connection.in_transaction:
+                raise StateStoreError(
+                    "cannot read a durable snapshot from an open transaction"
+                )
+            self._connection.execute("BEGIN")
+            try:
+                run_row = self._connection.execute(
+                    "SELECT * FROM runs WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+                if run_row is None:
+                    raise RecordNotFoundError(f"run not found: {run_id}")
+                event_rows = self._connection.execute(
+                    """
+                    SELECT * FROM run_events
+                    WHERE run_id = ? ORDER BY sequence
+                    """,
+                    (run_id,),
+                ).fetchall()
+            except BaseException:
+                self._discard_open_transaction()
+                raise
+            else:
+                try:
+                    self._connection.rollback()
+                except BaseException:
+                    self._discard_open_transaction()
+                    raise
+                if self._connection.in_transaction:
+                    self._discard_open_transaction()
+                    raise StateStoreError(
+                        "state snapshot transaction could not be closed"
+                    )
+        events = tuple(self._event_from_row(row) for row in event_rows)
+        statuses = tuple(
+            event.status for event in events if event.status is not None
+        )
+        if not statuses:
+            raise StateStoreError(f"run has no status event: {run_id}")
+        return RunStateSnapshot(
+            run=self._run_from_row(run_row),
+            events=events,
+            current_status=statuses[-1],
+        )
 
     def append_artifact(self, record: ArtifactRecord) -> ArtifactRecord:
         """Append safe artifact metadata without reading or storing its content."""
@@ -2516,6 +2702,7 @@ __all__ = [
     "RecordNotFoundError",
     "RunEventRecord",
     "RunRecord",
+    "RunStateSnapshot",
     "SQLiteStateStore",
     "SQLiteBillingCircuitGuard",
     "ScheduleClaimRecord",

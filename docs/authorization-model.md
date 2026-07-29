@@ -189,24 +189,52 @@ Policy activation, Git/remote publication, deployment, and other shared effects
 remain separate unimplemented typed actions whose exact resource version and
 digest must receive fresh authorization and any required approval.
 
-The first repository-registration slice now provides a standalone versioned
-schema and pure read-only validator. It validates a controller-supplied ordinary
-Git root, stable repository/filesystem references, exact argv-array
-(not shell-text) verification declarations, canonical protected/allowed paths with
+The first repository-registration slice provides a standalone versioned schema
+and pure read-only validator. It validates a controller-supplied ordinary Git
+root, stable repository/filesystem references, exact argv-array (not shell-
+text) verification declarations, canonical protected/allowed paths with
 mandatory Git and Ordomata state protection, bounded resource limits, a fixed
-local-container/network-disabled
-isolation requirement, and a patch-only review policy. Traversal and symlink
-escapes fail closed. The resulting privacy-bounded evidence contains only
-bounded digest references, version metadata, and fixed declarations that
-validation is read-only, dispatch is disabled, and no authority is granted. It
-is a PIP input, not a permit: there is no state/event integration, task/attempt
-binding, authorization change, worktree, command, worker, supervisor dispatch,
-billing change, or live-route change. Baseline command results and generated/
-vendor exclusions remain deferred.
+local-container/network-disabled isolation requirement, and a patch-only
+review policy. Traversal and symlink escapes fail closed. The resulting
+privacy-bounded evidence contains only bounded digest references, version
+metadata, and fixed declarations that validation is read-only, dispatch is
+disabled, and no authority is granted. The validator remains a pure PIP
+collector: it creates no state and is not a permit.
 
-The next recommended bounded slice is controller-owned registration selection
-and digest-only attempt binding for a dispatch-disabled repository proposal,
-with exact durable readback but still no worktree, command, worker, or authority.
+The separate second slice records that PIP evidence for a dispatch-disabled
+repository proposal. The controller API
+`ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
+revalidates one registration, requires an explicit canonical
+`proposal_digest`, and accepts only an existing immutable Class 0/1
+`repository-proposal-disabled` run that remains exactly `CREATED`, then exactly
+reads back one content-addressed, statusless
+`repository_registration_selection` event followed by one content-addressed,
+statusless `repository_proposal_attempt_binding` event. The first records the
+controller-owned selection; the second links its evidence and component digests
+plus the proposal digest to privacy-safe references for immutable proposal-
+attempt facts. Each append atomically requires current status `CREATED` and the
+exact ordered predecessor event IDs; no raw proposal content is stored. Commit
+failure rolls back before reconciliation, and final proof uses one consistent
+SQLite snapshot. The selection itself commits the proposal digest, and the
+binding repeats it so a selection-only recovery cannot change proposal content.
+Both fix `validation_mode: "read_only"`,
+`dispatch_enabled: false`, and `authority_granted: false` semantics.
+
+These records are PIP provenance only. In particular,
+`repository_proposal_attempt_binding` is not the authoritative
+`task_attempt_authorization_binding`, does not contain or imply a PDP decision,
+and establishes no task-admission, execute, publication, command, or tool PEP.
+Exact durable readback proves only that the local evidence was stored as
+expected; it is not an action receipt or grant. The evidence layer adds no
+SQLite migration, run creation or status transition, worktree, Git/command/
+process invocation, worker or supervisor dispatch, route/profile selection,
+billing/capacity/circuit fact, harness call, or live eligibility. Baseline
+command results and generated/vendor exclusions remain deferred.
+
+The next recommended bounded slice is an independent read-only repository-
+proposal evidence inspector for one-and-only-one coverage, order, digest and
+linkage replay, fixed disabled semantics, and privacy-safe reporting, with no
+repair, worktree, command, worker, authorization, or dispatch.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
@@ -535,11 +563,14 @@ violation, not an instruction to follow.
    first task effect is typed independently of `PermissionClass`, the supervisor
    has focused flow and controller-bookkeeping shadow attributes, and the
    standalone schema-v1 repository-registration contract produces digest-only,
-   no-authority validation evidence. Profile, durable repository selection and
-   binding, command, and tool coverage remains planned. Shadow mismatches are
-   recorded rather than rejected because the legacy class is still
-   authoritative. Once enforcement migrates, derive the compatibility class
-   from the request and mediate exact commands and tools at their point of use.
+   no-authority validation evidence. Controller-owned durable repository-
+   registration selection and proposal-attempt binding are now implemented as
+   two content-addressed, statusless PIP events for the fixed dispatch-disabled
+   sentinel run. Independent inspection, profile-resource authorization,
+   command, and tool coverage remain planned. Shadow mismatches are recorded
+   rather than rejected because the legacy class is still authoritative. Once
+   enforcement migrates, derive the compatibility class from the request and
+   mediate exact commands and tools at their point of use.
 5. **Planned with multi-agent flows.** Enforce versioned RBAC assignments,
    least-privilege delegation, and separation of duties. Children inherit only
    a strict subset of the parent's effective authority.
