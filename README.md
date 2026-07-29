@@ -76,6 +76,10 @@ records.
   inspector, evaluates only exact clean and complete Class 0/1 evidence against
   a fixed class-specific ABAC policy, and returns a privacy-safe, explicitly
   non-authoritative observation without persistence or effect;
+- independent, library-only admission-shadow verification: the
+  `verify_repository_proposal_admission_shadow_mapping` API validates a bounded
+  detached exact-dict snapshot with fixed value-free findings; internal
+  consistency is not authenticity, freshness, durable truth, or authority;
 - isolated per-run workspaces, wall timeouts, terminal-event checks, and output validation;
 - append-only SQLite runs, events, artifacts, capacity observations, billing circuits, scheduler claims, and expiring leases, with capacity checked inside the atomic dispatch reservation; baseline creation and exact legacy adoption are transactional, and every ordinary open verifies the frozen, contiguous v1-v4 migration prefix before use;
 - a versioned additive SQLite migration for a durable supervisor control-plane
@@ -314,11 +318,26 @@ and `obligations_enforced` to false. The API has no CLI or persistence path and
 creates no source state, event, durable authorization record, receipt,
 worktree, Git/subprocess/command invocation, worker or supervisor dispatch,
 route/profile choice, billing/capacity/circuit fact, harness/network action, or
-live eligibility. The next recommended bounded slice is a separate,
-library-only verifier that independently replays a supplied admission-shadow
-mapping into fixed privacy-safe findings while treating that mapping as
-untrusted evidence and still providing no authority, persistence, repair, or
-effect.
+live eligibility.
+
+The fifth slice is the library-only
+`ordomata.repository_proposal_admission_verification` API
+`verify_repository_proposal_admission_shadow_mapping(value)`. It accepts only
+an exact built-in `dict`, takes a bounded detached JSON snapshot, and
+independently mirrors the inspection contract. Evaluated inputs replay the
+Class 0/1 request, policy, manual expected decision, and captured built-in
+evaluator; inert inputs must match an exact state-machine branch, and a reported
+replay failure must still have a constructible replay boundary. It emits only
+fixed value-free findings. `contract_valid` proves internal consistency
+only: it establishes no authenticity, durable reinspection or source truth,
+current freshness, or authority. A coherent forgery or replay remains
+indistinguishable without a trusted anchor. Verification persists or repairs
+nothing, enforces or authorizes nothing, and has no worker, repository, command,
+route, billing, network, harness, dispatch, or live effect.
+
+The next recommended bounded slice is pure schema/validator support for
+generated/vendor exclusions in repository registrations, still with no
+execution or worker enablement.
 
 ## Quick start
 

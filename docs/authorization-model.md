@@ -306,11 +306,26 @@ durable decision or receipt, worktree, Git/command/process invocation, worker
 or supervisor dispatch, profile selection, billing/capacity/circuit fact,
 harness/network action, or live eligibility. It binds no raw repository path
 or identifier, argv, registration/proposal content, workspace/run-directory
-value, SQLite diagnostic, or artifact content. The next recommended bounded
-slice is a separate library-only verifier that treats a returned shadow
-mapping as untrusted input, independently replays its fixed contract into
-privacy-safe findings, and still grants no authority, persistence, repair, or
-effect.
+value, SQLite diagnostic, or artifact content.
+
+The separate fifth slice is the library-only
+`ordomata.repository_proposal_admission_verification` API
+`verify_repository_proposal_admission_shadow_mapping(value)`. It accepts only
+an exact built-in `dict`, snapshots it through bounded detached JSON, and
+independently mirrors the inspection contract. Evaluated inputs replay the
+class-specific Class 0/1 request/policy, manual expected decision, and captured
+evaluator; inert inputs must match an exact state-machine branch, and a reported
+replay failure must retain a constructible replay boundary. Fixed, value-free
+findings describe mismatches. `contract_valid` is only an internal-
+consistency result, not authenticity, durable reinspection or source truth,
+current freshness, authority, or a PIP/PDP/PEP decision. A coherent forgery or
+replay cannot be distinguished without a trusted anchor. The verifier persists
+or repairs nothing, enforces or authorizes nothing, and creates no worker,
+repository, command, route, billing, network, harness, dispatch, or live effect.
+
+The next recommended bounded slice is pure schema/validator support for
+generated/vendor exclusions in repository registrations, still with no
+execution or worker enablement.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
@@ -643,7 +658,8 @@ violation, not an instruction to follow.
    registration selection and proposal-attempt binding are now implemented as
    two content-addressed, statusless PIP events for the fixed dispatch-disabled
    sentinel run. Independent single-run inspection and a fresh-inspection,
-   non-authoritative Class 0/1 admission shadow are implemented;
+   non-authoritative Class 0/1 admission shadow are implemented, along with
+   independent value-free verification of an untrusted returned shadow mapping;
    profile-resource authorization, command, and tool coverage remain planned.
    Shadow mismatches are recorded
    rather than rejected because the legacy class is still authoritative. Once

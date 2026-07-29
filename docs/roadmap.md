@@ -188,10 +188,23 @@ parallel because it cannot exercise worker authority.
   authority, enforcement, persistence, admission/action, receipt, repair,
   dispatch, route, billing, and obligation-enforcement facts to false and no
   repository, command, worker, harness, network, or live effect occurs.
-- The next recommended bounded slice is a separate, library-only verifier for
-  an untrusted returned admission-shadow mapping. It should emit only fixed
-  privacy-safe replay findings and must not add persistence, repair,
-  enforcement, authority, worker enablement, or any repository/external effect.
+- Independent admission-shadow contract verification is implemented in the
+  library-only `ordomata.repository_proposal_admission_verification` API
+  `verify_repository_proposal_admission_shadow_mapping(value)`. It accepts only
+  an exact built-in `dict`, takes a bounded detached JSON snapshot, and mirrors
+  the inspection contract independently. Evaluated inputs replay the Class 0/1
+  request/policy, manual expected decision, and captured evaluator; inert inputs
+  must match an exact state-machine branch, and a reported replay failure must
+  retain a constructible replay boundary. Findings are fixed and value-free.
+  `contract_valid` proves internal consistency only, not authenticity,
+  durable reinspection/source truth, current freshness, or authority; a
+  coherent forgery or replay remains indistinguishable without a trusted
+  anchor. The verifier persists or repairs nothing, enforces or authorizes
+  nothing, and has no worker, repository, command, route, billing, network,
+  harness, dispatch, or live effect.
+- The next recommended bounded slice is pure schema/validator support for
+  generated/vendor exclusions in repository registrations, still with no
+  execution or worker enablement.
 - Extend the three durable enforcing decision/action-receipt chains beyond the
   narrow profile-backed built-in-mock admission, dispatch, and publication
   boundaries only after semantics and parity stabilize.

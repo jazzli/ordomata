@@ -235,11 +235,27 @@ and persists nothing; it creates no source state, event, durable decision or
 receipt, worktree, Git/command/process invocation, worker/supervisor dispatch,
 profile selection, billing/capacity/circuit fact, harness/network action, or
 live eligibility. It cannot satisfy route, capacity, identity,
-paid-continuation, environment, isolation, circuit, or live-gate evidence. The
-next recommended bounded slice is a separate, library-only verifier for an
-untrusted returned admission-shadow mapping that emits only fixed privacy-safe
-replay findings and adds no persistence, repair, authority, billing, routing,
-worker enablement, or effect.
+paid-continuation, environment, isolation, circuit, or live-gate evidence.
+
+The fifth slice is the library-only
+`ordomata.repository_proposal_admission_verification` API
+`verify_repository_proposal_admission_shadow_mapping(value)`. It accepts only
+an exact built-in `dict`, takes a bounded detached JSON snapshot, and
+independently mirrors the inspection contract. Evaluated inputs replay the
+Class 0/1 request, policy, manual expected decision, and captured evaluator;
+inert inputs must match an exact state-machine branch, and a reported replay
+failure must retain a constructible replay boundary. Findings remain fixed and
+value-free. `contract_valid` reports internal consistency only; it supplies no
+authenticity, durable reinspection or source truth, current freshness, billing
+or route evidence, or authority. A coherent forgery or replay remains
+indistinguishable without a trusted anchor. Verification persists or repairs
+nothing, enforces or authorizes nothing, and creates no worker, repository,
+command, route, billing, network, harness, dispatch, or live effect. It cannot
+satisfy any subscription or live-run prerequisite.
+
+The next recommended bounded slice is pure schema/validator support for
+generated/vendor exclusions in repository registrations, still with no
+execution or worker enablement.
 
 `compare-run` is an opt-in execution workflow, not a bypass. It requires the same live gate and current evidence for every selected profile before creating comparison records. Trials use one immutable sanitized Class 0 snapshot, randomized repetition blocks, fresh sessions and workspaces, no shared outputs, and no external actions. Reports expose raw automated dimensions and separate human-review fields; they do not declare a winner or auto-promote a profile.
 
