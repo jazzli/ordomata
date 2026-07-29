@@ -169,11 +169,29 @@ parallel because it cannot exercise worker authority.
   It is not an external tamper anchor and has no run/status/event,
   authorization, worktree, Git/command/process, worker/supervisor, routing,
   billing/capacity/circuit, harness/network, dispatch, or live effect.
-- The next recommended bounded slice is a controller-owned, non-enforcing
-  repository-proposal admission ABAC shadow bound only to clean, complete
-  inspection evidence and fixed Class 0/1 attributes/policy. It still grants no
-  authority and creates no repository, command, worker, route, billing, or
-  dispatch effect.
+- Controller-owned repository-proposal admission observation is implemented in
+  the library-only `ordomata.repository_proposal_admission` API
+  `evaluate_repository_proposal_admission_shadow(database_path, *, run_id,
+  evaluated_at)`. Each call freshly invokes the independent inspector and
+  accepts no supplied report, class, request, policy, or evaluator. Only a
+  clean, evidence-complete, complete, untruncated, finding-free exact
+  three-event Class 0/1 result is evaluated. Every nonclean result is inert:
+  `not_evaluated`, `indeterminate`, and contains no request, policy, or
+  decision.
+- Its fixed class-specific ABAC projection is exactly Class 0 local `READ`
+  observation with unenforced audit-receipt plus read-only obligations, or
+  Class 1 local `CREATE` nomination with unenforced audit-receipt plus
+  isolated-local-only obligations. The request digest-binds
+  the privacy-safe inspection mapping and validated lineage; the active shadow
+  result must match a captured built-in replay and the controller's expected
+  decision. Even an exact permit is observational only. The mapping fixes all
+  authority, enforcement, persistence, admission/action, receipt, repair,
+  dispatch, route, billing, and obligation-enforcement facts to false and no
+  repository, command, worker, harness, network, or live effect occurs.
+- The next recommended bounded slice is a separate, library-only verifier for
+  an untrusted returned admission-shadow mapping. It should emit only fixed
+  privacy-safe replay findings and must not add persistence, repair,
+  enforcement, authority, worker enablement, or any repository/external effect.
 - Extend the three durable enforcing decision/action-receipt chains beyond the
   narrow profile-backed built-in-mock admission, dispatch, and publication
   boundaries only after semantics and parity stabilize.

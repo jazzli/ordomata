@@ -203,11 +203,43 @@ performs no Git/command/process invocation, worker/supervisor dispatch,
 route/profile selection, billing assessment, capacity/circuit event,
 harness/network action, or live eligibility. A clean report cannot satisfy
 route, capacity, identity, paid-continuation, environment, isolation, circuit,
-or explicit live-gate prerequisites. The next recommended bounded slice is a
-controller-owned, non-enforcing repository-proposal admission ABAC shadow bound
-only to clean, complete inspection evidence and fixed Class 0/1
-attributes/policy, still with no authority or repository, command, worker,
-billing, route, or dispatch effect.
+or explicit live-gate prerequisites.
+
+The fourth slice is the controller-owned, library-only
+`ordomata.repository_proposal_admission` shadow. Its public API accepts only a
+durable database path, caller-named run, and controller evaluation time, then
+freshly invokes the independent inspector. It accepts no caller-supplied
+inspection report, class, authorization request, policy, or evaluator. Only a
+clean, evidence-complete, complete, untruncated, finding-free exact three-event
+Class 0/1 result reaches shadow evaluation. A nonclean result is
+`not_evaluated` and `indeterminate` with no request, policy, or decision; fixed
+failed/indeterminate results cover run-binding, evaluator, or replay failure.
+
+The fixed Class 0 projection is a local `READ` observation with a read-only
+operation/resource, class-specific policy, and unenforced audit-receipt plus
+read-only obligations. The fixed Class 1 projection is a local `CREATE`
+nomination with a local-draft operation/resource, class-specific policy, and
+unenforced audit-receipt plus isolated-local-only obligations.
+The request digest-binds the privacy-safe inspection mapping and validated
+lineage. The active evaluator and captured built-in replay must exactly match
+the controller's expected decision. Its environment is fixed to disabled
+network and `LOCAL_NON_AI`; capacity and paid-continuation fields are
+`NOT_APPLICABLE`, not evidence that can satisfy any subscription or live-run
+gate.
+
+An exact observational permit grants no authority and cannot select a billing
+lane, route, profile, or runner. The mapping fixes authority, enforcement,
+admission/action, receipt, evidence persistence, repair, dispatch, route,
+billing assessment, and obligation enforcement to false. The API has no CLI
+and persists nothing; it creates no source state, event, durable decision or
+receipt, worktree, Git/command/process invocation, worker/supervisor dispatch,
+profile selection, billing/capacity/circuit fact, harness/network action, or
+live eligibility. It cannot satisfy route, capacity, identity,
+paid-continuation, environment, isolation, circuit, or live-gate evidence. The
+next recommended bounded slice is a separate, library-only verifier for an
+untrusted returned admission-shadow mapping that emits only fixed privacy-safe
+replay findings and adds no persistence, repair, authority, billing, routing,
+worker enablement, or effect.
 
 `compare-run` is an opt-in execution workflow, not a bypass. It requires the same live gate and current evidence for every selected profile before creating comparison records. Trials use one immutable sanitized Class 0 snapshot, randomized repetition blocks, fresh sessions and workspaces, no shared outputs, and no external actions. Reports expose raw automated dimensions and separate human-review fields; they do not declare a winner or auto-promote a profile.
 

@@ -270,11 +270,47 @@ Inspection creates no source database/schema/sidecar or migration and persists
 no run, status, event, or authorization evidence. It creates no worktree and
 performs no Git/command/process invocation, worker or supervisor dispatch,
 route/profile selection, billing/capacity/circuit change, harness/network
-action, or live eligibility. The next recommended bounded slice is a
-controller-owned, non-enforcing repository-proposal admission ABAC shadow that
-binds only clean, complete inspection evidence to fixed Class 0/1 attributes
-and policy while granting no authority or repository, command, worker, route,
-billing, or dispatch effect.
+action, or live eligibility.
+
+The fourth slice is the controller-owned, library-only
+`ordomata.repository_proposal_admission` ABAC shadow. Its public evaluator
+accepts only a durable database path, caller-named run, and controller
+evaluation time and freshly calls the independent inspector. It accepts no
+caller-supplied report, permission class, authorization request, policy, or
+evaluator. Only a clean, evidence-complete, complete, untruncated,
+finding-free exact three-event Class 0/1 inspection reaches the PDP shadow.
+Every nonclean inspection is `not_evaluated` with no request, policy, or
+decision, an `indeterminate` effect, and the fixed
+`inspection_not_clean_complete` reason. Run-binding, evaluation, and exact
+replay failures are also inert failed/indeterminate results.
+
+The PIP-to-PDP projection is closed. Class 0 becomes the exact local `READ`
+observation and its fixed read-only operation, resource type, class-specific
+policy, and unenforced audit-receipt plus read-only obligations. Class 1 becomes
+the exact local `CREATE` nomination and its fixed local-draft operation,
+resource type, class-specific policy, and unenforced audit-receipt plus
+isolated-local-only obligations. Each policy enables only its one projected
+class and the controller role, local control-plane trust boundary, disabled
+network, and local non-AI route. The request binds a canonical digest of the
+privacy-safe inspection mapping and the validated proposal, registration,
+repository, selection, and binding lineage. Both the active shadow evaluator
+and a captured built-in replay must equal the controller's exact expected
+decision.
+
+A matching shadow `permit` and `shadow_eligible` value are observational only,
+not authorization or a PEP input. The mapping fixes authoritative decision,
+enforcement, authority, admission/action, receipt, evidence-persistence,
+repair, dispatch, route, billing, and obligation-enforcement facts to false.
+The API has no CLI and persists nothing; it creates no source state, event,
+durable decision or receipt, worktree, Git/command/process invocation, worker
+or supervisor dispatch, profile selection, billing/capacity/circuit fact,
+harness/network action, or live eligibility. It binds no raw repository path
+or identifier, argv, registration/proposal content, workspace/run-directory
+value, SQLite diagnostic, or artifact content. The next recommended bounded
+slice is a separate library-only verifier that treats a returned shadow
+mapping as untrusted input, independently replays its fixed contract into
+privacy-safe findings, and still grants no authority, persistence, repair, or
+effect.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
@@ -606,7 +642,8 @@ violation, not an instruction to follow.
    no-authority validation evidence. Controller-owned durable repository-
    registration selection and proposal-attempt binding are now implemented as
    two content-addressed, statusless PIP events for the fixed dispatch-disabled
-   sentinel run. Independent single-run inspection is implemented;
+   sentinel run. Independent single-run inspection and a fresh-inspection,
+   non-authoritative Class 0/1 admission shadow are implemented;
    profile-resource authorization, command, and tool coverage remain planned.
    Shadow mismatches are recorded
    rather than rejected because the legacy class is still authoritative. Once
