@@ -191,6 +191,48 @@ it is not route/profile eligibility, authorization, dispatch, action-receipt,
 billing/capacity, circuit, or live-run evidence and creates no CLI,
 persistence, subprocess, or execution path.
 
+The separate library-only schema-v1
+`ordomata.repository_executable_staging` boundary does not turn resolution
+evidence into a route. It accepts one exact typed expected resolver receipt
+and a new process-local lease under fixed `controller_copied` /
+`posix_unlinked_readonly_v1` semantics. Its action resolver pass rereads every unique
+source into immutable chunks through the same still-pinned descriptor and must
+equal the expected canonical receipt before the first filesystem mutation. A
+full post-stage resolver pass must equal both receipts. This detects ordinary
+source, namespace, registration, and search-precedence drift while continuing
+to deny atomic-snapshot and current-freshness claims.
+
+The caller-created staging root must be an exact concrete absolute, empty,
+no-follow, effective-user-owned mode-`0700` directory that does not overlap the
+repository or any search directory. V1 checks lexical containment and exact-
+root inode equality only; it does not verify exclusion of other mount aliases.
+The root is dedicated to one controller process and one lease, without
+concurrent use. Within the existing 64 MiB-per-unique-file and 256 MiB-total
+bounds, random zero-length mode-`0600` entries are created
+exclusively, opened, unlinked, and parent-fsynced before captured bytes are
+written. The anonymous inodes are hashed, fsynced, changed to non-executable
+mode `0400`, read back, and retained only by read-only close-on-exec
+descriptors after all writers close. The root is empty again before success.
+
+The staging receipt binds the expected/action/post-stage resolution and staged
+command/file correspondence, but outward evidence remains aggregate-only.
+Cleanup reports `removed`, `already_absent_verified`, or `unverifiable` and
+preserves still-verified handles on uncertainty without retrying an ambiguously
+closed descriptor number; it restores neither root timestamps nor
+physical media and proves no secure erasure.
+
+This temporary Class 1 local staging effect cannot choose or admit a profile,
+satisfy routing or subscription eligibility, or authorize a later action.
+Kernel/filesystem immutability, same-UID exclusion, ACL privacy, external-
+writer absence, atomicity, current freshness, future-execution correspondence,
+authority, authorization, action-receipt status, dispatch, durable control-
+plane persistence,
+proposal-lineage extension, billing, capacity, circuit, live eligibility, and
+execution remain false. It adds no CLI, state, proposal, runner, worker,
+subprocess, or harness integration. Same-UID adversarial interference is
+outside V1 protection; the lease must never be handed to or integrated with an
+untrusted same-UID worker.
+
 The separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` API records a
 **repository-registration selection**, not an execution-profile or model
@@ -326,8 +368,16 @@ receipt described above. Its fresh schema-v4 revalidation and bounded
 descriptor measurement produce only aggregate, point-in-time, non-reusable PIP
 evidence. Routing cannot consume it as eligibility, and it changes no
 registration schema, proposal lineage, persistence, authority, billing, live
-gate, or execution path. Complete interpreter/dependency manifests, action-
-time remeasurement, and execution remain future boundaries.
+gate, or execution path. The separate tenth slice supplies bounded action-
+boundary capture and staging; complete interpreter/dependency manifests and
+execution remain future boundaries.
+
+The tenth bounded Phase 3 slice adds the separate executable-staging lease
+described above. Its exact expected/action/post-stage correspondence and
+namespace-detached read-only descriptor copies remain local evidence only.
+They cannot enter candidate ranking, route eligibility, dispatch, billing,
+capacity, circuit, live-run, proposal-lineage, or execution decisions, and no
+CLI/state/runner path consumes them.
 
 ## Adaptive promoted-profile routing (target)
 

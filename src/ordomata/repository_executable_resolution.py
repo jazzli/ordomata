@@ -17,7 +17,7 @@ from pathlib import Path, PurePosixPath
 import re
 import stat
 import unicodedata
-from typing import Any
+from typing import Any, Callable
 
 from .authorization import canonical_digest
 from .errors import ValidationError
@@ -150,6 +150,12 @@ class _MeasuredFile:
     metadata_digest: str
     content_digest: str
     content_bytes: int
+
+
+_UniqueFileConsumer = Callable[
+    [int, os.stat_result, _MeasuredFile],
+    None,
+]
 
 
 def _measurement_projection(
@@ -894,6 +900,7 @@ def _resolve_repository_executables(
     registration: RepositoryRegistration,
     *,
     search_directories: Any,
+    unique_file_consumer: _UniqueFileConsumer | None = None,
 ) -> RepositoryExecutableResolutionReceipt:
     # The version gate deliberately precedes any repository or search-path
     # inspection.  Older registration schemas retain their exact semantics.
@@ -1046,6 +1053,12 @@ def _resolve_repository_executables(
                         file_metadata,
                         total_measured_bytes=total_measured_bytes,
                     )
+                    if unique_file_consumer is not None:
+                        unique_file_consumer(
+                            descriptor,
+                            file_metadata,
+                            measured,
+                        )
                     measured_files[file_identity] = measured
                     total_measured_bytes += measured.content_bytes
                 elif measured.metadata != _metadata_signature(file_metadata):
