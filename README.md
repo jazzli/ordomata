@@ -186,8 +186,9 @@ limited to Class 0/1 requests for the exact profile-backed controller-owned
 `MockRunner`, publication remains an owner-private Class 1 local write, and no
 live, shared, promotion, API, credit, overage, or cloud path is enabled.
 
-The repository-registration boundary now has a frozen schema-v1 contract and
-separate additive schema-v2 and schema-v3 contracts. The pure read-only
+The repository-registration boundary now has frozen schema-v1 through
+schema-v3 contracts and a separate additive schema-v4 contract. The pure read-
+only
 `repository_registration`
 validator accepts a controller-supplied ordinary Git root, derives stable
 repository and filesystem references, validates format, lint, type-check, test,
@@ -226,9 +227,36 @@ individual command results.
 The v3 validator checks internal structure and linkage only. It does not
 authenticate the supplied observations, compare their timestamps with the
 clock, recompute the snapshot, resolve an executable or toolchain, or establish
-reproducibility. The validator remains pure: it
-creates no run, state/event record, authorization, worktree, command, worker,
-route, or live-model eligibility and authorizes or executes nothing.
+reproducibility. Schema v4 preserves the v3 contract and additionally requires
+one controller-supplied executable/toolchain identity claim for every declared
+command. Each claim carries the exact command kind, identifier, and command
+digest plus opaque `executable_identity_digest` and
+`toolchain_identity_digest` values. Canonicalization follows declaration order
+and derives a syntax-only, command-context-bound declared-executable reference,
+the repository reference, the complete verification-command digest, and the
+exact baseline aggregate digest. These bindings make the resulting aggregate
+context-specific; they neither standardize nor verify the opaque digests'
+preimages or provenance. A claim block transplanted into another valid context
+can validate with a different aggregate, and same-context replay is
+indistinguishable. The baseline binding proves co-declaration only, not that the
+baseline process used the claimed executable or toolchain bytes.
+
+Schema-v4 evidence exposes only the fixed controller-supplied source, aggregate
+identity digest, and bounded identity count. It fixes
+`executable_toolchain_authenticity_verified`,
+`executable_toolchain_freshness_verified`,
+`executable_toolchain_resolution_verified`,
+`executable_toolchain_content_verified`, `toolchain_completeness_verified`, and
+`executable_toolchain_execution_correspondence_verified` to `false`. It exposes
+no individual identity, declared-executable reference, path, argv, environment,
+output, version, or package metadata. Validation of the v4 identity block adds
+no PATH or environment lookup, executable stat or content read, symlink or
+shebang inspection, interpreter, launcher, module, plugin, dynamic-loader, or
+package discovery and executes nothing. Existing registration root and
+repository-relative path/executable safety checks are unchanged. The validator
+remains pure: it creates no run, state/event record, authorization, worktree,
+command, worker, route, or live-model eligibility and authorizes or executes
+nothing.
 
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
@@ -259,10 +287,10 @@ no run or status transition,
 authorization decision or action receipt, worktree, Git or subprocess call,
 worker or supervisor dispatch, profile route, billing/capacity/circuit fact, or
 live eligibility. Proposal lineage remains pinned to frozen registration
-evidence v1, so schema-v2 and schema-v3 registrations fail before any proposal
-event append. Bare executable resolution and executable/toolchain content
-attestation, and any future `shell=False` action-boundary execution remain
-deferred.
+evidence v1, so schema-v2 through schema-v4 registrations fail before any
+proposal event append. Trusted executable resolution, content and toolchain-
+completeness receipts, and any future `shell=False` action-boundary execution
+remain deferred. Only Class 0/1 effects remain enabled.
 
 The third slice is the library-only `ordomata.repository_proposal_inspection`
 API `inspect_repository_proposal_evidence(database_path, *, run_id)`. It
@@ -383,10 +411,17 @@ command resolution or execution, persistence, repair, worker, route, billing,
 network, harness, dispatch, authorization, or live effect. Schema v1 and v2
 retain their exact meanings, and proposal evidence remains v1-only.
 
-The next recommended bounded slice is pure schema/validator support for
-controller-supplied executable/toolchain identity attestations in schema v4,
-still without executable resolution, command execution, or proposal-lineage
-widening.
+The eighth bounded Phase 3 slice is the schema-v4 executable/toolchain identity
+claim contract described above. It validates only bounded opaque digest claims
+and their exact command coverage, then emits aggregate-only evidence with
+authenticity, freshness, resolution, content, completeness, and execution
+correspondence explicitly false. It performs no additional identity lookup or
+inspection and no execution, persistence, dispatch, authorization, or live
+effect. Existing registration path-safety checks remain unchanged. Frozen schemas v1
+through v3 retain their exact meanings, and proposal evidence remains v1-only.
+Trusted controller-owned resolution and content-manifest receipts remain a
+separate future boundary; they must precede any command execution or proposal-
+lineage widening.
 
 ## Quick start
 

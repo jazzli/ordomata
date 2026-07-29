@@ -114,8 +114,10 @@ parallel because it cannot exercise worker authority.
   histories retain their frozen meanings.
 - The standalone schema-v1 repository-registration contract remains frozen,
   schema v2 adds generated/vendor exclusions, schema v3 adds controller-supplied
-  baseline command-result attestations, and pure version-dispatched validation
-  is implemented. The validator derives stable repository/filesystem references
+  baseline command-result attestations, and schema v4 adds opaque controller-
+  supplied executable/toolchain identity claims; schemas v1 through v3 remain
+  frozen. Pure version-dispatched validation is implemented. The validator
+  derives stable repository/filesystem references
   from a controller-supplied ordinary Git root; validates exact argv-array (not
   shell-text) verification declarations, canonical protected/allowed paths,
   bounded resource limits, fixed local-container/network-disabled isolation,
@@ -136,6 +138,21 @@ parallel because it cannot exercise worker authority.
   exposes neither the snapshot nor individual results. Validation does not
   compare the clock, recompute the snapshot, resolve an executable/toolchain,
   execute a command, persist state, or grant authority.
+- V4 requires one exact kind-, identifier-, and command-digest-linked identity
+  claim per declared command. Each carries bounded opaque executable and
+  toolchain identity digests. Declaration-order canonicalization derives a
+  syntax-only, command-context-bound declared-executable reference and binds the
+  aggregate to the repository, complete command set, and exact v3 baseline
+  aggregate. The digests have no standardized or trusted preimage or
+  provenance. Cross-context transplantation can validate but changes the
+  aggregate, same-context replay is indistinguishable, and baseline binding
+  proves co-declaration rather than which bytes executed. Evidence is
+  aggregate-only and explicitly reports authenticity, freshness, resolution,
+  content, toolchain completeness, and execution correspondence as false.
+  V4 identity-block validation adds no PATH/environment lookup, stat/content
+  read, symlink, shebang, interpreter, launcher, module, plugin, loader,
+  package, or version inspection and executes nothing. Existing registration
+  root and repository-relative path/executable safety checks are unchanged.
 - Controller-owned repository-proposal evidence is also implemented. For an
   existing immutable Class 0/1 `repository-proposal-disabled` run with only its
   initial `CREATED` event,
@@ -225,12 +242,16 @@ parallel because it cannot exercise worker authority.
   supplied baseline contract described above. Its observations are exactly
   command-linked and snapshot-bound, but their authenticity and freshness are
   explicitly unverified. Frozen schemas v1 and v2 retain their prior meanings,
-  and schema v1 remains the only proposal-lineage version; both v2 and v3 fail
-  before a proposal event append.
-- The next recommended bounded slice is pure schema/validator support for
-  controller-supplied executable/toolchain identity attestations in schema v4,
-  still without executable resolution, command execution, or proposal-lineage
-  widening.
+  and schema v1 remains the only proposal-lineage version; schemas v2 through
+  v4 fail before a proposal event append.
+- Repository-registration schema v4 now requires the bounded opaque identity-
+  claim contract described above. Frozen schemas v1 through v3 retain their
+  prior meanings. It adds no trusted resolution, content or completeness fact,
+  execution, persistence, dispatch, eligibility, or authority. Only Class 0/1
+  effects remain enabled.
+- Trusted controller-owned executable resolution and content-manifest receipts
+  remain a separate future boundary before command execution or proposal-
+  lineage widening.
 - Extend the three durable enforcing decision/action-receipt chains beyond the
   narrow profile-backed built-in-mock admission, dispatch, and publication
   boundaries only after semantics and parity stabilize.
