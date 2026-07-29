@@ -476,13 +476,34 @@ deployment, live-harness, supervisor-worker, or Class 2/3 effects. The existing
 Class 0/1 gate remains an independent prerequisite and cannot be widened by any
 PEP.
 
-The next recommended narrow slice is a versioned, privacy-bounded repository-
-registration contract and read-only validator. It should canonicalize and hash
-repository identity, exact verification argv, protected and allowed paths, and
-resource and isolation limits without creating a worktree, invoking a command
-or worker, or enabling supervisor dispatch. This supplies evidence required by
-the roadmap's repository-containment phase while preserving the current Class
-0/1 ceiling and disabled worker boundary.
+The first repository-registration slice is implemented as the standalone
+`schemas/repository-registration.schema.json` schema-v1 contract and the pure
+`repository_registration` validator. From a controller-supplied ordinary Git
+root it derives stable repository and filesystem references, validates exact
+argv-array (not shell-text) declarations for format, lint, type-check, test, and
+build, and canonicalizes protected and allowed repository-relative POSIX paths.
+`.git`,
+`.ordomata`, and `.agentops` are always protected; traversal and symlink escapes
+fail closed, including case-insensitive aliases of those controller-owned
+paths. Registration versions are bounded canonical SemVer. Credential/billing
+option names, known shell launchers, and protected relative executables are
+rejected. The contract also fixes bounded CPU, memory, process, workspace,
+output, artifact, wall, and idle limits; a local-container, network-disabled
+isolation requirement; and a patch-only policy that forbids branch, commit,
+push, PR, and promotion actions. The returned privacy-bounded evidence contains
+bounded digest references, version metadata, and fixed
+`validation_mode: "read_only"`, `dispatch_enabled: false`, and
+`authority_granted: false` facts rather than local paths or declarations.
+Baseline command results, generated/vendor exclusions, bare executable
+resolution and content attestation, and any future `shell=False` action-boundary
+execution remain deferred. The validator authorizes and executes nothing.
+
+This validator supplies controller evidence only. It has no CLI or sample
+registration and creates no state/event record, task/attempt binding,
+authorization decision, worktree, process, worker, route, or live eligibility.
+The next recommended bounded slice is controller-owned registration selection
+and digest-only attempt binding for a dispatch-disabled repository proposal,
+with exact durable readback but still no worktree, command, worker, or authority.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor

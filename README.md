@@ -167,12 +167,31 @@ limited to Class 0/1 requests for the exact profile-backed controller-owned
 `MockRunner`, publication remains an owner-private Class 1 local write, and no
 live, shared, promotion, API, credit, overage, or cloud path is enabled.
 
-The next recommended narrow slice is a versioned, privacy-bounded repository-
-registration contract and read-only validator for canonical repository
-identity, exact verification argv, protected and allowed paths, and resource
-and isolation limits. It should hash and validate registration evidence without
-creating a worktree, invoking a command or worker, or enabling supervisor
-dispatch.
+The first repository-registration slice is implemented as a standalone schema-
+v1 contract and pure read-only validator. It accepts a controller-supplied
+ordinary Git root, derives stable repository and filesystem references, validates
+format, lint, type-check, test, and build as exact argv-array (not shell-text)
+declarations, canonicalizes protected and allowed repository-relative POSIX
+paths, enforces
+mandatory protection for `.git`, `.ordomata`, and `.agentops`, and validates
+bounded resource, fixed local-container/network-disabled isolation, and patch-
+only review declarations. Case-insensitive aliases of controller-owned paths,
+traversal, and symlink escapes fail closed. Registration versions are bounded
+canonical SemVer; credential/billing option names, known shell launchers, and
+protected relative executables are rejected. Its
+privacy-bounded evidence contains only bounded digest references, version
+metadata, and fixed `validation_mode: "read_only"`, `dispatch_enabled: false`,
+and `authority_granted: false` facts.
+It has no CLI or sample registration and creates no state or event, task or
+attempt binding, authorization, worktree, command, worker, route, or live-model
+eligibility. Baseline command results and generated/vendor exclusions remain
+deferred. Bare executable resolution and content attestation, and any future
+`shell=False` action-boundary execution also remain deferred; this validator
+authorizes and executes nothing.
+
+The next recommended bounded slice is controller-owned registration selection
+and digest-only attempt binding for a dispatch-disabled repository proposal,
+with exact durable readback but still no worktree, command, worker, or authority.
 
 ## Quick start
 
