@@ -198,6 +198,47 @@ Evidence fixes `sequential_resolution_measurement_complete: true` and
 `atomic_snapshot_verified: false`; completion is sequential and does not prove
 an atomic filesystem snapshot.
 
+The separate library-only schema-v1
+`ordomata.repository_executable_staging` boundary consumes an exact typed
+expected resolver receipt, not subscription, identity, capacity, or billing
+evidence. Its staging source/scope is fixed to `controller_copied` /
+`posix_unlinked_readonly_v1`. During a fresh action resolver pass it rereads each unique executable
+into immutable process-local chunks through the same still-pinned descriptor.
+The expected and action canonical receipts must match before the first staging
+mutation, and a complete post-stage resolver pass must match both. This
+bracketing detects ordinary drift but does not prove an atomic snapshot,
+current freshness, or future execution correspondence.
+
+Its caller must pre-create an exact concrete absolute staging root that is
+empty, no-follow traversable, owned by the effective user, exactly mode `0700`,
+and nonoverlapping with the repository and explicit search directories. The
+overlap check is lexical containment plus exact-root inode equality only;
+exclusion of other mount aliases remains false. The root is dedicated to one
+controller process and one lease, without concurrent use. The 64 MiB-per-
+unique-file and 256 MiB-total limits remain fixed. Each random zero-
+length mode-`0600` entry is created exclusively, opened, unlinked, and parent-
+fsynced before captured bytes are written. The resulting anonymous inode is
+hashed, fsynced, normalized to non-executable mode `0400`, read back, and
+retained only through a read-only close-on-exec descriptor after the writer is
+closed. The successful root contains no staged byte name.
+
+The receipt binds expected/action/post-stage resolution and staged file/command
+correspondence; outward evidence is aggregate-only. Cleanup returns `removed`,
+`already_absent_verified`, or `unverifiable`, preserving still-verified handles
+for retry without retrying an ambiguously closed descriptor number. It proves
+neither root-timestamp restoration nor secure erasure.
+
+This temporary Class 1 local staging primitive cannot satisfy route, capacity,
+identity, paid-continuation, environment, isolation, circuit, or live-gate
+requirements and performs no inference. Kernel/filesystem immutability,
+same-UID exclusion, ACL privacy, absence of external writable descriptors,
+authority, authorization, action-receipt status, dispatch, durable control-
+plane persistence, proposal-lineage extension, routing, billing/capacity/
+circuit eligibility, live eligibility, and execution remain false. It has no
+CLI, state, proposal, runner, worker, subprocess, or harness integration.
+Same-UID adversarial interference is outside V1 protection, and the lease must
+never be passed to or integrated with an untrusted same-UID worker.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration and binds it plus an explicit canonical
 `proposal_digest` to an existing immutable Class 0/1
@@ -341,9 +382,16 @@ receipt described above. Fresh schema-v4 revalidation and bounded descriptor-
 based measurement produce only aggregate, point-in-time, non-reusable local
 evidence. It cannot satisfy any subscription-only gate and changes no
 registration schema, proposal lineage, persistence, authority, route, billing,
-capacity, circuit, live eligibility, or execution path. Complete interpreter/
-dependency manifests, action-time remeasurement, and execution remain future
-boundaries.
+capacity, circuit, live eligibility, or execution path. The separate tenth
+slice supplies bounded action-boundary capture and staging; complete
+interpreter/dependency manifests and execution remain future boundaries.
+
+The tenth bounded Phase 3 slice adds the separate executable-staging lease
+described above. Exact expected/action/post-stage resolution equality and
+namespace-detached read-only copies establish no subscription entitlement,
+capacity, paid-continuation, route, billing, circuit, or live-run fact. Nothing
+in the CLI, state store, runner, harness, proposal lineage, or execution path
+consumes the receipt or lease.
 
 `compare-run` is an opt-in execution workflow, not a bypass. It requires the same live gate and current evidence for every selected profile before creating comparison records. Trials use one immutable sanitized Class 0 snapshot, randomized repetition blocks, fresh sessions and workspaces, no shared outputs, and no external actions. Reports expose raw automated dimensions and separate human-review fields; they do not declare a winner or auto-promote a profile.
 

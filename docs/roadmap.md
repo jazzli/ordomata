@@ -265,8 +265,36 @@ parallel because it cannot exercise worker authority.
   action-receipt status, routing/billing/capacity facts, and live eligibility
   remain false. It adds no schema change, proposal lineage, CLI, persistence,
   subprocess, or execution path.
-- Complete interpreter/dependency/toolchain manifests, action-time
-  remeasurement, and command execution remain future boundaries before any
+- The tenth bounded Phase 3 slice implements the separate library-only
+  schema-v1 `ordomata.repository_executable_staging` lease. It requires an
+  exact typed expected resolver receipt under fixed `controller_copied` /
+  `posix_unlinked_readonly_v1` semantics and captures immutable process-local
+  chunks from the same still-pinned descriptor for each source during a fresh
+  action pass. Expected and action receipts must match before mutation, and a full
+  post-stage resolution must match both. The caller-created staging root must
+  be an exact absolute, empty, no-follow, effective-user-owned mode-`0700`
+  directory dedicated to one controller process and one lease, without
+  concurrent use. Overlap checks are lexical containment plus exact-root inode
+  equality only; exclusion of other mount aliases remains false.
+  Per-unique-file and aggregate limits remain 64 MiB and 256 MiB.
+  Each random O_EXCL mode-`0600` name is unlinked and its parent fsynced before
+  captured bytes are written; the resulting inode is read back, set to
+  non-executable mode `0400`, and retained only through a read-only,
+  close-on-exec descriptor. Cleanup reports `removed`,
+  `already_absent_verified`, or `unverifiable`, retaining still-verified
+  handles on uncertain cleanup without retrying an ambiguously closed
+  descriptor number. It does not restore root timestamps or prove secure erasure.
+  Aggregate evidence explicitly leaves kernel/filesystem immutability,
+  same-UID exclusion, ACL privacy, external-writer absence, atomic snapshot,
+  current freshness, future-execution correspondence, authority,
+  authorization, action-receipt status, dispatch, durable control-plane persistence,
+  proposal lineage, routing/billing/capacity/circuit facts, live eligibility,
+  and execution false. It adds no CLI, state, proposal, runner, worker,
+  subprocess, or harness integration. Same-UID adversarial interference is
+  outside V1 protection, and the lease must never reach an untrusted same-UID
+  worker.
+- Complete interpreter/dependency/toolchain manifests and command execution or
+  consumption of the descriptor lease remain future boundaries before any
   proposal-lineage or operational widening.
 - Extend the three durable enforcing decision/action-receipt chains beyond the
   narrow profile-backed built-in-mock admission, dispatch, and publication

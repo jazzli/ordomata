@@ -290,6 +290,56 @@ execution correspondence remain false. It grants no authority, dispatch,
 action receipt, route, billing/capacity fact, or live eligibility and adds no
 CLI, persistence, subprocess, or execution path.
 
+The separate library-only schema-v1
+`ordomata.repository_executable_staging` boundary implements
+`stage_repository_executable_bytes`. It accepts an exact typed resolver
+receipt and a one-shot `RepositoryExecutableStageLease` under fixed
+`controller_copied` / `posix_unlinked_readonly_v1` semantics. During a fresh
+action-boundary resolver pass, each unique source is reread into bounded,
+immutable process-local chunks through the same still-pinned descriptor that
+the resolver measured. The complete expected and action-time canonical
+receipts must match before the first staging mutation. A second full resolver
+pass after staging must match both receipts, so detected source, namespace, or
+search-precedence drift fails closed without claiming an atomic snapshot or
+current freshness.
+
+The caller must create an exact concrete absolute staging root in advance. It
+must be empty, owned by the effective user, mode `0700`, reached without
+following symlinks, and lexically nonoverlapping with the repository and every
+search directory; exact-root inode aliases are also rejected. Mount-alias
+exclusion remains explicitly unverified. The root is dedicated to one
+controller process and one lease, without concurrent use. Each unique file is
+bounded by 64 MiB and the aggregate by 256 MiB.
+The controller briefly creates a random zero-length mode-`0600` file with
+exclusive no-follow creation, opens its read lease, unlinks and fsyncs its name
+before writing any captured bytes, then writes, hashes, fsyncs, and normalizes
+the anonymous inode to non-executable mode `0400`. It closes the writer and
+retains only a read-only, close-on-exec descriptor. Consequently no staged
+executable bytes have a pathname, and the staging root must still be empty at
+the final check.
+
+The staging receipt binds the expected, action-time, and post-stage resolver
+digests, registration and resolution context, command-to-staged-file bindings,
+and bounded staged-file measurements. Its outward evidence is aggregate-only.
+Lease cleanup returns a schema-v1 cleanup receipt with `removed`,
+`already_absent_verified`, or `unverifiable`; uncertainty preserves still-
+verified handles for conservative retry, but never retries an ambiguously
+closed descriptor number. Cleanup proves only owned namespace
+absence and descriptor release. It explicitly does not restore staging-root
+timestamps or prove secure erasure.
+
+This is a temporary Class 1 local staging effect whose caller must separately
+authorize it; the receipt is neither authority nor an authorization or action
+receipt. Kernel/filesystem immutability, same-UID tamper exclusion, mount-alias
+exclusion, ACL privacy, absence of external writable descriptors, atomic
+snapshot, current freshness, future-execution correspondence, dispatch,
+durable control-plane persistence, proposal-lineage extension, routing,
+billing, capacity, circuit,
+live eligibility, and execution all remain false. The slice adds no CLI,
+state-store, runner, worker, subprocess, or harness integration. Same-UID
+adversarial interference is outside V1 protection, so the lease must never be
+given to or integrated with an untrusted same-UID worker.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -458,9 +508,20 @@ receipt described above. It freshly revalidates only schema v4 and measures the
 direct `argv[0]` files under bounded explicit search roots and descriptor-based
 `controller_measured` / `posix_nofollow_v1` semantics. Aggregate-only evidence
 is point-in-time and non-reusable; it creates no authority, persistence,
-proposal lineage, command execution, route, billing, or live effect. Complete
-interpreter and dependency/toolchain coverage, action-time remeasurement, and
-execution remain future boundaries.
+proposal lineage, command execution, route, billing, or live effect. The
+receipt itself remains non-reusable; the separate tenth slice supplies bounded
+action-boundary capture and staging. Complete interpreter and dependency/
+toolchain coverage and execution remain future boundaries.
+
+The tenth bounded Phase 3 slice is the separate schema-v1 executable-staging
+lease described above. Exact expected/action/post-stage resolution equality,
+same-descriptor process-local chunk capture, and namespace-detached mode-`0400`
+read-only descriptors establish only bounded temporary Class 1 byte staging.
+It adds no authority, authorization decision, action receipt, proposal
+lineage, durable control-plane persistence, CLI/state/runner integration,
+routing, billing, live eligibility, or execution. Complete dependency/toolchain
+coverage and any action that consumes or executes the lease remain future
+boundaries.
 
 ## Quick start
 

@@ -274,6 +274,52 @@ Those false facts cannot satisfy authorization, dispatch, action-receipt,
 routing, billing/capacity, or live-run predicates. The API adds no CLI,
 persistence, subprocess, execution, or proposal-lineage consumption.
 
+The separate schema-v1
+`ordomata.repository_executable_staging.stage_repository_executable_bytes`
+boundary is a bounded Class 1 local filesystem primitive, not an authorization
+decision or executable PEP. It accepts only an exact typed resolver receipt,
+uses fixed `controller_copied` / `posix_unlinked_readonly_v1` staging
+semantics, freshly performs the complete resolver measurement, and rereads each unique
+source through that same pinned descriptor into immutable process-local
+chunks. The expected and action receipts must be canonically identical before
+the first filesystem mutation. A complete post-stage resolver pass must then
+equal both receipts. This sequential bracketing rejects detected drift while
+leaving atomic-snapshot and current-freshness facts false.
+
+The caller supplies a pre-existing exact concrete absolute root that is empty,
+owned by the effective user, mode `0700`, no-follow traversable, and lexically
+nonoverlapping with every repository and search root; exact-root inode aliases
+are rejected, while mount-alias exclusion remains false. The root is dedicated
+to one controller process and one lease, without concurrent use. For each
+unique file, exclusive creation produces only a random zero-length mode-`0600`
+name. The
+controller opens its reader and removes and fsyncs that name before writing any
+captured byte. It then writes, hashes, fsyncs, sets non-executable mode `0400`,
+reads back, and closes the writer. A successful one-shot lease retains only
+read-only, close-on-exec descriptors to unlinked inodes. The established bounds
+remain 64 MiB per unique file and 256 MiB total.
+
+The staging receipt binds expected/action/post-stage resolution, staging
+context, staged-file measurements, and command bindings, while its evidence
+exposes only aggregate digests and counts. Cleanup yields `removed`,
+`already_absent_verified`, or `unverifiable`; uncertainty retains still-
+verified handles for retry and never retries an ambiguously closed descriptor
+number. Even verified cleanup does not restore root timestamps or prove secure
+erasure. The receipt establishes neither present lease activity nor an ABAC
+attribute that can authorize a later consumer.
+
+Accordingly, kernel/filesystem immutability, same-UID exclusion, mount-alias
+exclusion, ACL privacy, external-writer absence, atomicity, current freshness,
+and future-execution correspondence remain false, as do authority,
+authorization, action-receipt,
+dispatch, durable control-plane persistence, proposal-lineage, routing,
+billing/capacity/circuit, live-eligibility, and execution facts. The caller
+remains responsible for separate Class 1 authorization before invocation. No
+CLI, state store,
+runner, worker, subprocess, harness, or proposal integration exists. Same-UID
+adversarial interference is outside V1 protection; the lease must never be
+passed to or integrated with an untrusted same-UID worker.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -429,8 +475,17 @@ receipt described above. Exact schema-v4 revalidation and bounded descriptor-
 based measurement establish only a point-in-time direct-file observation.
 Aggregate evidence grants no ABAC attribute, permission, dispatch, action
 receipt, persistence, route, billing, live eligibility, or execution effect;
-proposal lineage remains v1-only. Complete interpreter/dependency manifests,
-action-time remeasurement, and execution remain future boundaries.
+proposal lineage remains v1-only. The separate tenth slice supplies bounded
+action-boundary capture and staging; complete interpreter/dependency manifests
+and execution remain future boundaries.
+
+The tenth bounded Phase 3 slice adds the separate executable-staging contract
+described above. It establishes a temporary Class 1 read-only descriptor lease
+only after exact expected/action/post-stage resolver correspondence. It is not
+a PDP decision, PEP enforcement receipt, authority envelope, proposal-lineage
+input, or executable action. Durable control-plane persistence, routing,
+billing, live eligibility, CLI/state/runner integration, and execution remain
+absent.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
