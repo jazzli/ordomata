@@ -744,6 +744,39 @@ capacity, circuit, live eligibility, CLI/state/runner integration, subprocess,
 harness, or execution path. Complete interpreter, dependency, and toolchain
 closure remains required before any operational widening.
 
+The thirteenth bounded Phase 3 slice is the separate library-only schema-v1
+`ordomata.repository_executable_shebang_target_resolution` Class 0 PIP.
+`inspect_staged_executable_shebang_targets(expected_requirements, *,
+expected_runtime, expected_staging, lease, expected_target_paths)` requires the
+exact typed upstream receipts and their exactly anchored active same-PID lease.
+The controller supplies the exact set of used canonical ASCII absolute target
+paths in first-use order; it is a closed measurement expectation, not an
+authority grant, root, or search path.
+Fixed `controller_measured` /
+`posix_absolute_shebang_target_nofollow_v1` semantics emit only
+`native_not_applicable` for ELF/Mach-O or
+`direct_absolute_target_measured` for a POSIX shebang. Any non-absolute,
+non-canonical, not-exactly-expected, unsupported-shebang, or unknown-runtime
+requirement invalidates the entire inspection.
+
+Every unique direct target is opened from `/` through exact-spelling,
+descriptor-relative, no-follow component checks. Two sequential complete
+content measurements plus namespace, identity, and metadata rechecks must
+produce matching results. Records and aggregate evidence expose no raw target
+paths or target bytes; they contain only digest/reference fields, bounded
+command identifiers/kinds and counts/sizes, fixed classifications/
+dispositions, and schema-bounded evidence booleans/metadata. `/usr/bin/env`, when
+exactly expected, is only
+the measured direct shebang target: the opaque tail and any downstream program
+selection remain uninterpreted. This is not semantic interpreter resolution,
+dependency/environment/runtime closure, invocability, authority,
+authorization, an action receipt, proposal lineage, worktree or route input,
+live eligibility, subprocess creation, or execution, and it neither mutates nor
+cleans up the lease. Two expected paths selecting the same inode fail, but
+external hardlink or mount aliases, same-UID tampering, absence of external
+writable descriptors, filesystem immutability, atomicity, and current freshness
+remain unverified.
+
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
 It freshly revalidates a `RepositoryRegistration`, requires an existing
@@ -901,8 +934,8 @@ action receipt, durable control-plane persistence, dispatch, route, billing,
 live, CLI/state/runner, or execution capability. Complete interpreter/
 dependency/toolchain coverage and any consumer that mutates or executes staged
 bytes remain deferred; the existing lifecycle cleanup only releases the lease,
-and only the eleventh and twelfth slices' Class 0 inspections otherwise read
-it. Only Class 0/1 effects remain enabled.
+and only the eleventh through thirteenth slices' Class 0 inspections otherwise
+read it. Only Class 0/1 effects remain enabled.
 
 The eleventh bounded Phase 3 slice is the separate schema-v1 staged-executable
 runtime-manifest inspection described above. An active same-PID lease anchored
@@ -933,6 +966,14 @@ receipt, persistence, proposal/worktree integration, dispatch, routing,
 billing, live eligibility, CLI/state/runner integration, subprocess, harness,
 or execution. Complete interpreter/dependency/toolchain closure remains a
 prerequisite to widening. Only Class 0/1 effects remain enabled.
+
+The thirteenth bounded Phase 3 slice is the separate schema-v1 direct shebang-
+target measurement PIP described above. It requires the exact upstream receipt
+chain, active lease, and complete first-use target-path expectation. Native
+entries are not applicable; every script target must match across two
+sequential full measurements and a final exact-namespace revalidation. The
+raw-path/raw-byte-free historical receipt grants no authority, extends no
+proposal lineage, and supplies no routing, live, subprocess, or execution fact.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor

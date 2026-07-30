@@ -390,6 +390,37 @@ eligibility, CLI/state/runner integration, subprocess, harness, or execution
 path. Complete interpreter, dependency, and toolchain closure remains required
 before any authorization or operational widening.
 
+The thirteenth bounded Phase 3 slice adds a further Class 0 PIP, not a PDP or
+PEP: `ordomata.repository_executable_shebang_target_resolution` exposes
+`inspect_staged_executable_shebang_targets(expected_requirements, *,
+expected_runtime, expected_staging, lease, expected_target_paths)`. It requires
+the exact typed upstream receipts and active same-PID lease, while the
+controller supplies the exact used canonical ASCII absolute target paths in
+first-use order. Under fixed `controller_measured` /
+`posix_absolute_shebang_target_nofollow_v1` semantics, the only successful
+dispositions are `native_not_applicable` and
+`direct_absolute_target_measured`; a non-absolute, non-canonical,
+not-exactly-expected, unsupported, or unknown non-native requirement fails the
+whole call. Exact-spelling component walks reject symlinks, and two sequential
+full target measurements must produce matching namespace, identity, metadata,
+and content results.
+
+The historical receipt and outward evidence expose no raw target paths or
+target bytes; they contain only digest/reference fields, bounded command
+identifiers/kinds and counts/sizes, fixed classifications/dispositions, and
+schema-bounded evidence booleans/metadata. They authorize nothing and do not establish
+current freshness or future execution correspondence. An exactly expected
+`/usr/bin/env` is measured only as the direct
+shebang target; its opaque tail and selected downstream program remain
+uninterpreted. Interpreter/launcher/argument semantics, dependencies,
+environment and toolchain closure, effective invocability, proposal lineage,
+worktree, dispatch, routing, billing, capacity, circuit, live eligibility,
+subprocesses, harnesses, and execution all remain absent or false. The call
+does not mutate or clean up the lease and issues no action receipt. Two expected
+paths selecting the same inode fail, but external hardlink or mount aliases,
+same-UID tampering, absence of external writable descriptors, filesystem
+immutability, atomicity, and current freshness remain unverified.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -421,8 +452,8 @@ billing/capacity/circuit fact, harness call, or live eligibility. The frozen
 registration schema-v1 evidence meaning remains the only version accepted by
 this proposal chain. Schema-v2 through schema-v4 registrations fail before any
 event append. The separate direct-executable resolution, staging, runtime-
-manifest, and shebang-requirements receipts are not proposal evidence and do
-not widen this chain.
+manifest, shebang-requirements, and shebang-target-resolution receipts are not
+proposal evidence and do not widen this chain.
 Complete interpreter, dependency, and runtime/toolchain closure plus execution
 receipts remain deferred.
 
@@ -587,6 +618,15 @@ authorization, action receipt, persistence, proposal/worktree integration,
 dispatch, route, billing, live eligibility, CLI/state/runner path, subprocess,
 harness, or execution. Complete interpreter/dependency/toolchain closure
 remains mandatory before widening.
+
+The thirteenth bounded Phase 3 slice adds the separate schema-v1 direct
+shebang-target measurement PIP described above. Exact upstream receipts, the
+active lease, and the complete first-use target-path expectation are mandatory.
+Native entries are not applicable; each script target must match across two
+sequential full measurements and final exact-namespace revalidation. The
+raw-path/raw-byte-free historical receipt is not a PDP decision or PEP receipt,
+grants no authority, extends no proposal lineage, and cannot support routing,
+live eligibility, subprocess creation, or execution.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and

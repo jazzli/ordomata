@@ -343,6 +343,29 @@ parallel because it cannot exercise worker authority.
   proposal/worktree integration, dispatch, routing, billing/capacity/circuit,
   live eligibility, CLI/state/runner integration, subprocess, harness, or
   execution path.
+- The thirteenth bounded Phase 3 slice implements the separate library-only
+  schema-v1 `ordomata.repository_executable_shebang_target_resolution`
+  boundary. `inspect_staged_executable_shebang_targets(expected_requirements,
+  *, expected_runtime, expected_staging, lease, expected_target_paths)` accepts
+  only exact typed upstream receipts, their active same-PID exactly anchored
+  lease, and the controller's exact tuple of used canonical ASCII absolute
+  target paths in first-use order. Under fixed `controller_measured` /
+  `posix_absolute_shebang_target_nofollow_v1` semantics, native ELF/Mach-O
+  requirements yield only `native_not_applicable`, while every shebang must
+  yield `direct_absolute_target_measured`. A non-absolute, non-canonical,
+  not-exactly-expected, unsupported, or unknown requirement fails the whole
+  call.
+  Unique targets are opened through exact-spelling no-follow component walks
+  and must match across two sequential full bounded measurements and namespace/
+  identity/metadata rechecks. Receipts and evidence expose no raw target paths
+  or target bytes; they contain only digest/reference fields, bounded command
+  identifiers/kinds and counts/sizes, fixed classifications/dispositions, and
+  schema-bounded evidence booleans/metadata. An exactly expected `/usr/bin/env` is only
+  the direct target;
+  its opaque tail and downstream selection remain uninterpreted. The Class 0
+  call mutates or cleans up no lease and adds no semantic interpreter,
+  dependency/toolchain, authority, authorization, action-receipt, proposal,
+  worktree, route, live, subprocess, harness, or execution capability.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

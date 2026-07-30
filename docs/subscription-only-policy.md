@@ -302,6 +302,35 @@ CLI/state/runner integration, subprocess, network, harness, or execution path.
 Complete interpreter/dependency/toolchain closure remains required before any
 subscription-gated or operational widening.
 
+The thirteenth bounded Phase 3 slice, the separate library-only schema-v1
+`ordomata.repository_executable_shebang_target_resolution` boundary, is also a
+Class 0 local measurement and supplies no subscription evidence.
+`inspect_staged_executable_shebang_targets(expected_requirements, *,
+expected_runtime, expected_staging, lease, expected_target_paths)` requires the
+exact typed upstream receipts, their exactly anchored active same-PID lease,
+and the controller's exact used canonical ASCII absolute target paths in
+first-use order. Under fixed `controller_measured` /
+`posix_absolute_shebang_target_nofollow_v1` semantics, the only successful
+dispositions are `native_not_applicable` and
+`direct_absolute_target_measured`; any non-absolute, non-canonical,
+not-exactly-expected, unsupported, or unknown requirement invalidates the whole
+call.
+Exact-spelling no-follow component walks and two sequential full measurements
+require matching namespace, identity, metadata, and content results. Canonical
+records and outward evidence expose no raw target paths or target bytes; they
+contain only digest/reference fields, bounded command identifiers/kinds and
+counts/sizes, fixed classifications/dispositions, and schema-bounded evidence
+booleans/metadata.
+
+An exactly expected `/usr/bin/env` measures only the direct target; its
+opaque argument tail and downstream selection remain uninterpreted. This is not
+semantic interpreter resolution and establishes no dependency, environment,
+runtime/toolchain, or effective-invocability fact. It neither mutates nor cleans
+up the lease and cannot satisfy route, capacity, identity, paid-continuation,
+isolation, circuit, or live gates. It adds no authority, authorization, action
+receipt, proposal/worktree integration, dispatch, route, billing, network,
+subprocess, harness, or execution path.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration and binds it plus an explicit canonical
 `proposal_digest` to an existing immutable Class 0/1
@@ -454,8 +483,9 @@ described above. Exact expected/action/post-stage resolution equality and
 namespace-detached read-only copies establish no subscription entitlement,
 capacity, paid-continuation, route, billing, circuit, or live-run fact. Nothing
 in the CLI, state store, runner, harness, proposal lineage, or execution path
-consumes the receipt or lease; only the separate Class 0 runtime-manifest
-and shebang-requirements inspections below read the active lease.
+consumes the receipt or lease; only the separate Class 0 runtime-manifest,
+shebang-requirements, and shebang-target inspections below read the active
+lease.
 
 The eleventh bounded Phase 3 slice adds that separate schema-v1 staged-
 executable runtime-manifest inspection. Its exact active same-PID lease
@@ -484,6 +514,15 @@ continuation, circuit, live-gate, subprocess, harness, or execution fact. The
 Class 0 call opens no path, mutates or cleans up no lease, and has no
 CLI/state/runner integration. Complete interpreter/dependency/toolchain closure
 remains required before widening.
+
+The thirteenth bounded Phase 3 slice adds the separate schema-v1 direct
+shebang-target measurement described above. Exact upstream receipts, the
+active lease, and the complete first-use target-path expectation are mandatory.
+Native entries are not applicable; every script target must match across two
+sequential full measurements and final exact-namespace revalidation. The
+raw-path/raw-byte-free historical receipt supplies no subscription evidence and
+cannot satisfy routing, billing, capacity, paid-continuation, circuit, live,
+subprocess, harness, or execution gates.
 
 `compare-run` is an opt-in execution workflow, not a bypass. It requires the same live gate and current evidence for every selected profile before creating comparison records. Trials use one immutable sanitized Class 0 snapshot, randomized repetition blocks, fresh sessions and workspaces, no shared outputs, and no external actions. Reports expose raw automated dimensions and separate human-review fields; they do not declare a winner or auto-promote a profile.
 

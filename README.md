@@ -407,6 +407,34 @@ billing, capacity, circuit, live eligibility, CLI/state/runner integration,
 subprocess, harness, or execution path. Complete interpreter, dependency, and
 toolchain closure remains required before any operational widening.
 
+The thirteenth bounded Phase 3 slice adds the separate library-only schema-v1
+`ordomata.repository_executable_shebang_target_resolution` boundary.
+`inspect_staged_executable_shebang_targets(expected_requirements, *,
+expected_runtime, expected_staging, lease, expected_target_paths)` accepts the
+exact typed requirements, runtime, and staging receipts, their active same-PID
+lease, and an exact tuple of used canonical ASCII absolute target paths in
+first-use order. Under fixed `controller_measured` /
+`posix_absolute_shebang_target_nofollow_v1` semantics, native ELF/Mach-O files
+produce only `native_not_applicable`; every shebang must produce
+`direct_absolute_target_measured`. A non-absolute, non-canonical, not-exactly-
+expected, unsupported, or unknown requirement fails the whole call. Each unique
+target
+is opened component-by-component with exact spelling and no symlink following,
+then fully measured in two sequential passes whose identity, metadata,
+namespace, and content results must match. Canonical records and outward
+evidence expose no raw target paths or target bytes; they contain only digest/
+reference fields, bounded command identifiers/kinds and counts/sizes, fixed
+classifications/dispositions, and schema-bounded evidence booleans/metadata.
+
+This is direct shebang-target measurement, not semantic interpreter
+resolution. An exactly expected `/usr/bin/env` measures only that direct
+target; its opaque argument tail is not parsed and any interpreter it might
+select remains unresolved. The Class 0 call neither mutates nor cleans up the
+lease and proves no argument, launcher, kernel, dependency, environment,
+runtime/toolchain, effective-invocability, future-execution, authority,
+authorization, action-receipt, proposal, worktree, routing, billing, capacity,
+circuit, live-eligibility, subprocess, harness, or execution fact.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -438,8 +466,9 @@ worker or supervisor dispatch, profile route, billing/capacity/circuit fact, or
 live eligibility. Proposal lineage remains pinned to frozen registration
 evidence v1, so schema-v2 through schema-v4 registrations fail before any
 proposal event append. The separate executable-resolution, staging, runtime-
-manifest, and shebang-requirements receipts are not proposal evidence and do
-not widen that lineage. Complete interpreter, dependency, and runtime/toolchain
+manifest, shebang-requirements, and shebang-target-resolution receipts are not
+proposal evidence and do not widen that lineage. Complete interpreter,
+dependency, and runtime/toolchain
 closure plus any future `shell=False` action-boundary execution remain
 deferred. Only Class 0/1 effects remain enabled.
 
@@ -590,7 +619,7 @@ lineage, durable control-plane persistence, CLI/state/runner integration,
 routing, billing, live eligibility, or execution. Complete dependency/toolchain
 coverage and any consumer that mutates or executes staged bytes remain future
 boundaries; the existing lifecycle cleanup only releases the lease, and only
-the eleventh and twelfth slices' Class 0 inspections otherwise read it.
+the eleventh through thirteenth slices' Class 0 inspections otherwise read it.
 
 The eleventh bounded Phase 3 slice is the separate schema-v1 staged-executable
 runtime-manifest inspection described above. It requires an active same-PID,
@@ -620,6 +649,14 @@ authority, authorization, action receipt, persistence, proposal/worktree
 integration, dispatch, route, billing, live, CLI/state/runner, subprocess,
 harness, or execution path. Complete interpreter/dependency/toolchain closure
 remains required before widening.
+
+The thirteenth bounded Phase 3 slice is the separate schema-v1 direct shebang-
+target measurement described above. It requires the exact upstream receipt
+chain, active lease, and complete first-use target-path expectation. Native
+entries are not applicable; every script target must pass two sequential full
+measurements plus final exact-namespace revalidation. The raw-path/raw-byte-
+free receipt remains historical, non-authorizing, outside proposal lineage,
+and unusable for routing, live eligibility, subprocess creation, or execution.
 
 ## Quick start
 
