@@ -354,6 +354,45 @@ mount-alias exclusion, atomic or current freshness, authenticity or provenance,
 effective invocability, crash cleanup, or secure erasure. The Class 0/1 ceiling
 remains unchanged.
 
+The fifteenth bounded Phase 3 slice, the separate library-only schema-v1
+`ordomata.repository_executable_shebang_target_runtime_manifest` Class 0
+inspection, also cannot make a route eligible.
+`inspect_staged_executable_shebang_target_runtime_manifest(
+expected_target_staging, *, lease)` accepts only the exact target-staging
+receipt object and its active same-PID target-stage lease. An independent
+frozen staging-v1 mirror, under fixed `controller_inspected` /
+`posix_staged_shebang_target_runtime_header_v1` semantics, validates canonical
+receipt shape, digest and file-reference anchors, receipt and retained-file
+tuple object anchors, untouched
+lifecycle and cleanup state, and the stored root context. Used-root metadata
+must reproduce its owner-mode-`0700` context digest without reopening it;
+native-only input must match the no-op context and retain exact nonempty
+requirements and command bindings with zero target files.
+
+Every retained mode-`0400`, link-count-zero, non-inheritable `O_RDONLY`
+descriptor is fully remeasured before an at-most-4,096-byte `pread` header is
+accepted; the bounded read must equal the header captured by the full pass.
+After an exact lease snapshot, all descriptors are fully remeasured again;
+receipt construction and canonical validation are followed by a closing exact
+lease snapshot before return. Immutable target-runtime files, requirements,
+bindings, and the receipt preserve exact correspondence while fixing `elf`,
+`mach_o`, `posix_shebang`,
+`unsupported_shebang`, or `unknown` classification. Direct requirements become
+`direct_absolute_target_runtime_inspected`, native requirements remain
+`native_not_applicable`, and shared targets appear once. Records and evidence
+expose no path, target/header bytes, directive, temporary name, or descriptor
+number.
+
+This inspection opens no source, target, or staging-root path, mutates or
+cleans up no lease, and invokes no model or live harness. It cannot enter
+candidate ranking, route eligibility, dispatch, billing, capacity, circuit,
+live, proposal/worktree, persistence, subprocess, harness, or execution
+decisions. It establishes no recursive shebang, interpreter, `env`, `PATH`,
+argument, dependency, loader, environment, runtime, or toolchain semantics and
+no current freshness, atomicity, authenticity, provenance, effective
+invocability, authority, authorization, or action receipt. The Class 0/1
+ceiling remains unchanged.
+
 The separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` API records a
 **repository-registration selection**, not an execution-profile or model
@@ -545,6 +584,15 @@ dedicated protected-root contract produce only unlinked mode-`0400` read-only
 descriptors; native-only input is a zero-file no-op. This Class 1 library
 primitive cannot affect ranking, route eligibility, dispatch, billing,
 capacity, circuit, live, subprocess, harness, or execution decisions.
+
+The fifteenth bounded Phase 3 slice adds the separate schema-v1 staged
+shebang-target runtime-header inspection described above. Exact active receipt,
+lease, object-anchor and stored-root-context validation occurs without a path
+reopen; complete descriptor remeasurement brackets at most 4,096 header bytes
+of five-way classification; and native-only zero-file requirements and command
+bindings remain exact. This Class 0 library result cannot affect ranking,
+route eligibility, dispatch, billing, capacity, circuit, live, proposal/
+worktree, subprocess, harness, model, or execution decisions.
 
 ## Adaptive promoted-profile routing (target)
 

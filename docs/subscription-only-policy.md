@@ -366,6 +366,43 @@ writer or fork exclusion, external-hardlink or mount-alias exclusion, atomic
 or current freshness, authenticity or provenance, effective invocability,
 crash cleanup, or secure erasure. Only Class 0/1 remains enabled.
 
+The fifteenth bounded Phase 3 slice, the separate library-only schema-v1
+`ordomata.repository_executable_shebang_target_runtime_manifest` Class 0
+boundary, supplies no subscription evidence.
+`inspect_staged_executable_shebang_target_runtime_manifest(
+expected_target_staging, *, lease)` accepts only the exact target-staging
+receipt object and its active same-PID target-stage lease. A frozen independent
+staging-v1 mirror, under fixed `controller_inspected` /
+`posix_staged_shebang_target_runtime_header_v1` semantics, validates the
+canonical receipt, digest and file-reference
+anchors, receipt and retained-file tuple object anchors, untouched lifecycle
+and cleanup state, and stored root context. Used-root owner-mode-`0700`
+metadata must reproduce the context digest without reopening it; native-only
+input must match the no-op context and preserve exact nonempty requirements
+and command bindings with zero files.
+
+Every mode-`0400`, link-count-zero, non-inheritable `O_RDONLY` target
+descriptor is fully remeasured before an at-most-4,096-byte `pread` header is
+accepted; the bounded read must equal the header captured by the complete pass.
+The exact lease snapshot and all descriptors are verified again afterward.
+Immutable target-runtime files, requirements, bindings, and the receipt fix
+`elf`, `mach_o`, `posix_shebang`, `unsupported_shebang`, or `unknown`
+classification. Direct requirements become
+`direct_absolute_target_runtime_inspected`, native requirements remain
+`native_not_applicable`, and shared targets appear once. Canonical records and
+aggregate evidence expose no path, bytes, directive, temporary name, or
+descriptor number.
+
+This call opens no source, target, or staging-root path, mutates or cleans up no
+lease, and makes no model or live-harness call. It establishes no entitlement,
+identity, isolation, paid-continuation, route, billing, capacity, circuit, or
+live-gate fact; no recursive shebang/interpreter/`env`/`PATH`/argument semantics
+or dependency/loader/environment/runtime/toolchain closure; no current
+freshness, atomicity, authenticity, provenance, or effective invocability; and
+no authority, authorization, action receipt, persistence, proposal/worktree,
+dispatch, CLI/state/runner, network, subprocess, harness, or execution path.
+Only Class 0/1 remains enabled.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration and binds it plus an explicit canonical
 `proposal_digest` to an existing immutable Class 0/1
@@ -566,6 +603,15 @@ and a dedicated protected-root contract yield only unlinked mode-`0400` read-
 only descriptors; native-only input is a zero-file no-op. The Class 1 library
 primitive supplies no subscription, persistence, routing, billing, capacity,
 paid-continuation, circuit, live, subprocess, harness, or execution evidence.
+
+The fifteenth bounded Phase 3 slice adds the separate schema-v1 staged
+shebang-target runtime-header inspection described above. It validates the
+exact active receipt, lease, object anchors and stored root context without
+opening a path, fully remeasures retained descriptors around an at-most-4,096-
+byte five-way classification, and preserves native-only zero-file requirement
+and command correspondence. The Class 0 result supplies no subscription,
+identity, isolation, paid-continuation, routing, billing, capacity, circuit,
+live, subprocess, harness, model, or execution evidence.
 
 `compare-run` is an opt-in execution workflow, not a bypass. It requires the same live gate and current evidence for every selected profile before creating comparison records. Trials use one immutable sanitized Class 0 snapshot, randomized repetition blocks, fresh sessions and workspaces, no shared outputs, and no external actions. Reports expose raw automated dimensions and separate human-review fields; they do not declare a winner or auto-promote a profile.
 
