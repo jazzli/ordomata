@@ -355,6 +355,33 @@ no authority, authorization, action receipt, persistence, proposal/worktree
 integration, dispatch, route, billing/capacity/circuit, live eligibility,
 CLI/state/runner integration, subprocess, harness, or execution path.
 
+Implemented as the thirteenth bounded Phase 3 slice, the separate library-only
+schema-v1 `ordomata.repository_executable_shebang_target_resolution` API
+exposes `inspect_staged_executable_shebang_targets(expected_requirements, *,
+expected_runtime, expected_staging, lease, expected_target_paths)`. It accepts
+only exact typed requirements, runtime, and staging receipts, their exactly
+anchored active same-PID lease, and an exact tuple of used canonical ASCII
+absolute target paths in first-use order. Fixed `controller_measured` /
+`posix_absolute_shebang_target_nofollow_v1` semantics allow only
+`native_not_applicable` and `direct_absolute_target_measured`; any
+non-absolute, non-canonical, not-exactly-expected, unsupported-shebang, or
+unknown-runtime requirement invalidates the whole call.
+
+Each unique target is opened component-by-component with exact spelling and no
+symlink following, then accepted only after two sequential complete bounded
+measurements with matching namespace, identity, metadata, and content results.
+Canonical records and outward evidence expose no raw target paths or target
+bytes; they contain only digest/reference fields, bounded command identifiers/
+kinds and counts/sizes, fixed classifications/dispositions, and schema-bounded
+evidence booleans/metadata. An exactly expected `/usr/bin/env` establishes only
+that direct target's
+measurement; its opaque argument tail and downstream selection are not parsed.
+The Class 0 result is not semantic interpreter resolution, invocability,
+dependency/environment/runtime/toolchain closure, authority, authorization, an
+action receipt, proposal lineage, worktree, dispatch, routing, billing,
+capacity, circuit, live eligibility, subprocess creation, harness use, or
+execution, and the call neither mutates nor cleans up the lease.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -379,8 +406,9 @@ action receipt, worktree, Git/subprocess/command invocation, worker or
 supervisor dispatch, profile route, billing/capacity/circuit change, harness
 call, or live eligibility. The proposal chain remains pinned to frozen
 registration evidence v1 and rejects v2 through v4 before any event append.
-The separate executable-resolution, staging, runtime-manifest, and shebang-
-requirements receipts are not proposal evidence and do not widen this chain.
+The separate executable-resolution, staging, runtime-manifest, shebang-
+requirements, and shebang-target-resolution receipts are not proposal evidence
+and do not widen this chain.
 Complete interpreter, dependency, and runtime/toolchain closure and future
 `shell=False` execution remain deferred. Only Class 0/1 effects remain enabled.
 
@@ -518,7 +546,7 @@ persistence, proposal lineage, CLI/state/runner integration, route, billing,
 live eligibility, or execution. Complete interpreter/dependency manifests and
 any consumer that mutates or executes staged bytes remain future boundaries;
 the existing lifecycle cleanup only releases the lease, and only the eleventh
-and twelfth slices' Class 0 inspections otherwise read it.
+through thirteenth slices' Class 0 inspections otherwise read it.
 
 The eleventh bounded Phase 3 slice is the separate schema-v1 staged-executable
 runtime-manifest inspection described above. It accepts only an active
@@ -546,6 +574,14 @@ persistence, proposal/worktree integration, dispatch, route, billing, live
 eligibility, CLI/state/runner path, subprocess, harness, or execution.
 Complete interpreter/dependency/toolchain closure remains required before
 widening.
+
+The thirteenth bounded Phase 3 slice is the separate schema-v1 direct shebang-
+target measurement described above. It requires the exact upstream receipt
+chain, active lease, and complete first-use target-path expectation. Native
+entries are not applicable; each script target must match across two sequential
+full measurements and final exact-namespace revalidation. Its raw-path/raw-
+byte-free historical receipt adds no authority, proposal lineage, routing,
+live eligibility, subprocess, harness, or execution capability.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and

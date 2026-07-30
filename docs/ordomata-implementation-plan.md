@@ -56,8 +56,9 @@ The repository already provides the foundation this plan extends:
   a separate library-only schema-v1 direct-executable resolver returns bounded
   sequential evidence after fresh exact-v4 revalidation without claiming an
   atomic snapshot, freshness, authority, or execution; the bounded staging,
-  runtime-manifest, and shebang-requirements consumers remain library-only and
-  likewise grant no authority or execution; and library-only,
+  runtime-manifest, shebang-requirements, and shebang-target-resolution
+  consumers remain library-only and likewise grant no authority or execution;
+  and library-only,
   controller-owned repository-proposal selection and binding remains pinned to
   v1 evidence: an existing `CREATED`
   `repository-proposal-disabled` run receives exactly two statusless, content-
@@ -365,6 +366,32 @@ CLI/state/runner integration, subprocess, harness, or execution path. Complete
 interpreter, dependency, and toolchain closure remains required before any
 operational widening.
 
+The thirteenth slice adds the separate library-only schema-v1
+`ordomata.repository_executable_shebang_target_resolution` boundary.
+`inspect_staged_executable_shebang_targets(expected_requirements, *,
+expected_runtime, expected_staging, lease, expected_target_paths)` requires the
+exact typed upstream receipts, their exactly anchored active same-PID lease,
+and the controller's exact tuple of used canonical ASCII absolute paths in
+first-use order. Fixed `controller_measured` /
+`posix_absolute_shebang_target_nofollow_v1` semantics produce only
+`native_not_applicable` or `direct_absolute_target_measured`; a non-absolute,
+non-canonical, not-exactly-expected, unsupported-shebang, or unknown-runtime
+requirement fails the complete call.
+
+Every unique target is opened by an exact-spelling no-follow component walk.
+Two sequential complete measurements and namespace, identity, metadata, and
+content rechecks must produce matching results. Receipts and outward evidence
+expose no raw target paths or target bytes; they contain only digest/reference
+fields, bounded command identifiers/kinds and counts/sizes, fixed
+classifications/dispositions, and schema-bounded evidence booleans/metadata. An exactly
+expected `/usr/bin/env` proves only
+the direct target measurement; its opaque tail and any selected program remain
+uninterpreted. The Class 0 API is not semantic interpreter resolution,
+invocability, dependency/environment/runtime/toolchain closure, authority,
+authorization, an action receipt, proposal lineage, worktree, route, live
+eligibility, subprocess, harness, or execution. It neither mutates nor cleans
+up the lease and does not widen any operational boundary.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -383,8 +410,9 @@ or status transition, authorization decision or action receipt, worktree,
 command/process/worker/supervisor dispatch, routing, billing, harness, or live-
 route effect. This chain remains pinned to frozen registration evidence v1 and
 rejects v2 through v4 before any event append. The separate executable-
-resolution, staging, runtime-manifest, and shebang-requirements receipts are not
-proposal evidence and do not widen that chain. Complete interpreter,
+resolution, staging, runtime-manifest, shebang-requirements, and shebang-target-
+resolution receipts are not proposal evidence and do not widen that chain.
+Complete interpreter,
 dependency, and runtime/toolchain closure and execution receipts remain
 deferred.
 Only Class 0/1 effects remain enabled.
@@ -517,8 +545,8 @@ authorization, action receipt, durable control-plane persistence,
 CLI/state/runner integration, route, billing, live, or execution path.
 Complete interpreter/dependency manifests and any consumer that mutates or
 executes staged bytes remain future boundaries; the existing lifecycle cleanup
-only releases the lease, and only the eleventh and twelfth slices' Class 0
-inspections otherwise read it.
+only releases the lease, and only the eleventh through thirteenth slices'
+Class 0 inspections otherwise read it.
 
 The eleventh bounded Phase 3 slice is the separate schema-v1 staged-executable
 runtime-manifest inspection described above. An exact expected staging receipt
@@ -546,6 +574,14 @@ persistence, proposal/worktree integration, dispatch, route, billing, live
 eligibility, CLI/state/runner path, subprocess, harness, or execution.
 Complete interpreter/dependency/toolchain closure remains required before
 widening.
+
+The thirteenth bounded Phase 3 slice is the separate schema-v1 direct shebang-
+target measurement described above. Exact upstream receipts, the active lease,
+and the complete first-use target-path expectation are mandatory. Native
+entries are not applicable; each script target must match across two sequential
+full measurements and final exact-namespace revalidation. The raw-path/raw-
+byte-free historical receipt grants no authority, extends no proposal lineage,
+and cannot support routing, live eligibility, subprocesses, or execution.
 
 The target semantics for Class 3 standing envelopes, irreversible actions,
 the non-delegable root-authority kernel, consequential outbox execution,
@@ -1063,8 +1099,9 @@ It performs no durable reinspection, freshness proof, persistence, repair,
 enforcement, authorization, or action. The proposal chain remains registration-
 evidence-v1-only, so v2 through v4 fail before an event append. The separate
 point-in-time direct-executable receipt, temporary staging lease, bounded
-staged runtime-header manifest, and digest-only shebang-requirements receipt are
-implemented but are not proposal evidence or execution authority. Complete
+staged runtime-header manifest, privacy-bounded shebang-requirements receipt,
+and privacy-bounded direct-shebang-target measurement receipt are implemented
+but are not proposal evidence or execution authority. Complete
 interpreter/dependency/runtime/toolchain closure, future `shell=False` action-
 boundary execution, and every worker-cell deliverable below remain deferred.
 Only Class 0/1 effects remain enabled.
@@ -1100,6 +1137,16 @@ Only Class 0/1 effects remain enabled.
     argument-tail extraction are implemented, while interpreter, `env`,
     `PATH`, argument, and kernel semantics plus dependency/toolchain closure
     and execution remain deferred);
+  - controller-measured direct absolute shebang targets (separate schema-v1
+    Class 0 receipt implemented; exact requirements/runtime/staging/active-
+    lease anchoring, canonical ASCII absolute targets, an exactly expected
+    ordered unique target set, no-follow edge traversal, two complete bounded
+    measurements, and final selected-path namespace revalidation are
+    implemented; canonical records and outward evidence exclude raw target
+    paths and bytes, `/usr/bin/env` is measured only as a direct target, and no
+    interpreter/`env`/`PATH`/argument semantics, dependency closure,
+    authorization, proposal lineage, route eligibility, or execution is
+    established);
   - protected and allowed paths;
   - generated/vendor exclusions (schema v2 validation implemented; operational
     consumption remains deferred);

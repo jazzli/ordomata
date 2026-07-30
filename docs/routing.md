@@ -294,6 +294,32 @@ action receipt, persistence, or CLI/state/runner integration. Complete
 interpreter, dependency, and toolchain closure remains required before any
 routing or operational widening.
 
+The thirteenth bounded Phase 3 slice, the separate library-only schema-v1
+`ordomata.repository_executable_shebang_target_resolution` boundary, likewise
+cannot make a route eligible.
+`inspect_staged_executable_shebang_targets(expected_requirements, *,
+expected_runtime, expected_staging, lease, expected_target_paths)` accepts only
+exact typed upstream receipts, their active same-PID exactly anchored lease,
+and the controller's exact used canonical ASCII absolute target paths in
+first-use order. Fixed `controller_measured` /
+`posix_absolute_shebang_target_nofollow_v1` semantics admit only
+`native_not_applicable` and `direct_absolute_target_measured`; any
+non-absolute, non-canonical, not-exactly-expected, unsupported, or unknown
+requirement fails the entire call. Exact-spelling no-follow component walks and two
+sequential full measurements require matching namespace, identity, metadata,
+and content results. Records and evidence expose no raw target paths or target
+bytes; they contain only digest/reference fields, bounded command identifiers/
+kinds and counts/sizes, fixed classifications/dispositions, and schema-bounded
+evidence booleans/metadata.
+
+An exactly expected `/usr/bin/env` is measured only as the direct shebang
+target; the opaque tail and downstream program remain uninterpreted. This is
+not semantic interpreter resolution, invocability, or dependency/environment/
+runtime/toolchain closure. It neither mutates nor cleans up the lease and
+cannot affect candidate ranking, routing, dispatch, billing, capacity, circuit,
+live eligibility, proposal/worktree state, authorization, subprocess, harness,
+or execution decisions.
+
 The separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` API records a
 **repository-registration selection**, not an execution-profile or model
@@ -468,6 +494,15 @@ path, mutates or cleans up no lease, interprets or resolves no interpreter,
 authorization, action receipt, persistence, or CLI/state/runner integration.
 Complete interpreter/dependency/toolchain closure remains required before
 widening.
+
+The thirteenth bounded Phase 3 slice adds the separate schema-v1 direct
+shebang-target measurement described above. It requires the exact upstream
+receipt chain, active lease, and complete first-use target-path expectation.
+Native entries are not applicable; every script target must match across two
+sequential full measurements and final exact-namespace revalidation. The
+raw-path/raw-byte-free historical receipt cannot enter candidate ranking,
+routing, dispatch, billing, live eligibility, subprocess, or execution
+decisions.
 
 ## Adaptive promoted-profile routing (target)
 
