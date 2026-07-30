@@ -233,6 +233,28 @@ subprocess, or harness integration. Same-UID adversarial interference is
 outside V1 protection; the lease must never be handed to or integrated with an
 untrusted same-UID worker.
 
+The separate library-only schema-v1
+`ordomata.repository_executable_runtime_manifest` boundary also cannot make a
+route eligible. `inspect_staged_executable_runtime_manifest(expected_staging,
+*, lease)` requires an exact typed staging receipt and its active, same-PID,
+exactly anchored process-local lease. Under fixed `controller_inspected` /
+`posix_staged_runtime_header_v1` semantics it fully remeasures each private
+retained descriptor before and after reading at most 4,096 header bytes,
+without opening any source path. The classifier emits only `elf`, `mach_o`,
+`posix_shebang`, `unsupported_shebang`, or `unknown`; accepted shebang
+directives are ASCII and limited to 255 bytes, but are neither exposed nor
+interpreted.
+
+Runtime files and command bindings contain digest/reference, classification,
+and bounded-count metadata only; outward evidence is aggregate-only. The Class
+0 inspection neither mutates nor cleans up the lease. Effective invocability,
+interpreter resolution or identity, dependency/environment/runtime/toolchain
+closure, manifest completeness, current source freshness, future execution
+correspondence, route/profile eligibility, authority, authorization, action-
+receipt status, proposal lineage, worktree integration, dispatch, billing,
+capacity, circuit, live eligibility, and execution remain false. It adds no
+CLI, state, runner, worker, subprocess, or harness path.
+
 The separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` API records a
 **repository-registration selection**, not an execution-profile or model
@@ -378,6 +400,18 @@ namespace-detached read-only descriptor copies remain local evidence only.
 They cannot enter candidate ranking, route eligibility, dispatch, billing,
 capacity, circuit, live-run, proposal-lineage, or execution decisions, and no
 CLI/state/runner path consumes them.
+
+The eleventh bounded Phase 3 slice adds the separate schema-v1 staged-
+executable runtime-manifest inspection described above. An active same-PID
+lease exactly anchored to the expected staging receipt is required; complete
+descriptor remeasurement and at most 4,096 header bytes yield only digest/
+reference entries and aggregate ELF, Mach-O, bounded ASCII shebang,
+unsupported-shebang, or unknown classification evidence. None of this can
+enter candidate ranking, route eligibility, dispatch, billing, capacity,
+circuit, live-run, proposal/worktree, or execution decisions. Invocability,
+interpreter and dependency/runtime closure, and completeness remain false; the
+Class 0 call does not mutate or clean up the lease and has no CLI/state/runner
+integration.
 
 ## Adaptive promoted-profile routing (target)
 

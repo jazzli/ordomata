@@ -288,6 +288,34 @@ worker, subprocess, or harness integration. Same-UID adversarial interference
 is outside V1 protection, and the lease must never be passed to or integrated
 with an untrusted same-UID worker.
 
+Implemented as the eleventh bounded Phase 3 slice, the separate library-only
+schema-v1 `ordomata.repository_executable_runtime_manifest` API exposes
+`inspect_staged_executable_runtime_manifest(expected_staging, *, lease)` and
+the immutable `RepositoryExecutableRuntimeFile`,
+`RepositoryExecutableRuntimeBinding`, and
+`RepositoryExecutableRuntimeManifestReceipt` records. It accepts only an exact
+typed staging receipt and the active `RepositoryExecutableStageLease` created
+by the current PID and exactly anchored to that receipt. Fixed
+`controller_inspected` / `posix_staged_runtime_header_v1` semantics fully
+remeasure each private retained descriptor before and after a bounded header
+read, without reopening a source path. Headers are capped at 4,096 bytes and
+classified only as `elf`, `mach_o`, `posix_shebang`,
+`unsupported_shebang`, or `unknown`; accepted shebang directives are ASCII and
+capped at 255 bytes.
+
+Runtime-file and command-binding entries expose only digest/reference,
+classification, and bounded-count metadata. Aggregate evidence reports the
+fixed classifier and staged-byte remeasurement but keeps current lease activity
+and source freshness false after the historical measurement. The Class 0 call
+does not change lease state or clean up descriptors. It establishes no
+effective invocability, interpreter/launcher/loader/library/module/plugin/
+package/environment/dependency identity or resolution, complete runtime or
+toolchain manifest, baseline/future-execution correspondence, authority,
+authorization, action receipt, proposal lineage, worktree, durable
+persistence, dispatch, routing, billing/capacity/circuit, live eligibility, or
+execution. There is no CLI, SQLite/state, runner, worker, subprocess, or
+harness integration.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -312,10 +340,10 @@ action receipt, worktree, Git/subprocess/command invocation, worker or
 supervisor dispatch, profile route, billing/capacity/circuit change, harness
 call, or live eligibility. The proposal chain remains pinned to frozen
 registration evidence v1 and rejects v2 through v4 before any event append.
-The separate executable-resolution receipt is not proposal evidence and does
-not widen this chain. Complete interpreter/dependency/toolchain manifests and
-future `shell=False` execution remain deferred. Only Class 0/1 effects remain
-enabled.
+The separate executable-resolution, staging, and runtime-manifest receipts are
+not proposal evidence and do not widen this chain. Complete interpreter,
+dependency, and runtime/toolchain closure and future `shell=False` execution
+remain deferred. Only Class 0/1 effects remain enabled.
 
 The third slice is the library-only `ordomata.repository_proposal_inspection`
 API `inspect_repository_proposal_evidence(database_path, *, run_id)`. It proves
@@ -448,9 +476,21 @@ equality and produces only namespace-detached, non-executable mode-`0400`
 read-only descriptor leases from same-descriptor process-local captures. It
 adds no authority, authorization, action receipt, durable control-plane
 persistence, proposal lineage, CLI/state/runner integration, route, billing,
-live eligibility, or
-execution. Complete interpreter/dependency manifests and any lease consumer
-remain future boundaries.
+live eligibility, or execution. Complete interpreter/dependency manifests and
+any consumer that mutates or executes staged bytes remain future boundaries;
+the existing lifecycle cleanup only releases the lease, and only the eleventh
+slice's Class 0 inspection otherwise reads it.
+
+The eleventh bounded Phase 3 slice is the separate schema-v1 staged-executable
+runtime-manifest inspection described above. It accepts only an active
+same-PID, exactly anchored lease, fully remeasures its descriptors, and emits a
+digest/reference-only receipt plus aggregate evidence for at most 4,096 bytes
+of fixed ELF, Mach-O, bounded ASCII shebang, unsupported-shebang, or unknown
+classification. It neither resolves an interpreter nor proves dependency/
+runtime closure, invocability, completeness, authority, authorization, action-
+receipt status, proposal/worktree integration, dispatch, routing, billing,
+live eligibility, or execution. It does not mutate or clean up the lease, and
+no CLI/state/runner path consumes it.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and

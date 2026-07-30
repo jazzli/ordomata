@@ -320,6 +320,32 @@ runner, worker, subprocess, harness, or proposal integration exists. Same-UID
 adversarial interference is outside V1 protection; the lease must never be
 passed to or integrated with an untrusted same-UID worker.
 
+The separate library-only schema-v1
+`ordomata.repository_executable_runtime_manifest` boundary is a Class 0 PIP
+measurement over that already-established staging effect, not a PEP. Its
+`inspect_staged_executable_runtime_manifest(expected_staging, *, lease)` API
+accepts only an exact typed staging receipt and its exactly anchored active
+`RepositoryExecutableStageLease` in the creating PID. Under fixed
+`controller_inspected` / `posix_staged_runtime_header_v1` semantics, it fully
+remeasures every private retained descriptor before and after reading at most
+4,096 header bytes. The fixed classifier emits only `elf`, `mach_o`,
+`posix_shebang`, `unsupported_shebang`, or `unknown`; a valid shebang directive
+must be bounded to 255 ASCII bytes. This is byte-level syntax classification,
+not interpreter interpretation or resolution.
+
+The immutable runtime-file and command-binding entries contain only digests,
+privacy-safe references, classifications, and bounded counts. Outward evidence
+is aggregate-only and reports the bounded measurement and staged-byte
+correspondence, while current lease activity remains unverified after the
+historical inspection. The call opens no path, mutates no lease, and performs
+no cleanup. Runtime-manifest and toolchain completeness, effective
+invocability, interpreter/launcher/loader/library/module/plugin/package/
+environment/dependency identity or closure, source freshness, baseline or
+future-execution correspondence, authority, authorization, action-receipt,
+dispatch, durable persistence, proposal-lineage, worktree, routing, billing,
+capacity, circuit, live-eligibility, and execution facts all remain false. No
+CLI, state store, runner, worker, subprocess, or harness integration exists.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -350,9 +376,10 @@ process invocation, worker or supervisor dispatch, route/profile selection,
 billing/capacity/circuit fact, harness call, or live eligibility. The frozen
 registration schema-v1 evidence meaning remains the only version accepted by
 this proposal chain. Schema-v2 through schema-v4 registrations fail before any
-event append. The separate direct-executable measurement receipt is not
-proposal evidence and does not widen this chain. Complete interpreter,
-dependency, and toolchain attestation plus execution receipts remain deferred.
+event append. The separate direct-executable resolution, staging, and runtime-
+manifest receipts are not proposal evidence and do not widen this chain.
+Complete interpreter, dependency, and runtime/toolchain closure plus execution
+receipts remain deferred.
 
 The third slice is the library-only `ordomata.repository_proposal_inspection`
 API `inspect_repository_proposal_evidence(database_path, *, run_id)`. It
@@ -486,6 +513,17 @@ a PDP decision, PEP enforcement receipt, authority envelope, proposal-lineage
 input, or executable action. Durable control-plane persistence, routing,
 billing, live eligibility, CLI/state/runner integration, and execution remain
 absent.
+
+The eleventh bounded Phase 3 slice adds the separate schema-v1 staged-
+executable runtime-manifest PIP described above. It accepts only an active
+same-PID lease exactly anchored to the expected staging receipt, fully
+remeasures each descriptor, and classifies at most 4,096 header bytes as ELF,
+Mach-O, bounded ASCII shebang, unsupported shebang, or unknown. Its digest/
+reference-only receipt and aggregate evidence establish no complete manifest,
+invocability, interpreter or dependency/runtime closure, authority,
+authorization, action receipt, proposal/worktree integration, dispatch,
+routing, billing, live eligibility, or execution. The Class 0 call neither
+mutates nor cleans up the lease and adds no CLI/state/runner path.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and

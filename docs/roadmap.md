@@ -293,9 +293,26 @@ parallel because it cannot exercise worker authority.
   subprocess, or harness integration. Same-UID adversarial interference is
   outside V1 protection, and the lease must never reach an untrusted same-UID
   worker.
-- Complete interpreter/dependency/toolchain manifests and command execution or
-  consumption of the descriptor lease remain future boundaries before any
-  proposal-lineage or operational widening.
+- The eleventh bounded Phase 3 slice implements the separate library-only
+  schema-v1 `ordomata.repository_executable_runtime_manifest` boundary.
+  `inspect_staged_executable_runtime_manifest(expected_staging, *, lease)`
+  requires the exact typed staging receipt and its active, same-PID, exactly
+  anchored lease under fixed `controller_inspected` /
+  `posix_staged_runtime_header_v1` semantics. It fully remeasures each private
+  retained descriptor before and after reading at most 4,096 header bytes and
+  classifies only `elf`, `mach_o`, `posix_shebang`, `unsupported_shebang`, or
+  `unknown`; accepted ASCII shebang directives are capped at 255 bytes. Runtime
+  files and command bindings contain digest/reference and bounded
+  classification metadata only, and outward evidence is aggregate-only. The
+  Class 0 inspection opens no path and neither mutates nor cleans up the lease.
+  Effective invocability, interpreter resolution or identity, dependency and
+  runtime/toolchain closure, completeness, authority, authorization, action-
+  receipt status, proposal/worktree integration, dispatch, routing, billing/
+  capacity/circuit, live eligibility, CLI/state/runner integration,
+  subprocesses, and execution remain false or absent.
+- Complete interpreter/dependency/runtime/toolchain closure and command
+  execution remain future boundaries before any proposal-lineage or
+  operational widening.
 - Extend the three durable enforcing decision/action-receipt chains beyond the
   narrow profile-backed built-in-mock admission, dispatch, and publication
   boundaries only after semantics and parity stabilize.
