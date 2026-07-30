@@ -382,6 +382,49 @@ action receipt, proposal lineage, worktree, dispatch, routing, billing,
 capacity, circuit, live eligibility, subprocess creation, harness use, or
 execution, and the call neither mutates nor cleans up the lease.
 
+Implemented as the fourteenth bounded Phase 3 slice, the separate library-only
+schema-v1 `ordomata.repository_executable_shebang_target_staging` API exposes
+`stage_repository_executable_shebang_target_bytes(registration, *,
+search_directories, expected_target_resolution, expected_requirements,
+expected_runtime, expected_staging, executable_lease,
+expected_target_paths, lease)`. It requires the exact target-resolution
+receipt and full typed upstream chain plus the exactly anchored active same-PID
+executable lease. It freshly revalidates the registration, exact search
+directories, and expected target paths; immediately before mutation, it
+captures each unique target through the same still-pinned descriptor used by
+the action measurement and must reproduce the expected resolution exactly.
+The caller constructs the `RepositoryExecutableShebangTargetStageLease` with a
+dedicated exact concrete absolute, owner-mode-`0700`, empty staging root.
+Authoritative protected roots derived from the revalidated registration, exact
+search directories and targets, and executable source-stage root must remain
+disjoint from it.
+
+For each unique script target, the function creates an exclusive no-follow
+temporary regular file, unlinks it and synchronizes the staging directory
+before writing target bytes, then fixes mode `0400`, synchronizes, independently
+reads back the complete content, closes the writer, and retains only a non-
+inheritable `O_RDONLY` descriptor. Shared targets are staged once with exact
+ordered command correspondence. Native-only input succeeds with a zero-file
+receipt and active lease without inspecting or mutating the target root. A
+complete post-stage target resolution must equal both expected and action
+receipts, and all upstream receipts and the executable lease must still
+validate. The immutable `RepositoryExecutableShebangTargetStagingReceipt` and
+outward evidence expose no raw target paths, target bytes, temporary names, or
+descriptor numbers. The lease retains the caller-supplied root and private
+descriptor state process-locally and is not canonical evidence;
+`cleanup_repository_executable_shebang_target_stage(lease)` releases only the
+target lease.
+
+This is a temporary Class 1 local staging effect with no authority,
+authorization decision, action receipt, persistence, proposal/worktree
+lineage, dispatch, routing, billing, capacity, circuit, live eligibility,
+CLI/state/runner integration, subprocess, harness, or execution integration.
+It interprets no interpreter, `env`, `PATH`, argument, recursive interpreter,
+loader, or dependency semantics and proves no immutability, same-UID/external-
+writer or fork exclusion, external-hardlink or mount-alias exclusion, atomic
+or current freshness, authenticity or provenance, effective invocability,
+crash cleanup, or secure erasure. The Class 0/1 ceiling is unchanged.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -546,7 +589,8 @@ persistence, proposal lineage, CLI/state/runner integration, route, billing,
 live eligibility, or execution. Complete interpreter/dependency manifests and
 any consumer that mutates or executes staged bytes remain future boundaries;
 the existing lifecycle cleanup only releases the lease, and only the eleventh
-through thirteenth slices' Class 0 inspections otherwise read it.
+through thirteenth slices' Class 0 inspections and the fourteenth slice's
+separate Class 1 target staging otherwise read it.
 
 The eleventh bounded Phase 3 slice is the separate schema-v1 staged-executable
 runtime-manifest inspection described above. It accepts only an active
@@ -582,6 +626,14 @@ entries are not applicable; each script target must match across two sequential
 full measurements and final exact-namespace revalidation. Its raw-path/raw-
 byte-free historical receipt adds no authority, proposal lineage, routing,
 live eligibility, subprocess, harness, or execution capability.
+
+The fourteenth bounded Phase 3 slice is the separate schema-v1 direct shebang-
+target staging lease described above. It requires exact expected/action/post-
+stage target resolution and the complete active upstream chain, retains each
+unique script target only as an unlinked mode-`0400` read-only descriptor under
+the dedicated protected-root contract, and treats native-only input as a zero-
+file no-op. The Class 1 library primitive is non-authorizing and has no
+persistence, routing, billing, subprocess, harness, or execution integration.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and

@@ -331,6 +331,41 @@ isolation, circuit, or live gates. It adds no authority, authorization, action
 receipt, proposal/worktree integration, dispatch, route, billing, network,
 subprocess, harness, or execution path.
 
+The fourteenth bounded Phase 3 slice, the separate library-only schema-v1
+`ordomata.repository_executable_shebang_target_staging` boundary, is a Class 1
+local byte-staging effect and supplies no subscription evidence.
+`stage_repository_executable_shebang_target_bytes` requires the exact expected
+target-resolution receipt, complete typed upstream chain, and exactly anchored
+active same-PID executable lease. It freshly revalidates the registration,
+exact search directories, and target paths. At the action boundary, each unique
+target is measured and captured through the same still-pinned descriptor and
+must reproduce the expected receipt before mutation. The dedicated caller-
+owned target root must be exact, absolute, owner-mode-`0700`, empty, and
+disjoint from authoritative protected roots derived from the revalidated
+registration, search directories, target paths, and executable source-stage
+root.
+
+Each unique script target is exclusively staged without following links,
+unlinked with a target-root directory sync before bytes are written, fixed at
+mode `0400`, synchronized, independently read back, and retained only through a
+non-inheritable `O_RDONLY` descriptor. Post-stage target resolution and the
+complete upstream chain must still match exactly. Shared targets are staged
+once; native-only input creates an active zero-file lease without inspecting or
+mutating the target root. Receipts and outward evidence disclose no raw target
+paths, target bytes, temporary names, or descriptor numbers. The process-local
+lease retains the caller-supplied root and private descriptor state; explicit
+cleanup releases only that lease.
+
+This primitive establishes no entitlement, paid-continuation, route, billing,
+capacity, circuit, identity, isolation, or live-gate fact and adds no authority,
+authorization decision, action receipt, persistence, proposal/worktree,
+dispatch, CLI/state/runner, subprocess, network, harness, or execution path. It
+interprets no interpreter, `env`, `PATH`, argument, recursive-interpreter,
+loader, or dependency semantics and proves no immutability, same-UID/external-
+writer or fork exclusion, external-hardlink or mount-alias exclusion, atomic
+or current freshness, authenticity or provenance, effective invocability,
+crash cleanup, or secure erasure. Only Class 0/1 remains enabled.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration and binds it plus an explicit canonical
 `proposal_digest` to an existing immutable Class 0/1
@@ -484,8 +519,8 @@ namespace-detached read-only copies establish no subscription entitlement,
 capacity, paid-continuation, route, billing, circuit, or live-run fact. Nothing
 in the CLI, state store, runner, harness, proposal lineage, or execution path
 consumes the receipt or lease; only the separate Class 0 runtime-manifest,
-shebang-requirements, and shebang-target inspections below read the active
-lease.
+shebang-requirements, and shebang-target inspections plus the separate Class 1
+target-staging primitive below read the active lease.
 
 The eleventh bounded Phase 3 slice adds that separate schema-v1 staged-
 executable runtime-manifest inspection. Its exact active same-PID lease
@@ -523,6 +558,14 @@ sequential full measurements and final exact-namespace revalidation. The
 raw-path/raw-byte-free historical receipt supplies no subscription evidence and
 cannot satisfy routing, billing, capacity, paid-continuation, circuit, live,
 subprocess, harness, or execution gates.
+
+The fourteenth bounded Phase 3 slice adds the separate schema-v1 direct
+shebang-target staging lease described above. Exact expected/action/post-stage
+target resolution, the complete active upstream chain, same-descriptor capture,
+and a dedicated protected-root contract yield only unlinked mode-`0400` read-
+only descriptors; native-only input is a zero-file no-op. The Class 1 library
+primitive supplies no subscription, persistence, routing, billing, capacity,
+paid-continuation, circuit, live, subprocess, harness, or execution evidence.
 
 `compare-run` is an opt-in execution workflow, not a bypass. It requires the same live gate and current evidence for every selected profile before creating comparison records. Trials use one immutable sanitized Class 0 snapshot, randomized repetition blocks, fresh sessions and workspaces, no shared outputs, and no external actions. Reports expose raw automated dimensions and separate human-review fields; they do not declare a winner or auto-promote a profile.
 

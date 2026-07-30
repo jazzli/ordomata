@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import builtins
 from dataclasses import FrozenInstanceError, replace
+import fcntl
 import hashlib
 import json
 import os
@@ -1498,6 +1499,289 @@ class RepositoryExecutableShebangTargetResolutionTests(unittest.TestCase):
                     trees_before,
                 )
             finally:
+                lease.close()
+
+    def test_public_wrapper_preserves_original_measurement_hook_call_shape(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside, search_one, search_two, staging_root = self._workspace(
+                temporary
+            )
+            target = Path(temporary).resolve(strict=True) / "public-hook-target"
+            self._write_target(target, b"public hook target\n")
+            self._set_contents(
+                root,
+                search_one,
+                bare=b"#!" + os.fsencode(target) + b"\n",
+            )
+            registration = self._registration(root)
+            lease, staging, runtime, requirements = self._stage_requirements(
+                registration,
+                (search_one, search_two),
+                staging_root,
+            )
+            real_measure = target_module._measure_target_set
+            observed_paths: list[tuple[Path, ...]] = []
+
+            def observe_measurement_hook(
+                paths: tuple[Path, ...],
+            ) -> object:
+                observed_paths.append(paths)
+                return real_measure(paths)
+
+            try:
+                with patch.object(
+                    target_module,
+                    "_measure_target_set",
+                    side_effect=observe_measurement_hook,
+                ):
+                    receipt = self._inspect(
+                        requirements,
+                        runtime,
+                        staging,
+                        lease,
+                        (target,),
+                    )
+                self.assertEqual(receipt.unique_target_count, 1)
+                self.assertEqual(observed_paths, [(target,), (target,)])
+            finally:
+                lease.close()
+
+    def test_private_consumer_reads_same_pinned_target_once_with_pread(
+        self,
+    ) -> None:
+        target_content = b"same pinned target descriptor content\n"
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside, search_one, search_two, staging_root = self._workspace(
+                temporary
+            )
+            target = Path(temporary).resolve(strict=True) / "captured-target"
+            self._write_target(target, target_content)
+            self._set_contents(
+                root,
+                search_one,
+                bare=b"#!" + os.fsencode(target) + b"\n",
+            )
+            registration = self._registration(root)
+            lease, staging, runtime, requirements = self._stage_requirements(
+                registration,
+                (search_one, search_two),
+                staging_root,
+            )
+            captured: list[tuple[object, ...]] = []
+
+            def capture(
+                descriptor: int,
+                metadata: os.stat_result,
+                measured: target_module._MeasuredTarget,
+            ) -> None:
+                before_state = (
+                    fcntl.fcntl(descriptor, fcntl.F_GETFL),
+                    fcntl.fcntl(descriptor, fcntl.F_GETFD),
+                    os.lseek(descriptor, 0, os.SEEK_CUR),
+                    os.get_inheritable(descriptor),
+                )
+                content = os.pread(descriptor, measured.content_bytes + 1, 0)
+                boundary = os.pread(
+                    descriptor,
+                    1,
+                    measured.content_bytes,
+                )
+                after_state = (
+                    fcntl.fcntl(descriptor, fcntl.F_GETFL),
+                    fcntl.fcntl(descriptor, fcntl.F_GETFD),
+                    os.lseek(descriptor, 0, os.SEEK_CUR),
+                    os.get_inheritable(descriptor),
+                )
+                captured.append(
+                    (
+                        descriptor,
+                        metadata,
+                        measured,
+                        content,
+                        boundary,
+                        before_state,
+                        after_state,
+                    )
+                )
+
+            try:
+                expected = self._inspect(
+                    requirements,
+                    runtime,
+                    staging,
+                    lease,
+                    (target,),
+                )
+                receipt = target_module._inspect_staged_executable_shebang_targets(
+                    requirements,
+                    expected_runtime=runtime,
+                    expected_staging=staging,
+                    lease=lease,
+                    expected_target_paths=(target,),
+                    unique_target_consumer=capture,
+                )
+                self.assertEqual(receipt, expected)
+                self.assertEqual(receipt.direct_target_requirement_count, 2)
+                self.assertEqual(len(captured), 1)
+                (
+                    descriptor,
+                    metadata,
+                    measured,
+                    content,
+                    boundary,
+                    before_state,
+                    after_state,
+                ) = captured[0]
+                self.assertEqual(content, target_content)
+                self.assertEqual(boundary, b"")
+                self.assertEqual(before_state, after_state)
+                self.assertEqual(before_state[0] & os.O_ACCMODE, os.O_RDONLY)
+                self.assertEqual(before_state[2], len(target_content))
+                self.assertFalse(before_state[3])
+                self.assertEqual(
+                    (metadata.st_dev, metadata.st_ino),
+                    measured.identity,
+                )
+                self.assertEqual(
+                    target_module._metadata_signature(metadata),
+                    measured.metadata,
+                )
+                self.assertEqual(
+                    measured.content_digest,
+                    "sha256:" + hashlib.sha256(target_content).hexdigest(),
+                )
+                with self.assertRaises(OSError):
+                    os.fstat(descriptor)
+            finally:
+                lease.close()
+
+    def test_private_consumer_failures_are_redacted_and_close_descriptors(
+        self,
+    ) -> None:
+        private_marker = "private-target-consumer-error-marker"
+        descriptor_directory = self._descriptor_directory()
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside, search_one, search_two, staging_root = self._workspace(
+                temporary
+            )
+            target = Path(temporary).resolve(strict=True) / "failed-capture-target"
+            self._write_target(target, b"failed capture target\n")
+            self._set_contents(
+                root,
+                search_one,
+                bare=b"#!" + os.fsencode(target) + b"\n",
+            )
+            registration = self._registration(root)
+            lease, staging, runtime, requirements = self._stage_requirements(
+                registration,
+                (search_one, search_two),
+                staging_root,
+            )
+            descriptors_before = (
+                None
+                if descriptor_directory is None
+                else frozenset(os.listdir(descriptor_directory))
+            )
+            invocations = 0
+
+            def fail(
+                descriptor: int,
+                metadata: os.stat_result,
+                measured: target_module._MeasuredTarget,
+            ) -> None:
+                del descriptor, metadata, measured
+                nonlocal invocations
+                invocations += 1
+                raise RuntimeError(private_marker)
+
+            try:
+                with self.assertRaises(ValidationError) as caught:
+                    target_module._inspect_staged_executable_shebang_targets(
+                        requirements,
+                        expected_runtime=runtime,
+                        expected_staging=staging,
+                        lease=lease,
+                        expected_target_paths=(target,),
+                        unique_target_consumer=fail,
+                    )
+                self.assertEqual(str(caught.exception), FIXED_TARGET_ERROR)
+                self.assertNotIn(private_marker, str(caught.exception))
+                self.assertIsNone(caught.exception.__cause__)
+                self.assertEqual(invocations, 1)
+                if descriptor_directory is not None:
+                    self.assertEqual(
+                        frozenset(os.listdir(descriptor_directory)),
+                        descriptors_before,
+                    )
+                receipt = self._inspect(
+                    requirements,
+                    runtime,
+                    staging,
+                    lease,
+                    (target,),
+                )
+                self.assertEqual(receipt.unique_target_count, 1)
+            finally:
+                lease.close()
+
+    def test_private_consumer_is_followed_by_namespace_revalidation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, _outside, search_one, search_two, staging_root = self._workspace(
+                temporary
+            )
+            base = Path(temporary).resolve(strict=True)
+            target = base / "post-capture-target"
+            original = base / "post-capture-original"
+            replacement = base / "post-capture-replacement"
+            self._write_target(target, b"captured original target\n")
+            self._write_target(replacement, b"replacement target bytes\n")
+            self._set_contents(
+                root,
+                search_one,
+                bare=b"#!" + os.fsencode(target) + b"\n",
+            )
+            registration = self._registration(root)
+            lease, staging, runtime, requirements = self._stage_requirements(
+                registration,
+                (search_one, search_two),
+                staging_root,
+            )
+            invocations = 0
+
+            def swap_namespace_after_capture(
+                descriptor: int,
+                metadata: os.stat_result,
+                measured: target_module._MeasuredTarget,
+            ) -> None:
+                del metadata
+                nonlocal invocations
+                invocations += 1
+                os.pread(descriptor, measured.content_bytes, 0)
+                target.rename(original)
+                replacement.rename(target)
+
+            try:
+                with self.assertRaises(ValidationError) as caught:
+                    target_module._inspect_staged_executable_shebang_targets(
+                        requirements,
+                        expected_runtime=runtime,
+                        expected_staging=staging,
+                        lease=lease,
+                        expected_target_paths=(target,),
+                        unique_target_consumer=swap_namespace_after_capture,
+                    )
+                self.assertEqual(str(caught.exception), FIXED_TARGET_ERROR)
+                self.assertIsNone(caught.exception.__cause__)
+                self.assertEqual(invocations, 1)
+            finally:
+                if original.exists():
+                    if target.exists():
+                        target.rename(replacement)
+                    original.rename(target)
                 lease.close()
 
     def test_transient_target_descriptors_close_on_success_and_failure(self) -> None:

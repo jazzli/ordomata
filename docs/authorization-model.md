@@ -421,6 +421,47 @@ paths selecting the same inode fail, but external hardlink or mount aliases,
 same-UID tampering, absence of external writable descriptors, filesystem
 immutability, atomicity, and current freshness remain unverified.
 
+The fourteenth bounded Phase 3 slice adds a separate Class 1 local staging
+primitive, not a PDP or PEP:
+`ordomata.repository_executable_shebang_target_staging` exposes
+`stage_repository_executable_shebang_target_bytes`. It requires the exact
+expected target-resolution receipt, its complete requirements/runtime/staging
+receipt chain, and the exactly anchored active same-PID executable-source
+lease. The registration, exact search directories, and expected target paths
+are freshly revalidated. Immediately before the first effect, an action-bound
+inspection measures and captures each unique target through the same
+still-pinned descriptor and must exactly reproduce the expected resolution.
+The caller-owned target root must be a dedicated exact concrete absolute,
+owner-mode-`0700`, empty directory disjoint from authoritative protected roots
+derived from the revalidated registration, exact search directories and
+targets, and source staging root.
+
+Each unique script target is staged once through an exclusive no-follow
+temporary regular file. Its pathname is unlinked and the target-root directory
+is synchronized before target bytes are written; after mode `0400`, file
+synchronization, and independent complete readback, the writer closes and only
+a non-inheritable `O_RDONLY` descriptor remains. Command correspondence is
+exact and ordered. Native-only input produces a zero-file receipt and active
+lease without inspecting or mutating the target root. Full post-stage target
+resolution must equal expected and action receipts, and the complete upstream
+chain and source lease must still validate. The immutable
+`RepositoryExecutableShebangTargetStagingReceipt` and outward evidence expose
+no raw target paths, target bytes, temporary names, or descriptor numbers. The
+`RepositoryExecutableShebangTargetStageLease` retains the caller-supplied root
+and private descriptor state process-locally and is not canonical evidence;
+explicit cleanup releases only the target lease.
+
+The receipt is evidence of a temporary Class 1 byte-staging effect, not
+authority, authorization, or an action receipt. Nothing consumes it for
+persistence, proposal/worktree lineage, dispatch, routing, billing, capacity,
+circuit, live eligibility, CLI/state/runner integration, subprocess, harness,
+or execution. It establishes no interpreter, `env`, `PATH`, argument,
+recursive-interpreter, loader, or dependency semantics and no immutability,
+same-UID/external-writer or fork exclusion, external-hardlink or mount-alias
+exclusion, atomic or current freshness, authenticity or provenance, effective
+invocability, crash cleanup, or secure erasure. The implemented authorization
+ceiling remains Class 0/1.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -627,6 +668,14 @@ sequential full measurements and final exact-namespace revalidation. The
 raw-path/raw-byte-free historical receipt is not a PDP decision or PEP receipt,
 grants no authority, extends no proposal lineage, and cannot support routing,
 live eligibility, subprocess creation, or execution.
+
+The fourteenth bounded Phase 3 slice adds the separate schema-v1 direct
+shebang-target staging lease described above. Its exact expected/action/post-
+stage resolution chain, active upstream correspondence, same-descriptor
+capture, and dedicated protected-root contract produce only unlinked mode-
+`0400` read-only descriptors; native-only input is a zero-file no-op. It is a
+Class 1 local effect, not authorization or a PEP action receipt, and grants no
+proposal, route, billing, live, subprocess, harness, or execution capability.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
