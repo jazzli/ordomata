@@ -320,6 +320,40 @@ cannot affect candidate ranking, routing, dispatch, billing, capacity, circuit,
 live eligibility, proposal/worktree state, authorization, subprocess, harness,
 or execution decisions.
 
+The fourteenth bounded Phase 3 slice, the separate library-only schema-v1
+`ordomata.repository_executable_shebang_target_staging` Class 1 primitive,
+also cannot make a route eligible. `stage_repository_executable_shebang_target_bytes`
+requires the exact expected target-resolution receipt, full typed upstream
+chain, and exactly anchored active same-PID executable lease. It freshly
+revalidates the registration, exact search directories, and target paths. Its
+action measurement captures each unique target through the same still-pinned
+descriptor and must reproduce the expected receipt before mutation. The
+dedicated caller-owned target root must be exact, absolute, owner-mode-`0700`,
+empty, and disjoint from authoritative protected roots derived from the
+revalidated registration, search directories, target paths, and executable
+source-stage root.
+
+Every unique script target is exclusively staged without following links,
+unlinked with a target-root directory sync before bytes are written, fixed at
+mode `0400`, synchronized, independently read back, and retained only through a
+non-inheritable `O_RDONLY` descriptor. Post-stage target resolution and the
+full upstream chain must still match exactly. Shared targets are staged once;
+native-only input yields an active zero-file lease without inspecting or
+mutating the target root. Receipts and outward evidence expose no raw target
+paths, target bytes, temporary names, or descriptor numbers. The process-local
+lease retains the caller-supplied root and private descriptor state; explicit
+cleanup releases only that lease.
+
+This temporary Class 1 byte staging creates no authority, authorization or
+action receipt and cannot enter candidate ranking, dispatch, billing, capacity,
+circuit, live, proposal/worktree, persistence, CLI/state/runner, subprocess,
+harness, or execution decisions. It establishes no interpreter, `env`, `PATH`,
+argument, recursive-interpreter, loader, or dependency semantics and no
+immutability, same-UID/external-writer or fork exclusion, external-hardlink or
+mount-alias exclusion, atomic or current freshness, authenticity or provenance,
+effective invocability, crash cleanup, or secure erasure. The Class 0/1 ceiling
+remains unchanged.
+
 The separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` API records a
 **repository-registration selection**, not an execution-profile or model
@@ -503,6 +537,14 @@ sequential full measurements and final exact-namespace revalidation. The
 raw-path/raw-byte-free historical receipt cannot enter candidate ranking,
 routing, dispatch, billing, live eligibility, subprocess, or execution
 decisions.
+
+The fourteenth bounded Phase 3 slice adds the separate schema-v1 direct
+shebang-target staging lease described above. Exact expected/action/post-stage
+resolution, the complete active upstream chain, same-descriptor capture, and a
+dedicated protected-root contract produce only unlinked mode-`0400` read-only
+descriptors; native-only input is a zero-file no-op. This Class 1 library
+primitive cannot affect ranking, route eligibility, dispatch, billing,
+capacity, circuit, live, subprocess, harness, or execution decisions.
 
 ## Adaptive promoted-profile routing (target)
 

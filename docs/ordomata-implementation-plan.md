@@ -56,8 +56,9 @@ The repository already provides the foundation this plan extends:
   a separate library-only schema-v1 direct-executable resolver returns bounded
   sequential evidence after fresh exact-v4 revalidation without claiming an
   atomic snapshot, freshness, authority, or execution; the bounded staging,
-  runtime-manifest, shebang-requirements, and shebang-target-resolution
-  consumers remain library-only and likewise grant no authority or execution;
+  runtime-manifest, shebang-requirements, shebang-target-resolution, and
+  shebang-target-staging consumers remain library-only and likewise grant no
+  authority or execution;
   and library-only,
   controller-owned repository-proposal selection and binding remains pinned to
   v1 evidence: an existing `CREATED`
@@ -392,6 +393,50 @@ authorization, an action receipt, proposal lineage, worktree, route, live
 eligibility, subprocess, harness, or execution. It neither mutates nor cleans
 up the lease and does not widen any operational boundary.
 
+The fourteenth slice adds the separate library-only schema-v1
+`ordomata.repository_executable_shebang_target_staging` boundary.
+`stage_repository_executable_shebang_target_bytes(registration, *,
+search_directories, expected_target_resolution, expected_requirements,
+expected_runtime, expected_staging, executable_lease,
+expected_target_paths, lease)` requires the exact target-resolution receipt,
+complete typed upstream receipt chain, and exactly anchored active same-PID
+executable lease. Registration, exact search directories, and expected target
+paths are freshly revalidated. Immediately before the first mutation, an
+action-boundary target inspection measures and captures each unique target
+through the same still-pinned descriptor and must exactly reproduce the
+expected resolution. The caller constructs the
+`RepositoryExecutableShebangTargetStageLease` with a dedicated exact concrete
+absolute, owner-mode-`0700`, empty staging root. Authoritative protected roots
+derived from the revalidated registration, exact search directories and
+targets, and executable source staging root must remain disjoint from it.
+
+Each unique script target is copied once through an exclusive no-follow
+temporary regular file. Its pathname is unlinked and the target-root directory
+is synchronized before target bytes are written; mode `0400`, file
+synchronization, independent complete readback, writer close, and retention of
+only a non-inheritable `O_RDONLY` descriptor follow. Command correspondence is
+exact and ordered. Native-only input returns a zero-file receipt and active
+lease without inspecting or mutating the target root. Full post-stage target
+resolution must equal expected and action receipts, and the complete upstream
+chain and executable lease must still validate. The immutable
+`RepositoryExecutableShebangTargetStagingReceipt` and outward evidence omit raw
+target paths, target bytes, temporary names, and descriptor numbers. The lease
+retains the caller-supplied root and private descriptor state process-locally
+and is not canonical evidence;
+`cleanup_repository_executable_shebang_target_stage(lease)` releases only the
+target lease.
+
+The result establishes only a temporary Class 1 local byte-staging effect. It
+adds no authority, authorization decision, action receipt, persistence,
+proposal/worktree lineage, dispatch, routing, billing, capacity, circuit, live
+eligibility, CLI/state/runner integration, subprocess, harness, or execution
+path. It interprets no interpreter, `env`, `PATH`, argument, recursive
+interpreter, loader, or dependency semantics and proves no immutability,
+same-UID/external-writer or fork exclusion, external-hardlink or mount-alias
+exclusion, atomic or current freshness, authenticity or provenance, effective
+invocability, crash cleanup, or secure erasure. Only the Class 0/1 ceiling
+remains enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -410,8 +455,9 @@ or status transition, authorization decision or action receipt, worktree,
 command/process/worker/supervisor dispatch, routing, billing, harness, or live-
 route effect. This chain remains pinned to frozen registration evidence v1 and
 rejects v2 through v4 before any event append. The separate executable-
-resolution, staging, runtime-manifest, shebang-requirements, and shebang-target-
-resolution receipts are not proposal evidence and do not widen that chain.
+resolution, staging, runtime-manifest, shebang-requirements, shebang-target-
+resolution, and shebang-target-staging receipts are not proposal evidence and
+do not widen that chain.
 Complete interpreter,
 dependency, and runtime/toolchain closure and execution receipts remain
 deferred.
@@ -546,7 +592,8 @@ CLI/state/runner integration, route, billing, live, or execution path.
 Complete interpreter/dependency manifests and any consumer that mutates or
 executes staged bytes remain future boundaries; the existing lifecycle cleanup
 only releases the lease, and only the eleventh through thirteenth slices'
-Class 0 inspections otherwise read it.
+Class 0 inspections and the fourteenth slice's separate Class 1 target staging
+otherwise read it.
 
 The eleventh bounded Phase 3 slice is the separate schema-v1 staged-executable
 runtime-manifest inspection described above. An exact expected staging receipt
@@ -582,6 +629,14 @@ entries are not applicable; each script target must match across two sequential
 full measurements and final exact-namespace revalidation. The raw-path/raw-
 byte-free historical receipt grants no authority, extends no proposal lineage,
 and cannot support routing, live eligibility, subprocesses, or execution.
+
+The fourteenth bounded Phase 3 slice is the separate schema-v1 direct shebang-
+target staging lease described above. Exact expected/action/post-stage target
+resolution, the complete active upstream chain, same-descriptor capture, and a
+dedicated protected-root contract yield only unlinked mode-`0400` read-only
+descriptors. Native-only input is a zero-file no-op. The Class 1 library
+primitive is non-authorizing and has no persistence, routing, billing,
+subprocess, harness, or execution integration.
 
 The target semantics for Class 3 standing envelopes, irreversible actions,
 the non-delegable root-authority kernel, consequential outbox execution,
@@ -1147,6 +1202,14 @@ Only Class 0/1 effects remain enabled.
     interpreter/`env`/`PATH`/argument semantics, dependency closure,
     authorization, proposal lineage, route eligibility, or execution is
     established);
+  - controller-copied direct absolute shebang-target bytes (separate schema-v1
+    Class 1 process-local lease implemented; exact expected/action/post-stage
+    target resolution, the complete active upstream chain, same-descriptor
+    capture, authoritative protected roots, unlinked mode-`0400` read-only
+    descriptors, and native-only zero-file behavior are implemented, while
+    semantic interpreter/dependency closure, authorization, persistence,
+    proposal/worktree integration, routing, billing, subprocess, harness, and
+    execution consumption remain deferred);
   - protected and allowed paths;
   - generated/vendor exclusions (schema v2 validation implemented; operational
     consumption remains deferred);

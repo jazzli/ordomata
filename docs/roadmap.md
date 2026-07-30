@@ -366,6 +366,35 @@ parallel because it cannot exercise worker authority.
   call mutates or cleans up no lease and adds no semantic interpreter,
   dependency/toolchain, authority, authorization, action-receipt, proposal,
   worktree, route, live, subprocess, harness, or execution capability.
+- The fourteenth bounded Phase 3 slice implements the separate library-only
+  schema-v1 `ordomata.repository_executable_shebang_target_staging` Class 1
+  primitive. `stage_repository_executable_shebang_target_bytes` requires exact
+  expected/action/post-stage target-resolution equality, the complete typed
+  upstream chain, and the exactly anchored active same-PID executable lease.
+  Registration, exact search directories and target paths are revalidated;
+  action-boundary bytes are captured through the same pinned descriptor used
+  for measurement. The dedicated caller-owned target root must be exact,
+  absolute, owner-mode-`0700`, empty, and disjoint from authoritative protected
+  roots derived from the registration, search directories, target paths, and
+  executable source-stage root.
+  Each unique script target is created exclusively without following links,
+  unlinked with a target-root directory sync before bytes are written, fixed at
+  mode `0400`, synchronized, independently read back, and retained only through
+  a non-inheritable `O_RDONLY` descriptor. Shared targets are staged once; a
+  native-only target set produces a zero-file lease without touching the target
+  root. The receipt and outward evidence expose no raw target paths, target
+  bytes, temporary names, or descriptor numbers; the process-local lease holds
+  the caller-supplied root and private descriptor state, and explicit cleanup
+  releases only that lease.
+  This temporary Class 1 staging effect grants no authority, authorization or
+  action receipt and has no persistence, proposal/worktree, routing, billing,
+  capacity, circuit, dispatch, CLI/state/runner, subprocess, harness, or
+  execution integration. It establishes no interpreter/`env`/`PATH`/argument,
+  recursive-interpreter, loader, or dependency semantics and no immutability,
+  same-UID/external-writer or fork exclusion, external-hardlink or mount-alias
+  exclusion, atomic or current freshness, authenticity or provenance,
+  effective invocability, crash cleanup, or secure erasure. The Class 0/1
+  ceiling is unchanged.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

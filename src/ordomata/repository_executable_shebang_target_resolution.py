@@ -18,7 +18,7 @@ from pathlib import Path
 import re
 import stat
 import unicodedata
-from typing import Any
+from typing import Any, Callable
 
 from .authorization import canonical_digest
 from .errors import ValidationError
@@ -274,6 +274,12 @@ class _MeasuredTarget:
     metadata_digest: str = field(repr=False)
     content_digest: str = field(repr=False)
     content_bytes: int
+
+
+_UniqueTargetConsumer = Callable[
+    [int, os.stat_result, _MeasuredTarget],
+    None,
+]
 
 
 def _measurement_ref_projection(
@@ -1974,10 +1980,61 @@ def _target_metadata_digest(
     )
 
 
+def _consume_measured_target(
+    descriptor: int,
+    metadata: os.stat_result,
+    measured: _MeasuredTarget,
+    consumer: _UniqueTargetConsumer,
+) -> None:
+    """Invoke one private consumer without surrendering the pinned FD state."""
+
+    try:
+        before_metadata = os.fstat(descriptor)
+        before_status_flags = fcntl.fcntl(descriptor, fcntl.F_GETFL)
+        before_descriptor_flags = fcntl.fcntl(descriptor, fcntl.F_GETFD)
+        before_offset = os.lseek(descriptor, 0, os.SEEK_CUR)
+        before_inheritable = os.get_inheritable(descriptor)
+    except (OSError, ValueError):
+        raise _InvalidShebangTargetResolution from None
+    if (
+        _metadata_signature(metadata) != measured.metadata
+        or _metadata_signature(before_metadata) != measured.metadata
+        or (before_metadata.st_dev, before_metadata.st_ino)
+        != measured.identity
+        or before_status_flags & os.O_ACCMODE != os.O_RDONLY
+        or before_offset != measured.content_bytes
+        or before_inheritable
+    ):
+        raise _InvalidShebangTargetResolution
+    try:
+        consumer(descriptor, metadata, measured)
+    except Exception:
+        raise _InvalidShebangTargetResolution from None
+    try:
+        after_metadata = os.fstat(descriptor)
+        after_status_flags = fcntl.fcntl(descriptor, fcntl.F_GETFL)
+        after_descriptor_flags = fcntl.fcntl(descriptor, fcntl.F_GETFD)
+        after_offset = os.lseek(descriptor, 0, os.SEEK_CUR)
+        after_inheritable = os.get_inheritable(descriptor)
+    except (OSError, ValueError):
+        raise _InvalidShebangTargetResolution from None
+    if (
+        _metadata_signature(after_metadata) != measured.metadata
+        or (after_metadata.st_dev, after_metadata.st_ino)
+        != measured.identity
+        or after_status_flags != before_status_flags
+        or after_descriptor_flags != before_descriptor_flags
+        or after_offset != before_offset
+        or after_inheritable != before_inheritable
+    ):
+        raise _InvalidShebangTargetResolution
+
+
 def _measure_target_path(
     path: Path,
     *,
     total_measured_bytes: int,
+    unique_target_consumer: _UniqueTargetConsumer | None = None,
 ) -> _MeasuredTarget:
     spelling = os.fspath(path)
     components = tuple(spelling[1:].split("/"))
@@ -2050,6 +2107,29 @@ def _measure_target_path(
         ):
             raise _InvalidShebangTargetResolution
 
+        identity_ref = _target_identity_ref(before)
+        measured = _MeasuredTarget(
+            path=path,
+            path_ref=_path_ref(path),
+            identity=(before.st_dev, before.st_ino),
+            metadata=_metadata_signature(before),
+            directory_chain=tuple(directory_chain),
+            filesystem_identity_ref=identity_ref,
+            metadata_digest=_target_metadata_digest(
+                before,
+                identity_ref=identity_ref,
+            ),
+            content_digest="sha256:" + digest.hexdigest(),
+            content_bytes=before.st_size,
+        )
+        if unique_target_consumer is not None:
+            _consume_measured_target(
+                file_descriptor,
+                before,
+                measured,
+                unique_target_consumer,
+            )
+
         reopened_descriptor: int | None = None
         try:
             reopened_descriptor, reopened = _open_target_at(
@@ -2079,21 +2159,7 @@ def _measure_target_path(
             or parent_after_reopen != parent_signature
         ):
             raise _InvalidShebangTargetResolution
-        identity_ref = _target_identity_ref(before)
-        return _MeasuredTarget(
-            path=path,
-            path_ref=_path_ref(path),
-            identity=(before.st_dev, before.st_ino),
-            metadata=_metadata_signature(before),
-            directory_chain=tuple(directory_chain),
-            filesystem_identity_ref=identity_ref,
-            metadata_digest=_target_metadata_digest(
-                before,
-                identity_ref=identity_ref,
-            ),
-            content_digest="sha256:" + digest.hexdigest(),
-            content_bytes=before.st_size,
-        )
+        return measured
     finally:
         if file_descriptor is not None:
             try:
@@ -2255,6 +2321,42 @@ def _measure_target_set(paths: tuple[Path, ...]) -> tuple[_MeasuredTarget, ...]:
     return tuple(measured)
 
 
+def _measure_target_set_with_consumer(
+    paths: tuple[Path, ...],
+    consumer: _UniqueTargetConsumer,
+) -> tuple[_MeasuredTarget, ...]:
+    """Measure once while handing each still-pinned unique target to a sink."""
+
+    measured: list[_MeasuredTarget] = []
+    identities: set[tuple[int, int]] = set()
+    total_bytes = 0
+
+    def consume_unique_target(
+        descriptor: int,
+        metadata: os.stat_result,
+        target: _MeasuredTarget,
+    ) -> None:
+        if target.identity in identities:
+            raise _InvalidShebangTargetResolution
+        consumer(descriptor, metadata, target)
+
+    for path in paths:
+        target = _measure_target_path(
+            path,
+            total_measured_bytes=total_bytes,
+            unique_target_consumer=consume_unique_target,
+        )
+        if (
+            target.identity in identities
+            or not _target_namespace_matches(target)
+        ):
+            raise _InvalidShebangTargetResolution
+        identities.add(target.identity)
+        measured.append(target)
+        total_bytes += target.content_bytes
+    return tuple(measured)
+
+
 def _public_measurement(
     measured: _MeasuredTarget,
 ) -> RepositoryExecutableShebangTargetMeasurement:
@@ -2323,15 +2425,16 @@ def _public_target_requirement(
     return value
 
 
-def inspect_staged_executable_shebang_targets(
+def _inspect_staged_executable_shebang_targets(
     expected_requirements: RepositoryExecutableShebangRequirementsReceipt,
     *,
     expected_runtime: RepositoryExecutableRuntimeManifestReceipt,
     expected_staging: RepositoryExecutableStagingReceipt,
     lease: RepositoryExecutableStageLease,
     expected_target_paths: tuple[Path, ...],
+    unique_target_consumer: _UniqueTargetConsumer | None = None,
 ) -> RepositoryExecutableShebangTargetResolutionReceipt:
-    """Measure the exact direct canonical target set from one active lease."""
+    """Internal inspector with an optional same-descriptor action consumer."""
 
     try:
         _require_supported_platform()
@@ -2351,7 +2454,13 @@ def inspect_staged_executable_shebang_targets(
             derived,
             expected_target_paths,
         )
-        first_measurement = _measure_target_set(paths)
+        if unique_target_consumer is None:
+            first_measurement = _measure_target_set(paths)
+        else:
+            first_measurement = _measure_target_set_with_consumer(
+                paths,
+                unique_target_consumer,
+            )
 
         (
             middle_derived,
@@ -2508,3 +2617,22 @@ def inspect_staged_executable_shebang_targets(
         ValidationError,
     ):
         raise ValidationError(_INVALID_MESSAGE) from None
+
+
+def inspect_staged_executable_shebang_targets(
+    expected_requirements: RepositoryExecutableShebangRequirementsReceipt,
+    *,
+    expected_runtime: RepositoryExecutableRuntimeManifestReceipt,
+    expected_staging: RepositoryExecutableStagingReceipt,
+    lease: RepositoryExecutableStageLease,
+    expected_target_paths: tuple[Path, ...],
+) -> RepositoryExecutableShebangTargetResolutionReceipt:
+    """Measure the exact direct canonical target set from one active lease."""
+
+    return _inspect_staged_executable_shebang_targets(
+        expected_requirements,
+        expected_runtime=expected_runtime,
+        expected_staging=expected_staging,
+        lease=lease,
+        expected_target_paths=expected_target_paths,
+    )
