@@ -672,6 +672,34 @@ integration. V1 does not protect against adversarial interference by another
 process with the same UID, and the descriptor lease must never be handed to or
 integrated with an untrusted same-UID worker.
 
+The separate library-only schema-v1
+`ordomata.repository_executable_runtime_manifest` boundary exposes
+`inspect_staged_executable_runtime_manifest(expected_staging, *, lease)`. The
+caller must supply an exact typed staging receipt and the active process-local
+`RepositoryExecutableStageLease` anchored to that exact receipt; a different
+PID, lifecycle state, canonical receipt, declaration binding, or retained-file
+set fails closed. Under fixed `controller_inspected` /
+`posix_staged_runtime_header_v1` semantics, the inspector fully rehashes every
+private retained descriptor before and after reading at most 4,096 header bytes
+and opens no source path. Its fixed byte-level classifications are `elf`,
+`mach_o`, `posix_shebang`, `unsupported_shebang`, and `unknown`; an accepted
+shebang directive is ASCII and capped at 255 bytes. A shebang classification
+is syntax measurement only and neither interprets the directive nor resolves
+an interpreter.
+
+Each manifest entry is limited to digest/reference, classification, and bounded
+measurement metadata; raw repository or staging paths, argv, file/header bytes,
+and shebang directives are not exposed. Outward evidence is aggregate-only.
+Inspection is read-only and neither changes lease state nor performs cleanup.
+Effective invocability; interpreter identity, provenance, authenticity,
+resolution, or compatibility; loader, library, module, plugin, package,
+configuration, environment, dependency, runtime, or toolchain closure; and
+manifest completeness remain unverified. Execution correspondence, authority,
+authorization, action-receipt status, dispatch, proposal lineage, durable
+control-plane persistence, worktree integration, routing, billing, capacity,
+circuit, and live eligibility are explicit false facts. There is no CLI,
+database/state, runner, worker, subprocess, harness, or execution integration.
+
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
 It freshly revalidates a `RepositoryRegistration`, requires an existing
@@ -827,8 +855,21 @@ in-process lease without making the bytes executable. It widens neither
 registration nor proposal lineage and supplies no authority, authorization,
 action receipt, durable control-plane persistence, dispatch, route, billing,
 live, CLI/state/runner, or execution capability. Complete interpreter/
-dependency/toolchain coverage
-and any consumer or execution boundary remain deferred. Only Class 0/1 effects
+dependency/toolchain coverage and any consumer that mutates or executes staged
+bytes remain deferred; the existing lifecycle cleanup only releases the lease,
+and only the eleventh slice's Class 0 inspection otherwise reads it. Only Class
+0/1 effects remain enabled.
+
+The eleventh bounded Phase 3 slice is the separate schema-v1 staged-executable
+runtime-manifest inspection described above. An active same-PID lease anchored
+to the exact expected staging receipt is mandatory. Complete descriptor rehash
+and bounded byte-level classification produce only digest/reference entries and
+aggregate evidence for ELF, Mach-O, bounded ASCII shebang, unsupported shebang,
+or unknown content. The slice neither resolves interpreters nor establishes
+invocability, completeness, dependency/runtime closure, authority,
+authorization, an action receipt, proposal/worktree integration, dispatch,
+routing, billing, live eligibility, CLI/state/runner integration, subprocess,
+or execution. It does not mutate or clean up the lease. Only Class 0/1 effects
 remain enabled.
 
 The lineage digest, downstream content links, and SQLite append-only guards

@@ -295,6 +295,31 @@ harness path consumes it. Same-UID adversarial interference is outside V1
 protection; the lease must never be given to or integrated with an untrusted
 same-UID worker.
 
+The eleventh slice adds the separate library-only schema-v1
+`ordomata.repository_executable_runtime_manifest` boundary. Its
+`inspect_staged_executable_runtime_manifest(expected_staging, *, lease)` API
+requires an exact typed staging receipt and the active process-local
+`RepositoryExecutableStageLease` created by the current PID and exactly
+anchored to that receipt. Under fixed `controller_inspected` /
+`posix_staged_runtime_header_v1` semantics, the inspector opens no source path,
+fully remeasures each private retained descriptor before and after reading at
+most 4,096 header bytes, and classifies only `elf`, `mach_o`,
+`posix_shebang`, `unsupported_shebang`, or `unknown`. Accepted shebang
+directives are bounded to 255 ASCII bytes; the directive is digest-bound but
+neither exposed nor interpreted.
+
+Immutable runtime-file and command-binding entries contain digest/reference,
+classification, and bounded measurement metadata only, and outward evidence is
+aggregate-only. The Class 0 inspection neither mutates nor cleans up the lease.
+It proves no current lease activity after measurement, current source
+freshness, effective invocability, interpreter resolution or identity,
+launcher/loader/library/module/plugin/package/environment/dependency coverage,
+complete runtime or toolchain manifest, baseline/future-execution
+correspondence, authority, authorization, action receipt, proposal lineage,
+worktree, durable persistence, dispatch, routing, billing/capacity/circuit,
+live eligibility, or execution. It adds no CLI, state, runner, worker,
+subprocess, or harness integration.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -313,9 +338,9 @@ or status transition, authorization decision or action receipt, worktree,
 command/process/worker/supervisor dispatch, routing, billing, harness, or live-
 route effect. This chain remains pinned to frozen registration evidence v1 and
 rejects v2 through v4 before any event append. The separate executable-
-resolution receipt is not proposal evidence and does not widen that chain.
-Complete interpreter/dependency/toolchain attestation and execution receipts
-remain deferred.
+resolution, staging, and runtime-manifest receipts are not proposal evidence
+and do not widen that chain. Complete interpreter, dependency, and runtime/
+toolchain closure and execution receipts remain deferred.
 Only Class 0/1 effects remain enabled.
 
 The third Phase 3 slice is the library-only
@@ -444,8 +469,21 @@ descriptor copies after exact expected/action/post-stage resolution equality.
 It widens no registration or proposal schema and adds no authority,
 authorization, action receipt, durable control-plane persistence,
 CLI/state/runner integration, route, billing, live, or execution path.
-Complete interpreter/dependency
-manifests and any lease-consumption action remain future boundaries.
+Complete interpreter/dependency manifests and any consumer that mutates or
+executes staged bytes remain future boundaries; the existing lifecycle cleanup
+only releases the lease, and only the eleventh slice's Class 0 inspection
+otherwise reads it.
+
+The eleventh bounded Phase 3 slice is the separate schema-v1 staged-executable
+runtime-manifest inspection described above. An exact expected staging receipt
+and its active same-PID, exactly anchored lease are mandatory. Full descriptor
+remeasurement plus at most 4,096 header bytes yields only digest/reference
+entries and aggregate evidence for ELF, Mach-O, bounded ASCII shebang,
+unsupported shebang, or unknown classification. The Class 0 call neither
+mutates nor cleans up the lease and proves no invocability, interpreter or
+dependency/runtime closure, completeness, authority, authorization, action
+receipt, proposal/worktree integration, dispatch, routing, billing, live
+eligibility, or execution. It adds no CLI/state/runner path.
 
 The target semantics for Class 3 standing envelopes, irreversible actions,
 the non-delegable root-authority kernel, consequential outbox execution,
@@ -962,10 +1000,11 @@ without a trusted anchor, coherent forgery or replay remains indistinguishable.
 It performs no durable reinspection, freshness proof, persistence, repair,
 enforcement, authorization, or action. The proposal chain remains registration-
 evidence-v1-only, so v2 through v4 fail before an event append. The separate
-point-in-time direct-executable receipt is implemented but is not proposal
-evidence or execution authority. Complete interpreter/dependency/toolchain
-receipts, future `shell=False` action-boundary execution, and every worker-cell
-deliverable below remain deferred. Only Class 0/1 effects remain enabled.
+point-in-time direct-executable receipt, temporary staging lease, and bounded
+staged runtime-header manifest are implemented but are not proposal evidence or
+execution authority. Complete interpreter/dependency/runtime/toolchain closure,
+future `shell=False` action-boundary execution, and every worker-cell deliverable
+below remain deferred. Only Class 0/1 effects remain enabled.
 
 ### Deliverables
 
@@ -981,11 +1020,16 @@ deliverable below remain deferred. Only Class 0/1 effects remain enabled.
   - controller-measured direct-executable resolution (separate schema-v1
     receipt implemented; current freshness, provenance, invocability,
     interpreter/dependency coverage, and completeness remain unverified; the
-    narrow descriptor-staging consumer below is implemented, while execution
-    consumption remains deferred);
+    narrow descriptor-staging and runtime-header inspection consumers below are
+    implemented, while execution consumption remains deferred);
   - controller-copied direct-executable byte staging (separate schema-v1
     process-local lease implemented; authorization, isolation-cell handoff,
     and execution consumption remain deferred);
+  - controller-inspected staged runtime-header manifest (separate schema-v1
+    Class 0 receipt implemented; exact active same-PID lease anchoring, full
+    descriptor remeasurement, and bounded ELF/Mach-O/ASCII-shebang
+    classification are implemented, while interpreter resolution,
+    dependency/runtime closure, completeness, and execution remain deferred);
   - protected and allowed paths;
   - generated/vendor exclusions (schema v2 validation implemented; operational
     consumption remains deferred);

@@ -239,6 +239,29 @@ CLI, state, proposal, runner, worker, subprocess, or harness integration.
 Same-UID adversarial interference is outside V1 protection, and the lease must
 never be passed to or integrated with an untrusted same-UID worker.
 
+The separate library-only schema-v1
+`ordomata.repository_executable_runtime_manifest` boundary reads the active
+lease only for Class 0 measurement; it supplies no subscription evidence.
+`inspect_staged_executable_runtime_manifest(expected_staging, *, lease)`
+requires an exact typed staging receipt and its active same-PID, exactly
+anchored lease. Fixed `controller_inspected` /
+`posix_staged_runtime_header_v1` semantics open no source path, fully remeasure
+every private retained descriptor before and after reading at most 4,096 header
+bytes, and classify only `elf`, `mach_o`, `posix_shebang`,
+`unsupported_shebang`, or `unknown`. Accepted shebang directives are ASCII and
+limited to 255 bytes, but their content is neither exposed nor interpreted.
+
+Runtime-file and command-binding entries contain digest/reference,
+classification, and bounded-count metadata only, with aggregate-only outward
+evidence. The inspection neither changes lease state nor cleans up a
+descriptor. It establishes no effective invocability, interpreter identity or
+resolution, dependency/environment/runtime/toolchain closure, complete
+manifest, authority, authorization, action receipt, proposal lineage,
+worktree, dispatch, route, billing, capacity, paid-continuation, circuit, live-
+gate, or execution fact. It cannot satisfy any subscription-only prerequisite
+and adds no CLI, state, runner, worker, subprocess, network, harness, or live
+integration.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration and binds it plus an explicit canonical
 `proposal_digest` to an existing immutable Class 0/1
@@ -391,7 +414,19 @@ described above. Exact expected/action/post-stage resolution equality and
 namespace-detached read-only copies establish no subscription entitlement,
 capacity, paid-continuation, route, billing, circuit, or live-run fact. Nothing
 in the CLI, state store, runner, harness, proposal lineage, or execution path
-consumes the receipt or lease.
+consumes the receipt or lease; only the separate Class 0 runtime-manifest
+inspection below reads the active lease.
+
+The eleventh bounded Phase 3 slice adds that separate schema-v1 staged-
+executable runtime-manifest inspection. Its exact active same-PID lease
+anchoring, full descriptor remeasurement, and at-most-4,096-byte ELF, Mach-O,
+bounded ASCII shebang, unsupported-shebang, or unknown classification produce
+digest/reference-only local receipt entries and aggregate evidence. They
+establish no subscription entitlement, invocability, interpreter or
+dependency/runtime closure, completeness, authority, authorization, action
+receipt, proposal/worktree integration, dispatch, route, billing, capacity,
+paid-continuation, circuit, live-gate, or execution fact. The Class 0 call does
+not mutate or clean up the lease and has no CLI/state/runner integration.
 
 `compare-run` is an opt-in execution workflow, not a bypass. It requires the same live gate and current evidence for every selected profile before creating comparison records. Trials use one immutable sanitized Class 0 snapshot, randomized repetition blocks, fresh sessions and workspaces, no shared outputs, and no external actions. Reports expose raw automated dimensions and separate human-review fields; they do not declare a winner or auto-promote a profile.
 

@@ -340,6 +340,31 @@ state-store, runner, worker, subprocess, or harness integration. Same-UID
 adversarial interference is outside V1 protection, so the lease must never be
 given to or integrated with an untrusted same-UID worker.
 
+The separate library-only schema-v1
+`ordomata.repository_executable_runtime_manifest` boundary implements
+`inspect_staged_executable_runtime_manifest(expected_staging, *, lease)`. It
+accepts only an exact typed staging receipt and its exactly anchored active
+`RepositoryExecutableStageLease` in the same process that created the lease.
+Under fixed `controller_inspected` / `posix_staged_runtime_header_v1`
+semantics it rejects a PID, lifecycle-state, receipt, binding, or retained-file
+mismatch, fully rehashes every private staged descriptor before and after
+reading at most 4,096 header bytes, and opens no source path. Its fixed
+classifications are `elf`, `mach_o`, `posix_shebang`,
+`unsupported_shebang`, and `unknown`; accepted shebang directives are ASCII
+and capped at 255 bytes. Classification is syntax and magic-byte measurement
+only; the shebang directive is not interpreted or resolved.
+
+Manifest entries contain digest/reference and bounded classification metadata
+only; raw paths, argv, file bytes, header bytes, and shebang directives remain
+private. Outward evidence is aggregate-only. Inspection is read-only and does
+not mutate or clean up the lease. It verifies neither effective invocability
+nor interpreter resolution, identity, provenance, authenticity, compatibility,
+dependencies, loaders, packages, environment, or complete runtime/toolchain
+closure. Completeness, execution correspondence, authority, authorization,
+action-receipt, dispatch, routing, billing/capacity/circuit, and live-eligibility
+facts remain false. The boundary adds no CLI, state/store, runner, proposal,
+worktree, worker, subprocess, harness, or execution integration.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -370,10 +395,11 @@ authorization decision or action receipt, worktree, Git or subprocess call,
 worker or supervisor dispatch, profile route, billing/capacity/circuit fact, or
 live eligibility. Proposal lineage remains pinned to frozen registration
 evidence v1, so schema-v2 through schema-v4 registrations fail before any
-proposal event append. The separate point-in-time executable-resolution receipt
-is not proposal evidence and does not widen that lineage. Complete interpreter,
-dependency, and toolchain manifests plus any future `shell=False` action-
-boundary execution remain deferred. Only Class 0/1 effects remain enabled.
+proposal event append. The separate executable-resolution, staging, and
+runtime-manifest receipts are not proposal evidence and do not widen that
+lineage. Complete interpreter, dependency, and runtime/toolchain closure plus
+any future `shell=False` action-boundary execution remain deferred. Only Class
+0/1 effects remain enabled.
 
 The third slice is the library-only `ordomata.repository_proposal_inspection`
 API `inspect_repository_proposal_evidence(database_path, *, run_id)`. It
@@ -520,8 +546,20 @@ read-only descriptors establish only bounded temporary Class 1 byte staging.
 It adds no authority, authorization decision, action receipt, proposal
 lineage, durable control-plane persistence, CLI/state/runner integration,
 routing, billing, live eligibility, or execution. Complete dependency/toolchain
-coverage and any action that consumes or executes the lease remain future
-boundaries.
+coverage and any consumer that mutates or executes staged bytes remain future
+boundaries; the existing lifecycle cleanup only releases the lease, and only
+the eleventh slice's Class 0 inspection otherwise reads it.
+
+The eleventh bounded Phase 3 slice is the separate schema-v1 staged-executable
+runtime-manifest inspection described above. It requires an active same-PID,
+exactly anchored lease, fully rehashes each retained descriptor, and emits only
+digest/reference entries plus aggregate evidence for bounded ELF, Mach-O,
+ASCII-shebang, unsupported-shebang, or unknown header classification. It does not
+resolve an interpreter, establish dependency or runtime closure, prove
+invocability or completeness, mutate or clean up the lease, or add any
+authority, authorization, action receipt, proposal/worktree integration,
+dispatch, routing, billing, live, CLI/state/runner, subprocess, or execution
+path.
 
 ## Quick start
 
