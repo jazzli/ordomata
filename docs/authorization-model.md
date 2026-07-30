@@ -346,6 +346,50 @@ dispatch, durable persistence, proposal-lineage, worktree, routing, billing,
 capacity, circuit, live-eligibility, and execution facts all remain false. No
 CLI, state store, runner, worker, subprocess, or harness integration exists.
 
+The separate library-only schema-v1
+`ordomata.repository_executable_shebang_requirements` boundary is another
+Class 0 PIP measurement, not a PDP decision or PEP. Its
+`inspect_staged_executable_shebang_requirements(expected_runtime, *,
+expected_staging, lease)` API accepts only exact typed runtime-manifest and
+staging receipts plus the active same-PID lease exactly anchored to the staging
+receipt. It freshly reproduces the runtime manifest, requires exact
+correspondence with `expected_runtime`, and remeasures the private leased
+descriptors while opening no path. Independent frozen staging-v1 and runtime-
+manifest-v1 canonical mirrors validate exact lease anchoring and runtime shape
+instead of trusting projection helpers. A local frozen-v1 mirror derives
+header, shebang/directive-reference, and native ELF/Mach-O classification
+rather than dynamically trusting upstream helpers. Every full descriptor
+remeasurement recomputes the bounded header length and digest, runtime bindings
+must exactly correlate with staging bindings, and the same independent
+descriptor proof must repeat after the final runtime reproduction. Under fixed
+`controller_inspected` /
+`posix_staged_shebang_requirements_v1` semantics, the immutable
+`RepositoryExecutableShebangRequirement`,
+`RepositoryExecutableShebangRequirementBinding`, and
+`RepositoryExecutableShebangRequirementsReceipt` records fix
+`native_binary_no_shebang` for ELF/Mach-O, `absolute_interpreter_token` or
+`non_absolute_interpreter_token` for a valid POSIX shebang,
+`unsupported_shebang`, or `unknown_runtime_format`. In this syntax-only
+taxonomy, `absolute_interpreter_token` means only that the first token byte is
+`/`; it claims no canonicality, usability, compatibility, or resolution, so
+`/`, repeated or trailing slashes, and dot components remain absolute syntax.
+A valid private directive is split at the first contiguous ASCII space/tab
+boundary run. The whole run
+is consumed, only its first byte determines the separator kind, and neither
+the run nor the remaining opaque argument tail is interpreted; only digest
+references plus bounded byte counts are exposed for the token and tail.
+
+This syntax extraction interprets or resolves no interpreter, `env`, `PATH`,
+argument tail, or kernel/launcher semantics. It establishes no interpreter
+identity, availability, compatibility, dependency coverage, effective
+invocability, or complete runtime/toolchain closure. The Class 0 call neither
+mutates nor cleans up the lease and grants no authority or authorization,
+enforces no effect, and creates no action receipt, persistence, proposal
+lineage, worktree, dispatch, route, billing, capacity, circuit, live
+eligibility, CLI/state/runner integration, subprocess, harness, or execution
+path. Complete interpreter, dependency, and toolchain closure remains required
+before any authorization or operational widening.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -376,8 +420,9 @@ process invocation, worker or supervisor dispatch, route/profile selection,
 billing/capacity/circuit fact, harness call, or live eligibility. The frozen
 registration schema-v1 evidence meaning remains the only version accepted by
 this proposal chain. Schema-v2 through schema-v4 registrations fail before any
-event append. The separate direct-executable resolution, staging, and runtime-
-manifest receipts are not proposal evidence and do not widen this chain.
+event append. The separate direct-executable resolution, staging, runtime-
+manifest, and shebang-requirements receipts are not proposal evidence and do
+not widen this chain.
 Complete interpreter, dependency, and runtime/toolchain closure plus execution
 receipts remain deferred.
 
@@ -524,6 +569,24 @@ invocability, interpreter or dependency/runtime closure, authority,
 authorization, action receipt, proposal/worktree integration, dispatch,
 routing, billing, live eligibility, or execution. The Class 0 call neither
 mutates nor cleans up the lease and adds no CLI/state/runner path.
+
+The twelfth bounded Phase 3 slice adds the separate schema-v1 staged-executable
+shebang-requirements PIP described above. Exact typed runtime and staging
+receipts plus their active same-PID anchored lease are mandatory. Fresh
+runtime-manifest reproduction and descriptor remeasurement fix
+`native_binary_no_shebang`, `absolute_interpreter_token`,
+`non_absolute_interpreter_token`, `unsupported_shebang`, or
+`unknown_runtime_format` as appropriate; a valid POSIX shebang yields only
+digest-referenced interpreter-token and opaque argument-tail requirements
+split at the first contiguous ASCII space/tab boundary run. Only the run's
+first byte determines the separator kind, and neither the run nor tail is
+interpreted. The Class 0 call opens no path,
+mutates or cleans up no lease, resolves or interprets no interpreter, `env`,
+`PATH`, arguments, or kernel semantics, and supplies no authority,
+authorization, action receipt, persistence, proposal/worktree integration,
+dispatch, route, billing, live eligibility, CLI/state/runner path, subprocess,
+harness, or execution. Complete interpreter/dependency/toolchain closure
+remains mandatory before widening.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and

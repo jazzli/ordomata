@@ -365,6 +365,48 @@ action-receipt, dispatch, routing, billing/capacity/circuit, and live-eligibilit
 facts remain false. The boundary adds no CLI, state/store, runner, proposal,
 worktree, worker, subprocess, harness, or execution integration.
 
+The separate library-only schema-v1
+`ordomata.repository_executable_shebang_requirements` boundary implements
+`inspect_staged_executable_shebang_requirements(expected_runtime, *,
+expected_staging, lease)`. It accepts only exact typed runtime-manifest and
+staging receipts plus their active, same-PID lease exactly anchored to the
+staging receipt. Under fixed `controller_inspected` /
+`posix_staged_shebang_requirements_v1` semantics, the Class 0 call freshly
+reproduces the runtime manifest, requires exact correspondence with
+`expected_runtime`, and remeasures the private leased descriptors without
+opening any path or changing lease state. Independent frozen staging-v1 and
+runtime-manifest-v1 canonical mirrors validate exact lease anchoring and runtime
+shape. A local frozen-v1 mirror derives header, shebang/directive-reference,
+and native ELF/Mach-O classification instead of dynamically trusting upstream
+helpers. Every full descriptor remeasurement recomputes the bounded header
+length and digest, runtime bindings must exactly correlate with staging
+bindings, and the same independent descriptor proof must repeat after the final
+runtime reproduction. Immutable
+`RepositoryExecutableShebangRequirement`,
+`RepositoryExecutableShebangRequirementBinding`, and
+`RepositoryExecutableShebangRequirementsReceipt` records use fixed
+`native_binary_no_shebang` for ELF/Mach-O, `absolute_interpreter_token` or
+`non_absolute_interpreter_token` for a valid POSIX shebang,
+`unsupported_shebang`, and `unknown_runtime_format` dispositions. In this
+syntax-only taxonomy, `absolute_interpreter_token` means only that the first
+token byte is `/`; it claims no canonicality, usability, compatibility, or
+resolution, so `/`, repeated or trailing slashes, and dot components remain
+absolute syntax. A valid directive is split at the first contiguous ASCII
+space/tab boundary run. The
+whole run is consumed, only its first byte determines the separator kind, and
+neither the run nor the remaining opaque argument tail is interpreted; token
+and tail remain digest-only with bounded byte counts.
+
+This requirement extraction does not resolve or interpret an interpreter,
+`env`, `PATH`, an argument tail, or kernel/launcher semantics, and it does not
+claim effective invocability, interpreter availability or identity,
+compatibility, dependencies, or complete runtime/toolchain closure. It neither
+mutates nor cleans up the lease and adds no authority, authorization decision,
+action receipt, persistence, proposal lineage, worktree, dispatch, route,
+billing, capacity, circuit, live eligibility, CLI/state/runner integration,
+subprocess, harness, or execution path. Complete interpreter, dependency, and
+toolchain closure remains required before any operational widening.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -395,11 +437,11 @@ authorization decision or action receipt, worktree, Git or subprocess call,
 worker or supervisor dispatch, profile route, billing/capacity/circuit fact, or
 live eligibility. Proposal lineage remains pinned to frozen registration
 evidence v1, so schema-v2 through schema-v4 registrations fail before any
-proposal event append. The separate executable-resolution, staging, and
-runtime-manifest receipts are not proposal evidence and do not widen that
-lineage. Complete interpreter, dependency, and runtime/toolchain closure plus
-any future `shell=False` action-boundary execution remain deferred. Only Class
-0/1 effects remain enabled.
+proposal event append. The separate executable-resolution, staging, runtime-
+manifest, and shebang-requirements receipts are not proposal evidence and do
+not widen that lineage. Complete interpreter, dependency, and runtime/toolchain
+closure plus any future `shell=False` action-boundary execution remain
+deferred. Only Class 0/1 effects remain enabled.
 
 The third slice is the library-only `ordomata.repository_proposal_inspection`
 API `inspect_repository_proposal_evidence(database_path, *, run_id)`. It
@@ -548,7 +590,7 @@ lineage, durable control-plane persistence, CLI/state/runner integration,
 routing, billing, live eligibility, or execution. Complete dependency/toolchain
 coverage and any consumer that mutates or executes staged bytes remain future
 boundaries; the existing lifecycle cleanup only releases the lease, and only
-the eleventh slice's Class 0 inspection otherwise reads it.
+the eleventh and twelfth slices' Class 0 inspections otherwise read it.
 
 The eleventh bounded Phase 3 slice is the separate schema-v1 staged-executable
 runtime-manifest inspection described above. It requires an active same-PID,
@@ -560,6 +602,24 @@ invocability or completeness, mutate or clean up the lease, or add any
 authority, authorization, action receipt, proposal/worktree integration,
 dispatch, routing, billing, live, CLI/state/runner, subprocess, or execution
 path.
+
+The twelfth bounded Phase 3 slice is the separate schema-v1 staged-executable
+shebang-requirements inspection described above. Exact typed runtime and
+staging receipts plus their active same-PID anchored lease are mandatory. The
+call freshly reproduces the runtime manifest, remeasures the leased
+descriptors, and fixes `native_binary_no_shebang`,
+`absolute_interpreter_token`, `non_absolute_interpreter_token`,
+`unsupported_shebang`, or `unknown_runtime_format` as appropriate. It turns a
+valid POSIX shebang into digest-only interpreter-token and opaque argument-tail
+requirements by splitting at the first contiguous ASCII space/tab boundary
+run; only the run's first byte determines the separator kind, and neither the
+run nor tail is interpreted. It opens no path, mutates or cleans up no lease,
+resolves or interprets no
+interpreter, `env`, `PATH`, arguments, or kernel semantics, and adds no
+authority, authorization, action receipt, persistence, proposal/worktree
+integration, dispatch, route, billing, live, CLI/state/runner, subprocess,
+harness, or execution path. Complete interpreter/dependency/toolchain closure
+remains required before widening.
 
 ## Quick start
 

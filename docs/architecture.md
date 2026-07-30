@@ -700,6 +700,50 @@ control-plane persistence, worktree integration, routing, billing, capacity,
 circuit, and live eligibility are explicit false facts. There is no CLI,
 database/state, runner, worker, subprocess, harness, or execution integration.
 
+The separate library-only schema-v1
+`ordomata.repository_executable_shebang_requirements` boundary exposes
+`inspect_staged_executable_shebang_requirements(expected_runtime, *,
+expected_staging, lease)`. It accepts only exact typed runtime-manifest and
+staging receipts plus the active process-local lease created by the same PID
+and exactly anchored to that staging receipt. The Class 0 inspector freshly
+reproduces the runtime manifest, requires exact correspondence with
+`expected_runtime`, and remeasures the private leased descriptors while
+opening no path. Independent frozen staging-v1 and runtime-manifest-v1
+canonical mirrors validate exact lease anchoring and runtime shape instead of
+trusting projection helpers. A local frozen-v1 mirror derives header,
+shebang/directive-reference, and native ELF/Mach-O classification rather than
+dynamically trusting upstream helpers. Every full descriptor remeasurement
+recomputes the bounded header length and digest, runtime bindings must exactly
+correlate command and staged-file fields with staging bindings, and the same
+independent descriptor proof must repeat after the final runtime reproduction.
+Under fixed `controller_inspected` /
+`posix_staged_shebang_requirements_v1` semantics, it fixes
+`native_binary_no_shebang` for ELF/Mach-O, `absolute_interpreter_token` or
+`non_absolute_interpreter_token` for a valid POSIX shebang,
+`unsupported_shebang`, or `unknown_runtime_format`. In this syntax-only
+taxonomy, `absolute_interpreter_token` means only that the first token byte is
+`/`; it claims no canonicality, usability, compatibility, or resolution, so
+`/`, repeated or trailing slashes, and dot components remain absolute syntax.
+The immutable
+`RepositoryExecutableShebangRequirement`,
+`RepositoryExecutableShebangRequirementBinding`, and
+`RepositoryExecutableShebangRequirementsReceipt` records split a valid private
+directive at the first contiguous ASCII space/tab boundary run. The whole run
+is consumed, only its first byte determines the separator kind, and neither
+the run nor the remaining opaque argument tail is interpreted. Only digest
+references plus bounded byte counts are exposed for the token and tail.
+
+The split is bounded syntax extraction only. It does not resolve or interpret
+the interpreter token, `env`, `PATH`, the opaque argument tail, or kernel and
+launcher semantics, and establishes no invocability, interpreter identity,
+availability, provenance, authenticity or compatibility, dependency coverage,
+or runtime/toolchain closure. The inspector neither mutates nor cleans up the
+lease and creates no authority, authorization decision, action receipt,
+durable persistence, proposal lineage, worktree, dispatch, routing, billing,
+capacity, circuit, live eligibility, CLI/state/runner integration, subprocess,
+harness, or execution path. Complete interpreter, dependency, and toolchain
+closure remains required before any operational widening.
+
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
 It freshly revalidates a `RepositoryRegistration`, requires an existing
@@ -857,8 +901,8 @@ action receipt, durable control-plane persistence, dispatch, route, billing,
 live, CLI/state/runner, or execution capability. Complete interpreter/
 dependency/toolchain coverage and any consumer that mutates or executes staged
 bytes remain deferred; the existing lifecycle cleanup only releases the lease,
-and only the eleventh slice's Class 0 inspection otherwise reads it. Only Class
-0/1 effects remain enabled.
+and only the eleventh and twelfth slices' Class 0 inspections otherwise read
+it. Only Class 0/1 effects remain enabled.
 
 The eleventh bounded Phase 3 slice is the separate schema-v1 staged-executable
 runtime-manifest inspection described above. An active same-PID lease anchored
@@ -871,6 +915,24 @@ authorization, an action receipt, proposal/worktree integration, dispatch,
 routing, billing, live eligibility, CLI/state/runner integration, subprocess,
 or execution. It does not mutate or clean up the lease. Only Class 0/1 effects
 remain enabled.
+
+The twelfth bounded Phase 3 slice is the separate schema-v1 staged-executable
+shebang-requirements inspection described above. It requires exact typed
+runtime and staging receipts plus their active same-PID anchored lease, freshly
+reproduces the runtime manifest, and remeasures the leased descriptors. It
+fixes `native_binary_no_shebang`, `absolute_interpreter_token`,
+`non_absolute_interpreter_token`, `unsupported_shebang`, or
+`unknown_runtime_format` as appropriate; only a valid POSIX shebang yields
+digest-only interpreter-token and opaque argument-tail requirements split at
+the first contiguous ASCII space/tab boundary run. Only the run's first byte
+determines the separator kind, and neither the run nor tail is interpreted.
+The Class 0 call opens no path, changes or
+cleans up no lease, interprets or resolves no interpreter, `env`, `PATH`,
+arguments, or kernel semantics, and adds no authority, authorization, action
+receipt, persistence, proposal/worktree integration, dispatch, routing,
+billing, live eligibility, CLI/state/runner integration, subprocess, harness,
+or execution. Complete interpreter/dependency/toolchain closure remains a
+prerequisite to widening. Only Class 0/1 effects remain enabled.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor
