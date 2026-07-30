@@ -818,6 +818,48 @@ exclusion, atomic or current freshness, authenticity or provenance, effective
 invocability, crash cleanup, or secure erasure. The Class 0/1 ceiling is
 unchanged.
 
+The fifteenth bounded Phase 3 slice is the separate library-only schema-v1
+`ordomata.repository_executable_shebang_target_runtime_manifest` Class 0
+boundary. `inspect_staged_executable_shebang_target_runtime_manifest(
+expected_target_staging, *, lease)` accepts only the exact target-staging
+receipt object and its active same-PID target-stage lease. An independent
+frozen target-staging-v1 canonical mirror verifies the complete receipt shape,
+digest and file-reference anchors, original receipt and retained-file tuple
+object anchors, unmodified lifecycle and cleanup state, and stored root
+context. Under fixed `controller_inspected` /
+`posix_staged_shebang_target_runtime_header_v1` semantics, a used root must
+reproduce its owner-mode-`0700` context digest from the retained metadata
+without reopening the root. Native-only input instead requires the exact
+no-op context and preserves the complete requirements and command bindings
+with zero target files.
+
+For each retained target, the inspector verifies the mode-`0400`, link-count-
+zero, non-inheritable `O_RDONLY` descriptor and fully remeasures its content.
+It reads at most 4,096 header bytes with `pread`, requires them to equal the
+header captured by that complete pass, revalidates the exact lease snapshot,
+and fully remeasures every descriptor again. The fixed byte-level
+classifications are `elf`, `mach_o`, `posix_shebang`,
+`unsupported_shebang`, and `unknown`. Immutable
+`RepositoryExecutableShebangTargetRuntimeFile`,
+`RepositoryExecutableShebangTargetRuntimeRequirement`,
+`RepositoryExecutableShebangTargetRuntimeBinding`, and
+`RepositoryExecutableShebangTargetRuntimeManifestReceipt` records retain
+digest-only target, upstream-requirement, and command correspondence. Direct
+requirements become `direct_absolute_target_runtime_inspected`, native
+requirements remain `native_not_applicable`, and shared targets appear once.
+Outward evidence is aggregate-only and exposes no path, target or header bytes,
+directive, temporary name, or descriptor number.
+
+This boundary opens no source, target, or staging-root path, mutates or cleans
+up no lease, and invokes no model or live harness. It does not recursively
+resolve a shebang or interpret interpreter, `env`, `PATH`, or argument
+semantics. It establishes no dependency, loader, environment, runtime, or
+toolchain closure; current freshness, atomicity, authenticity, provenance, or
+effective invocability; authority, authorization, action receipt,
+proposal/worktree lineage, durable persistence, dispatch, routing, billing,
+capacity, circuit, live eligibility, CLI/state/runner integration, subprocess,
+harness, or execution fact. Only Class 0/1 effects remain enabled.
+
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
 It freshly revalidates a `RepositoryRegistration`, requires an existing
@@ -1025,6 +1067,16 @@ descriptors. Native-only input is a zero-file no-op. The Class 1 library
 primitive supplies no persistence, authority, proposal lineage, routing,
 billing, live, subprocess, harness, or execution capability. Only Class 0/1
 effects remain enabled.
+
+The fifteenth bounded Phase 3 slice is the separate schema-v1 staged shebang-
+target runtime-header inspection described above. The Class 0 call validates
+the exact active target-stage receipt, object anchors, retained descriptors,
+and stored root context without opening a path; brackets an at-most-4,096-byte
+five-way header classification with complete descriptor remeasurement; and
+preserves native-only zero-file requirements and bindings. It adds no
+authority, persistence, proposal lineage, routing, billing, live, subprocess,
+harness, model, or execution capability. Only Class 0/1 effects remain
+enabled.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor

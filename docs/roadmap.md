@@ -395,6 +395,38 @@ parallel because it cannot exercise worker authority.
   exclusion, atomic or current freshness, authenticity or provenance,
   effective invocability, crash cleanup, or secure erasure. The Class 0/1
   ceiling is unchanged.
+- The fifteenth bounded Phase 3 slice implements the separate library-only
+  schema-v1
+  `ordomata.repository_executable_shebang_target_runtime_manifest` Class 0
+  inspection. `inspect_staged_executable_shebang_target_runtime_manifest(
+  expected_target_staging, *, lease)` accepts only the exact target-staging
+  receipt object and its active same-PID target-stage lease. Under fixed
+  `controller_inspected` /
+  `posix_staged_shebang_target_runtime_header_v1` semantics, an independent
+  frozen staging-v1 mirror validates the receipt, digest/file-reference and
+  receipt/retained-tuple object anchors, untouched lifecycle and cleanup state,
+  and stored target-root context without reopening a path. Used-root metadata
+  must reproduce its owner-mode-`0700` context; native-only input must reproduce
+  the no-op context and retain nonempty requirements and command bindings with
+  zero files.
+  Each retained mode-`0400`, link-count-zero, non-inheritable `O_RDONLY`
+  descriptor is fully remeasured before an at-most-4,096-byte `pread` header
+  inspection. After an exact lease snapshot, it is fully remeasured again;
+  receipt validation is followed by a closing exact lease snapshot before
+  return. Immutable files, requirements, bindings, and the receipt preserve
+  exact correspondence while classifying targets as `elf`, `mach_o`,
+  `posix_shebang`, `unsupported_shebang`, or `unknown`; direct requirements become
+  `direct_absolute_target_runtime_inspected` and native requirements remain
+  `native_not_applicable`. Records and evidence expose no paths, bytes,
+  directives, temporary names, or descriptor numbers.
+  The call opens no source, target, or staging-root path, mutates or cleans up
+  no lease, and invokes no model or live harness. It establishes no recursive
+  shebang/interpreter/`env`/`PATH`/argument semantics, dependency/loader/
+  environment/runtime/toolchain closure, current freshness, atomicity,
+  authenticity, provenance, invocability, authority, authorization, action
+  receipt, proposal/worktree lineage, persistence, routing, billing, capacity,
+  circuit, live, subprocess, harness, or execution capability. The Class 0/1
+  ceiling remains unchanged.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

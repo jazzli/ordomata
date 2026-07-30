@@ -437,6 +437,44 @@ exclusion, atomic or current freshness, authenticity or provenance, effective
 invocability, crash cleanup, or secure erasure. Only the Class 0/1 ceiling
 remains enabled.
 
+The fifteenth slice adds the separate library-only schema-v1
+`ordomata.repository_executable_shebang_target_runtime_manifest` boundary.
+`inspect_staged_executable_shebang_target_runtime_manifest(
+expected_target_staging, *, lease)` accepts only the exact target-staging
+receipt object and its active same-PID target-stage lease. An independent
+frozen target-staging-v1 canonical mirror validates the receipt, digest and
+file-reference anchors, original receipt and retained-file tuple object
+anchors, untouched lifecycle and cleanup state, and retained root context.
+For a used root, owner-mode-`0700` metadata must reproduce the exact context
+digest without reopening the root. Native-only input instead matches the fixed
+no-op context and preserves its complete nonempty requirements and command
+bindings with zero files.
+
+The Class 0 inspector verifies each target as a mode-`0400`, link-count-zero,
+non-inheritable `O_RDONLY` descriptor, fully remeasures it, and reads at most
+4,096 header bytes with `pread`. The bounded read must equal the header from
+the full pass; after an exact lease snapshot, every descriptor is fully
+remeasured again. Receipt construction and canonical validation are followed
+by a closing exact lease snapshot before return. Fixed `controller_inspected` /
+`posix_staged_shebang_target_runtime_header_v1` semantics produce immutable
+target-runtime files, requirements, bindings, and a manifest receipt with
+`elf`, `mach_o`, `posix_shebang`, `unsupported_shebang`, or `unknown`
+classification. Direct requirements become
+`direct_absolute_target_runtime_inspected`, native requirements remain
+`native_not_applicable`, and shared targets are classified once. Records and
+aggregate evidence expose no path, bytes, directive, temporary name, or
+descriptor number.
+
+This inspection opens no source, target, or staging-root path, changes or
+cleans up no lease, and makes no model or live-harness call. It interprets no
+recursive shebang, interpreter, `env`, `PATH`, or argument semantics and proves
+no dependency, loader, environment, runtime, or toolchain closure; current
+freshness, atomicity, authenticity, provenance, or effective invocability;
+authority, authorization, action receipt, persistence, proposal/worktree
+lineage, dispatch, routing, billing, capacity, circuit, live eligibility,
+CLI/state/runner integration, subprocess, harness, or execution fact. Only the
+Class 0/1 ceiling remains enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -1155,8 +1193,9 @@ enforcement, authorization, or action. The proposal chain remains registration-
 evidence-v1-only, so v2 through v4 fail before an event append. The separate
 point-in-time direct-executable receipt, temporary staging lease, bounded
 staged runtime-header manifest, privacy-bounded shebang-requirements receipt,
-and privacy-bounded direct-shebang-target measurement receipt are implemented
-but are not proposal evidence or execution authority. Complete
+privacy-bounded direct-shebang-target measurement receipt, temporary direct-
+target staging lease, and bounded staged-target runtime-header manifest are
+implemented but are not proposal evidence or execution authority. Complete
 interpreter/dependency/runtime/toolchain closure, future `shell=False` action-
 boundary execution, and every worker-cell deliverable below remain deferred.
 Only Class 0/1 effects remain enabled.
@@ -1210,6 +1249,16 @@ Only Class 0/1 effects remain enabled.
     semantic interpreter/dependency closure, authorization, persistence,
     proposal/worktree integration, routing, billing, subprocess, harness, and
     execution consumption remain deferred);
+  - controller-inspected staged shebang-target runtime headers (separate
+    schema-v1 Class 0 receipt implemented; exact active same-PID receipt,
+    lease, object-anchor and stored-root-context validation, complete
+    descriptor remeasurement around an at-most-4,096-byte ELF/Mach-O/POSIX-
+    shebang/unsupported-shebang/unknown classification, exact file/
+    requirement/command binding correspondence, and native-only zero-file
+    behavior are implemented, while recursive shebang/interpreter/`env`/
+    `PATH`/argument semantics, dependency/loader/toolchain closure, freshness,
+    authority, persistence, proposal/worktree integration, routing, billing,
+    subprocess, harness, model, and execution consumption remain deferred);
   - protected and allowed paths;
   - generated/vendor exclusions (schema v2 validation implemented; operational
     consumption remains deferred);

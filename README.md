@@ -476,6 +476,49 @@ mount-alias exclusion, atomic or current freshness, authenticity or
 provenance, effective invocability, crash cleanup, or secure erasure.
 Only the existing Class 0/1 ceiling remains enabled.
 
+The fifteenth bounded Phase 3 slice adds the separate library-only schema-v1
+`ordomata.repository_executable_shebang_target_runtime_manifest` Class 0
+boundary. `inspect_staged_executable_shebang_target_runtime_manifest(
+expected_target_staging, *, lease)` accepts only the exact
+`RepositoryExecutableShebangTargetStagingReceipt` object held by its active,
+same-PID `RepositoryExecutableShebangTargetStageLease`. Under fixed
+`controller_inspected` /
+`posix_staged_shebang_target_runtime_header_v1` semantics, an independent
+frozen target-staging-v1 canonical mirror validates the receipt, digest and
+file-reference anchors, the original receipt and retained-file tuple object
+anchors, untouched lifecycle and cleanup state, and the stored target-root
+context. A nonempty stage must reproduce the owner-mode-`0700` root-context
+digest from retained metadata without reopening the root; native-only input
+must reproduce the fixed no-op context and keep exact nonempty requirements
+and command bindings while containing zero target files.
+
+Every retained mode-`0400`, link-count-zero, non-inheritable `O_RDONLY`
+descriptor is fully remeasured, then read with `pread` for at most 4,096 header
+bytes; the bounded read must equal the header captured by the full pass. After
+an exact lease snapshot, every descriptor is fully remeasured again; the
+constructed receipt is canonically validated, then a closing exact lease
+snapshot must still match before return. The fixed classifications are `elf`,
+`mach_o`, `posix_shebang`,
+`unsupported_shebang`, and `unknown`. Immutable target-runtime file,
+requirement, binding, and manifest-receipt records preserve exact staged-target
+and command correspondence; direct targets become
+`direct_absolute_target_runtime_inspected`, native requirements remain
+`native_not_applicable`, and shared targets are classified once. Canonical
+records and outward evidence remain digest/reference- and aggregate-only and
+expose no paths, file or header bytes, shebang directives, temporary names, or
+descriptor numbers.
+
+This inspection opens no source, target, or staging-root path, mutates or
+cleans up no lease, and makes no model or live-harness call. It performs no
+recursive shebang resolution and interprets no interpreter, `env`, `PATH`, or
+argument semantics. Dependency, loader, environment, runtime, and toolchain
+closure; current freshness, atomicity, authenticity, provenance, and effective
+invocability; authority, authorization, action receipts, proposal/worktree
+lineage, durable persistence, dispatch, routing, billing, capacity, circuit,
+live eligibility, CLI/state/runner integration, subprocesses, harnesses, and
+execution all remain absent or explicitly unverified. The Class 0/1 ceiling is
+unchanged.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -707,6 +750,16 @@ script target into an unlinked mode-`0400` read-only descriptor under a
 dedicated protected-root contract, and leaves a native-only target set as a
 zero-file no-op. This Class 1 library primitive is non-authorizing and has no
 persistence, routing, billing, subprocess, harness, or execution integration.
+
+The fifteenth bounded Phase 3 slice is the separate schema-v1 staged shebang-
+target runtime-header inspection described above. It validates the exact
+active same-PID target-stage receipt, object anchors, retained descriptors, and
+stored root context without reopening a path; fully remeasures every target
+descriptor around an at-most-4,096-byte five-way header classification; and
+preserves native-only zero-file correspondence through nonempty requirements
+and bindings. This Class 0 library inspection adds no authority, persistence,
+proposal/worktree lineage, routing, billing, live, subprocess, harness, model,
+or execution capability.
 
 ## Quick start
 

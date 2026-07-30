@@ -462,6 +462,43 @@ exclusion, atomic or current freshness, authenticity or provenance, effective
 invocability, crash cleanup, or secure erasure. The implemented authorization
 ceiling remains Class 0/1.
 
+The fifteenth bounded Phase 3 slice adds a further Class 0 PIP, not a PDP or
+PEP: `ordomata.repository_executable_shebang_target_runtime_manifest` exposes
+`inspect_staged_executable_shebang_target_runtime_manifest(
+expected_target_staging, *, lease)`. It accepts only the exact target-staging
+receipt object and its active same-PID target-stage lease. An independent
+frozen schema-v1 mirror validates the target-staging receipt, digest and file-
+reference anchors, original receipt and retained-file tuple object anchors,
+untouched lifecycle and cleanup state, and stored root context. A used root's
+owner-mode-`0700` metadata must reproduce the target-staging context digest
+without a path reopen; native-only input must match the fixed no-op context and
+retain exact nonempty requirements and command bindings with zero files.
+
+Each mode-`0400`, link-count-zero, non-inheritable `O_RDONLY` target descriptor
+is fully remeasured before its bounded header is accepted. The inspector reads
+at most 4,096 bytes with `pread`, requires equality with the header captured by
+the complete pass, revalidates the exact lease snapshot, and fully remeasures
+every descriptor again. It emits immutable target-runtime files,
+requirements, bindings, and a manifest receipt under fixed
+`controller_inspected` / `posix_staged_shebang_target_runtime_header_v1`
+semantics. The five classifications are `elf`, `mach_o`, `posix_shebang`,
+`unsupported_shebang`, and `unknown`; direct requirements become
+`direct_absolute_target_runtime_inspected`, native requirements remain
+`native_not_applicable`, and shared targets are classified once. Canonical
+records and aggregate evidence disclose no path, bytes, directive, temporary
+name, or descriptor number.
+
+The receipt is historical syntax evidence, not authority, authorization, a
+decision, or an action receipt. The call opens no source, target, or staging-
+root path, mutates or cleans up no lease, and invokes no model or live harness.
+It supplies no recursive shebang, interpreter, `env`, `PATH`, argument,
+dependency, loader, environment, runtime, or toolchain semantics; no current
+freshness, atomicity, authenticity, provenance, or effective invocability; and
+no proposal/worktree lineage, persistence, dispatch, route, billing, capacity,
+circuit, live eligibility, CLI/state/runner integration, subprocess, harness,
+or execution capability. The implemented authorization ceiling remains Class
+0/1.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -676,6 +713,15 @@ capture, and dedicated protected-root contract produce only unlinked mode-
 `0400` read-only descriptors; native-only input is a zero-file no-op. It is a
 Class 1 local effect, not authorization or a PEP action receipt, and grants no
 proposal, route, billing, live, subprocess, harness, or execution capability.
+
+The fifteenth bounded Phase 3 slice adds the separate schema-v1 staged
+shebang-target runtime-header PIP described above. It validates the exact
+active target-stage receipt, object anchors and stored root context without
+opening a path, fully remeasures retained descriptors around an at-most-4,096-
+byte five-way classification, and preserves native-only zero-file requirement
+and command correspondence. The Class 0 result is not a PDP decision or PEP
+receipt and grants no proposal, route, billing, live, subprocess, harness,
+model, or execution capability.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
