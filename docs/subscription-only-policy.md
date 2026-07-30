@@ -262,6 +262,46 @@ gate, or execution fact. It cannot satisfy any subscription-only prerequisite
 and adds no CLI, state, runner, worker, subprocess, network, harness, or live
 integration.
 
+The separate library-only schema-v1
+`ordomata.repository_executable_shebang_requirements` boundary is also Class 0
+local measurement and supplies no subscription evidence.
+`inspect_staged_executable_shebang_requirements(expected_runtime, *,
+expected_staging, lease)` accepts only exact typed runtime-manifest and staging
+receipts plus their active same-PID lease exactly anchored to the staging
+receipt. Fixed `controller_inspected` /
+`posix_staged_shebang_requirements_v1` semantics freshly reproduce the runtime
+manifest, require exact correspondence, and remeasure the private leased
+descriptors without opening a path or changing lease state. Independent frozen
+staging-v1 and runtime-manifest-v1 canonical mirrors validate exact lease
+anchoring and runtime shape. A local frozen-v1 mirror derives header,
+shebang/directive-reference, and native ELF/Mach-O classification rather than
+dynamically trusting upstream helpers. Every full descriptor remeasurement
+recomputes bounded header length and digest, runtime bindings must exactly
+correlate with staging bindings, and the same independent descriptor proof must
+repeat after final runtime reproduction. Fixed
+dispositions are `native_binary_no_shebang` for ELF/Mach-O,
+`absolute_interpreter_token` or `non_absolute_interpreter_token` for a valid
+POSIX shebang, `unsupported_shebang`, and `unknown_runtime_format`. In this
+syntax-only taxonomy, `absolute_interpreter_token` means only that the first
+token byte is `/`; it claims no canonicality, usability, compatibility, or
+resolution, so `/`, repeated or trailing slashes, and dot components remain
+absolute syntax. A valid directive is split at the first contiguous ASCII
+space/tab boundary run. The whole run is consumed, only its first byte
+determines the separator kind, and
+neither the run nor the remaining opaque argument tail is interpreted; token
+and tail stay digest-only with bounded byte counts.
+
+The boundary interprets or resolves no interpreter, `env`, `PATH`, argument
+tail, or kernel/launcher semantics. It establishes no dependency or complete
+runtime/toolchain closure and cannot satisfy route, capacity, identity, paid-
+continuation, environment, isolation, circuit, or live-gate requirements. It
+neither mutates nor cleans up the lease and adds no authority, authorization,
+action receipt, persistence, proposal/worktree integration, dispatch, route,
+billing, capacity, paid continuation, circuit, live eligibility,
+CLI/state/runner integration, subprocess, network, harness, or execution path.
+Complete interpreter/dependency/toolchain closure remains required before any
+subscription-gated or operational widening.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration and binds it plus an explicit canonical
 `proposal_digest` to an existing immutable Class 0/1
@@ -415,7 +455,7 @@ namespace-detached read-only copies establish no subscription entitlement,
 capacity, paid-continuation, route, billing, circuit, or live-run fact. Nothing
 in the CLI, state store, runner, harness, proposal lineage, or execution path
 consumes the receipt or lease; only the separate Class 0 runtime-manifest
-inspection below reads the active lease.
+and shebang-requirements inspections below read the active lease.
 
 The eleventh bounded Phase 3 slice adds that separate schema-v1 staged-
 executable runtime-manifest inspection. Its exact active same-PID lease
@@ -427,6 +467,23 @@ dependency/runtime closure, completeness, authority, authorization, action
 receipt, proposal/worktree integration, dispatch, route, billing, capacity,
 paid-continuation, circuit, live-gate, or execution fact. The Class 0 call does
 not mutate or clean up the lease and has no CLI/state/runner integration.
+
+The twelfth bounded Phase 3 slice adds the separate schema-v1 staged-
+executable shebang-requirements inspection. Exact typed runtime and staging
+receipts plus their active same-PID anchored lease are mandatory. Fresh
+runtime-manifest reproduction and descriptor remeasurement fix five
+classification-derived dispositions; a valid POSIX shebang yields only digest-
+only interpreter-token and opaque argument-tail requirements split at the
+first contiguous ASCII space/tab boundary run. Only the run's first byte
+determines the separator kind, and neither the run nor tail is interpreted.
+This establishes no subscription entitlement,
+interpreter or `env`/`PATH`/argument/kernel semantics, dependency/toolchain
+closure, authority, authorization, action receipt, persistence,
+proposal/worktree integration, dispatch, route, billing, capacity, paid-
+continuation, circuit, live-gate, subprocess, harness, or execution fact. The
+Class 0 call opens no path, mutates or cleans up no lease, and has no
+CLI/state/runner integration. Complete interpreter/dependency/toolchain closure
+remains required before widening.
 
 `compare-run` is an opt-in execution workflow, not a bypass. It requires the same live gate and current evidence for every selected profile before creating comparison records. Trials use one immutable sanitized Class 0 snapshot, randomized repetition blocks, fresh sessions and workspaces, no shared outputs, and no external actions. Reports expose raw automated dimensions and separate human-review fields; they do not declare a winner or auto-promote a profile.
 

@@ -310,6 +310,39 @@ parallel because it cannot exercise worker authority.
   receipt status, proposal/worktree integration, dispatch, routing, billing/
   capacity/circuit, live eligibility, CLI/state/runner integration,
   subprocesses, and execution remain false or absent.
+- The twelfth bounded Phase 3 slice implements the separate library-only
+  schema-v1 `ordomata.repository_executable_shebang_requirements` boundary.
+  `inspect_staged_executable_shebang_requirements(expected_runtime, *,
+  expected_staging, lease)` accepts only exact typed runtime-manifest and
+  staging receipts plus their active same-PID, exactly anchored lease. Under
+  fixed `controller_inspected` / `posix_staged_shebang_requirements_v1`
+  semantics, it freshly reproduces the runtime manifest, requires exact
+  correspondence, and remeasures the private leased descriptors without
+  opening a path or changing lease state. Independent frozen staging-v1 and
+  runtime-manifest-v1 canonical mirrors validate exact lease anchoring and
+  runtime shape. A local frozen-v1 mirror derives header, shebang/directive-
+  reference, and native ELF/Mach-O classification without dynamically trusting
+  upstream helpers. Every full descriptor remeasurement recomputes bounded
+  header length and digest, runtime bindings exactly correlate with staging
+  bindings, and the independent descriptor proof repeats after final runtime
+  reproduction. Fixed dispositions are
+  `native_binary_no_shebang` for ELF/Mach-O,
+  `absolute_interpreter_token` or `non_absolute_interpreter_token` for a valid
+  POSIX shebang, `unsupported_shebang`, and `unknown_runtime_format`. In this
+  syntax-only taxonomy, `absolute_interpreter_token` means only that the first
+  token byte is `/`; it claims no canonicality, usability, compatibility, or
+  resolution, so `/`, repeated or trailing slashes, and dot components remain
+  absolute syntax. A valid directive is split only at the first contiguous
+  ASCII space/tab boundary run. The whole run is consumed, only its first byte
+  determines the separator
+  kind, and neither the run nor the remaining opaque argument tail is
+  interpreted; token and tail remain digest-only with bounded byte counts.
+  The Class 0 call resolves or interprets no interpreter, `env`, `PATH`,
+  argument tail, or kernel/launcher semantics; mutates or cleans up no lease;
+  and adds no authority, authorization, action receipt, persistence,
+  proposal/worktree integration, dispatch, routing, billing/capacity/circuit,
+  live eligibility, CLI/state/runner integration, subprocess, harness, or
+  execution path.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

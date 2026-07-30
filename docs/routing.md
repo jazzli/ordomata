@@ -255,6 +255,45 @@ receipt status, proposal lineage, worktree integration, dispatch, billing,
 capacity, circuit, live eligibility, and execution remain false. It adds no
 CLI, state, runner, worker, subprocess, or harness path.
 
+The separate library-only schema-v1
+`ordomata.repository_executable_shebang_requirements` boundary likewise cannot
+make a route eligible.
+`inspect_staged_executable_shebang_requirements(expected_runtime, *,
+expected_staging, lease)` accepts only exact typed runtime-manifest and staging
+receipts plus their active same-PID lease exactly anchored to the staging
+receipt. Fixed `controller_inspected` /
+`posix_staged_shebang_requirements_v1` semantics freshly reproduce the runtime
+manifest, require exact correspondence, and remeasure the private leased
+descriptors without opening a path or changing lease state. Independent frozen
+staging-v1 and runtime-manifest-v1 canonical mirrors validate exact lease
+anchoring and runtime shape. A local frozen-v1 mirror derives header,
+shebang/directive-reference, and native ELF/Mach-O classification rather than
+dynamically trusting upstream helpers. Every full descriptor remeasurement
+recomputes bounded header length and digest, runtime bindings must exactly
+correlate with staging bindings, and the same independent descriptor proof must
+repeat after final runtime reproduction. Its fixed
+dispositions are `native_binary_no_shebang` for ELF/Mach-O,
+`absolute_interpreter_token` or `non_absolute_interpreter_token` for a valid
+POSIX shebang, `unsupported_shebang`, and `unknown_runtime_format`. In this
+syntax-only taxonomy, `absolute_interpreter_token` means only that the first
+token byte is `/`; it claims no canonicality, usability, compatibility, or
+resolution, so `/`, repeated or trailing slashes, and dot components remain
+absolute syntax. The valid directive is split only at the first contiguous
+ASCII space/tab boundary run. The whole run is consumed, only its first byte
+determines the separator kind,
+and neither the run nor the remaining opaque argument tail is interpreted;
+token and tail remain digest-only with bounded byte counts.
+
+None of this resolves or interprets an interpreter, `env`, `PATH`, the opaque
+tail, or kernel/launcher semantics, or establishes invocability, dependency or
+complete runtime/toolchain closure. The Class 0 call neither mutates nor cleans
+up the lease and cannot enter candidate ranking, profile/route eligibility,
+proposal/worktree, dispatch, billing/capacity/circuit, live-run, subprocess,
+harness, or execution decisions. It supplies no authority, authorization,
+action receipt, persistence, or CLI/state/runner integration. Complete
+interpreter, dependency, and toolchain closure remains required before any
+routing or operational widening.
+
 The separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` API records a
 **repository-registration selection**, not an execution-profile or model
@@ -412,6 +451,23 @@ circuit, live-run, proposal/worktree, or execution decisions. Invocability,
 interpreter and dependency/runtime closure, and completeness remain false; the
 Class 0 call does not mutate or clean up the lease and has no CLI/state/runner
 integration.
+
+The twelfth bounded Phase 3 slice adds the separate schema-v1 staged-
+executable shebang-requirements inspection described above. Exact typed runtime
+and staging receipts plus their active same-PID anchored lease are mandatory.
+Fresh runtime-manifest reproduction and descriptor remeasurement fix five
+classification-derived dispositions; a valid POSIX shebang yields only
+digest-only interpreter-token and opaque argument-tail requirements split at
+the first contiguous ASCII space/tab boundary run. Only the run's first byte
+determines the separator kind, and neither the run nor tail is interpreted.
+None of this can enter candidate ranking,
+route eligibility, dispatch, billing, capacity, circuit, live-run,
+proposal/worktree, subprocess, harness, or execution decisions. It opens no
+path, mutates or cleans up no lease, interprets or resolves no interpreter,
+`env`, `PATH`, arguments, or kernel semantics, and supplies no authority,
+authorization, action receipt, persistence, or CLI/state/runner integration.
+Complete interpreter/dependency/toolchain closure remains required before
+widening.
 
 ## Adaptive promoted-profile routing (target)
 
