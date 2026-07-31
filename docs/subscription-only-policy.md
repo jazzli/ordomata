@@ -403,6 +403,47 @@ no authority, authorization, action receipt, persistence, proposal/worktree,
 dispatch, CLI/state/runner, network, subprocess, harness, or execution path.
 Only Class 0/1 remains enabled.
 
+The sixteenth bounded Phase 3 slice, the separate library-only schema-v1
+`ordomata.repository_executable_shebang_target_requirements` Class 0
+boundary, also supplies no subscription evidence.
+`inspect_staged_executable_shebang_target_requirements(
+expected_target_runtime, *, expected_target_staging, lease)` accepts the exact
+typed target-runtime manifest and exact target-staging receipt held by its
+active same-PID lease. Frozen independent canonical mirrors validate both
+proofs and full lineage under fixed `controller_inspected` /
+`posix_staged_shebang_target_requirements_v1` semantics. The target-runtime
+manifest is freshly reproduced before and after extraction, exact snapshots
+bracket two independent full descriptor passes, derived results must match,
+and output validation is followed by a closing snapshot and path-free
+descriptor identity/metadata/flags anchor check.
+
+The receipt preserves one target-shebang requirement and binding for each
+upstream target-runtime row. Each unique target is parsed once per descriptor
+pass; shared rows reuse its token/tail references while terminal requirement
+references remain lineage-distinct. Fixed dispositions are `native_not_applicable`,
+`native_binary_no_shebang`, `absolute_interpreter_token`,
+`non_absolute_interpreter_token`, `unsupported_shebang`, and
+`unknown_runtime_format`; leading `/` is merely syntactic. Native-only input
+retains nonempty requirements and bindings with zero files and no descriptor
+reads. `unique_target_count`, `target_posix_shebang_requirement_count`,
+`argument_tail_requirement_count`, `total_interpreter_token_bytes`, and
+`total_argument_tail_bytes` count unique extractions; `requirement_count`,
+`direct_target_requirement_count`, and `native_not_applicable_count` count
+upstream rows, and `command_count` counts bindings.
+
+Canonical records are digest/reference/count-only and outward evidence is
+aggregate-only, excluding paths, bytes, directives, tokens, tails, temporary
+names, and descriptors. Digest equality and lengths remain visible and may be
+guessable, so secrecy or unlinkability is not established. This call opens no
+path, changes no lease, and establishes no entitlement, identity, isolation,
+paid continuation, route, billing, capacity, circuit, or live-gate fact. It
+also adds no recursive resolution/staging, interpreter/`env`/`PATH`/launcher/
+argument semantics, dependency/loader/environment/runtime/toolchain closure,
+freshness, atomicity, immutability, writer/alias/fork exclusion, authenticity,
+provenance, invocability, authority, authorization, action receipt,
+persistence, proposal/worktree, dispatch, CLI/state/runner, network,
+subprocess, harness, model, or execution path. Only Class 0/1 remains enabled.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration and binds it plus an explicit canonical
 `proposal_digest` to an existing immutable Class 0/1
@@ -612,6 +653,15 @@ byte five-way classification, and preserves native-only zero-file requirement
 and command correspondence. The Class 0 result supplies no subscription,
 identity, isolation, paid-continuation, routing, billing, capacity, circuit,
 live, subprocess, harness, model, or execution evidence.
+
+The sixteenth bounded Phase 3 slice adds the separate schema-v1 staged-target
+shebang-requirements inspection described above. Fresh runtime reproduction,
+two matching full descriptor passes, unique-target parsing, and closing
+snapshots preserve one lineage-distinct requirement/binding per upstream row;
+native-only input remains zero-file and zero-read. The Class 0 digest-only
+result supplies no subscription, identity, isolation, paid-continuation,
+routing, billing, capacity, circuit, live, subprocess, harness, model, or
+execution evidence.
 
 `compare-run` is an opt-in execution workflow, not a bypass. It requires the same live gate and current evidence for every selected profile before creating comparison records. Trials use one immutable sanitized Class 0 snapshot, randomized repetition blocks, fresh sessions and workspaces, no shared outputs, and no external actions. Reports expose raw automated dimensions and separate human-review fields; they do not declare a winner or auto-promote a profile.
 

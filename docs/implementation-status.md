@@ -461,6 +461,52 @@ receipt, persistence, proposal/worktree lineage, dispatch, routing, billing,
 capacity, circuit, live eligibility, CLI/state/runner path, subprocess,
 harness, or execution integration. The Class 0/1 ceiling is unchanged.
 
+Implemented as the sixteenth bounded Phase 3 slice, the separate library-only
+schema-v1 `ordomata.repository_executable_shebang_target_requirements` API
+exposes `inspect_staged_executable_shebang_target_requirements(
+expected_target_runtime, *, expected_target_staging, lease)`. The Class 0 call
+accepts an exact typed target-runtime manifest and the exact target-staging
+receipt held by its active same-PID lease. Under fixed `controller_inspected` /
+`posix_staged_shebang_target_requirements_v1` semantics, frozen independent
+canonical mirrors validate both receipts and the full lineage. The target-
+runtime manifest is freshly reproduced from the lease before and after
+extraction. Exact lease snapshots bracket two independent complete descriptor
+passes, the derived results must be identical, and canonical receipt
+validation is followed by a closing exact snapshot and path-free descriptor
+identity/metadata/flags anchor check.
+
+The immutable `RepositoryExecutableShebangTargetRequirementsReceipt` contains
+one `RepositoryExecutableShebangTargetShebangRequirement` per upstream target-
+runtime requirement and one
+`RepositoryExecutableShebangTargetShebangRequirementBinding` per upstream
+binding. Unique target-runtime files are parsed once per descriptor pass;
+shared rows reuse token and opaque-tail references, but each terminal
+requirement reference remains lineage-distinct. Its six fixed dispositions are
+`native_not_applicable`,
+`native_binary_no_shebang`, `absolute_interpreter_token`,
+`non_absolute_interpreter_token`, `unsupported_shebang`, and
+`unknown_runtime_format`. Leading `/` is only a syntactic token classification.
+Native-only input preserves nonempty requirements and bindings with zero files
+and no descriptor read. `unique_target_count`,
+`target_posix_shebang_requirement_count`, `argument_tail_requirement_count`,
+`total_interpreter_token_bytes`, and `total_argument_tail_bytes` count unique
+target-file extractions; `requirement_count`,
+`direct_target_requirement_count`, and `native_not_applicable_count` count
+upstream rows, and `command_count` counts bindings.
+
+Canonical records contain only bounded counts and digest/reference lineage;
+outward evidence is aggregate-only. Raw path, file/header/directive/token/tail
+bytes, temporary names, and descriptor numbers are absent, but digest equality
+and lengths remain visible and potentially guessable. This is not a secrecy or
+unlinkability guarantee. The call opens no path, mutates or cleans up no lease,
+and adds no recursive resolution or staging, interpreter/`env`/`PATH`/launcher/
+argument semantics, dependency/loader/environment/runtime/toolchain closure,
+freshness, atomicity, immutability, alias/writer/fork exclusion, authenticity,
+provenance, or invocability. It supplies no authority, authorization, action
+receipt, persistence, proposal/worktree lineage, dispatch, routing, billing,
+capacity, circuit, live eligibility, CLI/state/runner path, subprocess,
+harness, model, or execution integration. The Class 0/1 ceiling is unchanged.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -679,6 +725,16 @@ most-4,096-byte five-way classification; and preserves native-only zero-file
 requirements and command bindings. The Class 0 library result is non-
 authorizing and has no persistence, proposal/worktree, routing, billing, live,
 subprocess, harness, model, or execution integration.
+
+The sixteenth bounded Phase 3 slice is the separate schema-v1 staged-target
+shebang-requirements inspection described above. It independently validates
+and freshly reproduces the exact target-runtime proof, compares two complete
+descriptor passes with closing snapshots, parses each unique shared target once
+per pass, and preserves a lineage-distinct requirement and binding for every
+upstream row. Native-only input remains zero-file and zero-read. This Class 0
+digest-only result is non-authorizing and has no recursive resolution,
+staging, persistence, proposal/worktree, routing, billing, live, subprocess,
+harness, model, or execution integration.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and

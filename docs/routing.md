@@ -393,6 +393,48 @@ no current freshness, atomicity, authenticity, provenance, effective
 invocability, authority, authorization, or action receipt. The Class 0/1
 ceiling remains unchanged.
 
+The sixteenth bounded Phase 3 slice, the separate library-only schema-v1
+`ordomata.repository_executable_shebang_target_requirements` Class 0
+inspection, likewise cannot make a route eligible.
+`inspect_staged_executable_shebang_target_requirements(
+expected_target_runtime, *, expected_target_staging, lease)` requires the exact
+typed target-runtime manifest and exact target-staging receipt anchored by its
+active same-PID lease. Frozen independent canonical mirrors validate both
+proofs and lineage under `controller_inspected` /
+`posix_staged_shebang_target_requirements_v1`. Fresh runtime reproduction
+occurs before and after extraction; exact lease snapshots bracket two
+independent complete descriptor passes, both derived results must agree, and a
+closing snapshot plus path-free descriptor identity/metadata/flags anchor check
+follow output validation.
+
+The receipt preserves one target-shebang requirement and binding per upstream
+target-runtime row. Every unique target is parsed once per descriptor pass;
+shared rows reuse its token/tail references while terminal requirement
+references remain lineage-distinct. The six fixed dispositions are
+`native_not_applicable`,
+`native_binary_no_shebang`, `absolute_interpreter_token`,
+`non_absolute_interpreter_token`, `unsupported_shebang`, and
+`unknown_runtime_format`. Leading `/` is syntax, never path resolution.
+Native-only input stays nonempty in requirements/bindings but has zero files
+and performs no descriptor read. `unique_target_count`,
+`target_posix_shebang_requirement_count`, `argument_tail_requirement_count`,
+`total_interpreter_token_bytes`, and `total_argument_tail_bytes` count unique
+extractions; `requirement_count`, `direct_target_requirement_count`, and
+`native_not_applicable_count` count upstream rows, and `command_count` counts
+bindings.
+
+Records remain digest/reference/count-only and evidence aggregate-only; no
+path, byte, directive, token, tail, temporary name, or descriptor is exposed.
+Digest equality and lengths remain visible and potentially guessable, not
+secret or unlinkable. The API opens no path, mutates no lease, and cannot enter
+candidate ranking, route eligibility, dispatch, billing, capacity, circuit,
+live, proposal/worktree, persistence, subprocess, harness, model, or execution
+decisions. It establishes no recursive resolution/staging, interpreter/`env`/
+`PATH`/launcher/argument semantics, dependency/loader/environment/runtime/
+toolchain closure, freshness, atomicity, immutability, writer/alias/fork
+exclusion, authenticity, provenance, invocability, authority, authorization,
+or action receipt. The Class 0/1 ceiling is unchanged.
+
 The separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` API records a
 **repository-registration selection**, not an execution-profile or model
@@ -593,6 +635,15 @@ of five-way classification; and native-only zero-file requirements and command
 bindings remain exact. This Class 0 library result cannot affect ranking,
 route eligibility, dispatch, billing, capacity, circuit, live, proposal/
 worktree, subprocess, harness, model, or execution decisions.
+
+The sixteenth bounded Phase 3 slice adds the separate schema-v1 staged-target
+shebang-requirements inspection described above. It freshly reproduces the
+exact runtime proof around two matching full descriptor passes, parses each
+unique shared target once, and preserves a lineage-distinct requirement and
+binding per upstream row; native-only input remains zero-file and zero-read.
+This Class 0 digest-only result cannot affect ranking, route eligibility,
+dispatch, billing, capacity, circuit, live, proposal/worktree, subprocess,
+harness, model, or execution decisions.
 
 ## Adaptive promoted-profile routing (target)
 

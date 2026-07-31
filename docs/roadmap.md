@@ -427,6 +427,45 @@ parallel because it cannot exercise worker authority.
   receipt, proposal/worktree lineage, persistence, routing, billing, capacity,
   circuit, live, subprocess, harness, or execution capability. The Class 0/1
   ceiling remains unchanged.
+- The sixteenth bounded Phase 3 slice implements the separate library-only
+  schema-v1 `ordomata.repository_executable_shebang_target_requirements` Class
+  0 inspection. `inspect_staged_executable_shebang_target_requirements(
+  expected_target_runtime, *, expected_target_staging, lease)` accepts the
+  exact typed target-runtime manifest and the exact target-staging receipt held
+  by its active same-PID lease. Under fixed `controller_inspected` /
+  `posix_staged_shebang_target_requirements_v1` semantics, frozen independent
+  mirrors validate both canonical proofs and complete lineage. Fresh target-
+  runtime reproduction occurs before and after extraction; exact lease
+  snapshots bracket two independent full descriptor passes, their derived
+  records must match, and output validation is followed by a closing snapshot
+  and path-free descriptor identity/metadata/flags anchor check.
+  The immutable receipt has one
+  `RepositoryExecutableShebangTargetShebangRequirement` per upstream target-
+  runtime requirement and one exact binding per upstream binding. Each unique
+  target is parsed once per descriptor pass; shared rows reuse token/tail
+  references, and terminal requirement references remain lineage-distinct. The
+  fixed dispositions are
+  `native_not_applicable`, `native_binary_no_shebang`,
+  `absolute_interpreter_token`, `non_absolute_interpreter_token`,
+  `unsupported_shebang`, and `unknown_runtime_format`; leading `/` remains a
+  syntactic fact only. Native-only input preserves nonempty rows/bindings with
+  zero files and no descriptor reads. `unique_target_count`,
+  `target_posix_shebang_requirement_count`, `argument_tail_requirement_count`,
+  `total_interpreter_token_bytes`, and `total_argument_tail_bytes` count unique
+  extractions; `requirement_count`, `direct_target_requirement_count`, and
+  `native_not_applicable_count` count upstream rows, and `command_count` counts
+  bindings.
+  Canonical output is digest/reference/count-only and evidence is aggregate-
+  only, excluding paths, bytes, directives, tokens, tails, temporary names,
+  and descriptors. Digest equality and lengths remain visible and potentially
+  guessable, so secrecy and unlinkability are not claimed. The call opens no
+  path, mutates no lease, and supplies no recursive resolution/staging,
+  interpreter/`env`/`PATH`/launcher/argument semantics, dependency/loader/
+  runtime/toolchain closure, freshness, atomicity, immutability, alias/writer/
+  fork exclusion, authenticity, provenance, invocability, authority,
+  authorization, action receipt, proposal/worktree lineage, persistence,
+  routing, billing, capacity, circuit, live, subprocess, harness, model, or
+  execution capability. The Class 0/1 ceiling remains unchanged.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.
