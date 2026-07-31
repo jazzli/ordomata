@@ -639,8 +639,9 @@ worktree, subprocess, harness, model, or execution decisions.
 The sixteenth bounded Phase 3 slice adds the separate schema-v1 staged-target
 shebang-requirements inspection described above. It freshly reproduces the
 exact runtime proof around two matching full descriptor passes, parses each
-unique shared target once, and preserves a lineage-distinct requirement and
-binding per upstream row; native-only input remains zero-file and zero-read.
+unique shared target once per pass, and preserves a lineage-distinct
+requirement and binding per upstream row; native-only input remains zero-file
+and zero-read.
 This Class 0 digest-only result cannot affect ranking, route eligibility,
 dispatch, billing, capacity, circuit, live, proposal/worktree, subprocess,
 harness, model, or execution decisions.
