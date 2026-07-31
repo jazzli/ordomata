@@ -475,6 +475,52 @@ lineage, dispatch, routing, billing, capacity, circuit, live eligibility,
 CLI/state/runner integration, subprocess, harness, or execution fact. Only the
 Class 0/1 ceiling remains enabled.
 
+The sixteenth slice adds the separate library-only schema-v1
+`ordomata.repository_executable_shebang_target_requirements` Class 0 boundary.
+`inspect_staged_executable_shebang_target_requirements(
+expected_target_runtime, *, expected_target_staging, lease)` takes the exact
+typed target-runtime manifest and the exact target-staging receipt held by its
+active same-PID lease. Frozen independent staging and runtime canonical mirrors
+validate the full lineage under fixed `controller_inspected` /
+`posix_staged_shebang_target_requirements_v1` semantics. The target-runtime
+manifest is freshly reproduced from the lease before and after extraction;
+exact snapshots bracket two independent full descriptor passes, both derived
+results must agree, and output validation is followed by a closing snapshot and
+path-free descriptor identity/metadata/flags anchor check.
+
+The resulting `RepositoryExecutableShebangTargetRequirementsReceipt` carries
+one `RepositoryExecutableShebangTargetShebangRequirement` for every upstream
+target-runtime requirement and one
+`RepositoryExecutableShebangTargetShebangRequirementBinding` for every
+upstream binding. Each unique target file is parsed once per descriptor pass;
+shared rows reuse its token/tail references, and their terminal requirement
+references stay distinct through upstream lineage. The fixed dispositions are
+`native_not_applicable`,
+`native_binary_no_shebang`, `absolute_interpreter_token`,
+`non_absolute_interpreter_token`, `unsupported_shebang`, and
+`unknown_runtime_format`. Leading `/` is syntax only; no token is resolved.
+Native-only input preserves nonempty requirements and bindings with zero files
+and zero descriptor reads. `unique_target_count`,
+`target_posix_shebang_requirement_count`, `argument_tail_requirement_count`,
+`total_interpreter_token_bytes`, and `total_argument_tail_bytes` count unique
+file extractions; `requirement_count`, `direct_target_requirement_count`, and
+`native_not_applicable_count` count upstream rows, and `command_count` counts
+bindings.
+
+Records are digest/reference- and bounded-count-only and evidence is aggregate-
+only. No raw path, target/header/directive/token/tail bytes, temporary name, or
+descriptor number is emitted. Digest equality and length leakage remain and
+low-entropy values may be guessable, so secrecy and unlinkability are not
+claimed. The API opens no path, changes or cleans up no lease, and performs no
+recursive resolution/staging, subprocess, harness, model, or execution. It
+establishes no interpreter/`env`/`PATH`/launcher/argument semantics,
+dependency/loader/environment/runtime/toolchain closure, freshness, atomicity,
+immutability, alias/writer/fork exclusion, authenticity, provenance, or
+invocability, and grants no authority, authorization, action receipt,
+proposal/worktree lineage, persistence, dispatch, route, billing, capacity,
+circuit, live eligibility, or CLI/state/runner integration. Only Class 0/1
+effects remain enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -1194,8 +1240,9 @@ evidence-v1-only, so v2 through v4 fail before an event append. The separate
 point-in-time direct-executable receipt, temporary staging lease, bounded
 staged runtime-header manifest, privacy-bounded shebang-requirements receipt,
 privacy-bounded direct-shebang-target measurement receipt, temporary direct-
-target staging lease, and bounded staged-target runtime-header manifest are
-implemented but are not proposal evidence or execution authority. Complete
+target staging lease, bounded staged-target runtime-header manifest, and
+privacy-bounded staged-target shebang-requirements receipt are implemented but
+are not proposal evidence or execution authority. Complete
 interpreter/dependency/runtime/toolchain closure, future `shell=False` action-
 boundary execution, and every worker-cell deliverable below remain deferred.
 Only Class 0/1 effects remain enabled.
@@ -1259,6 +1306,17 @@ Only Class 0/1 effects remain enabled.
     `PATH`/argument semantics, dependency/loader/toolchain closure, freshness,
     authority, persistence, proposal/worktree integration, routing, billing,
     subprocess, harness, model, and execution consumption remain deferred);
+  - controller-inspected staged-target shebang requirements (separate schema-v1
+    Class 0 receipt implemented; frozen independent target-staging/runtime
+    mirrors, fresh runtime reproduction before and after extraction, two
+    matching full descriptor passes, closing snapshots, fixed six-way
+    dispositions, unique-target parsing with shared token/tail references,
+    exact per-upstream requirement/binding correspondence, and native-only
+    zero-file/zero-read behavior are implemented; canonical records and
+    evidence remain digest/reference/count-only, while recursive resolution or
+    staging, interpreter/`env`/`PATH`/launcher/argument semantics, dependency/
+    loader/toolchain closure, freshness, authority, persistence, routing,
+    billing, subprocess, harness, model, and execution remain deferred);
   - protected and allowed paths;
   - generated/vendor exclusions (schema v2 validation implemented; operational
     consumption remains deferred);

@@ -499,6 +499,51 @@ circuit, live eligibility, CLI/state/runner integration, subprocess, harness,
 or execution capability. The implemented authorization ceiling remains Class
 0/1.
 
+The sixteenth bounded Phase 3 slice adds another Class 0 PIP, not a PDP or
+PEP: `ordomata.repository_executable_shebang_target_requirements` exposes
+`inspect_staged_executable_shebang_target_requirements(
+expected_target_runtime, *, expected_target_staging, lease)`. It accepts the
+exact typed target-runtime manifest and the exact target-staging receipt held
+by its active same-PID lease. Frozen independent mirrors validate both
+canonical proofs and their complete lineage under `controller_inspected` /
+`posix_staged_shebang_target_requirements_v1`. A fresh target-runtime
+reproduction from the anchored lease occurs before and after extraction; exact
+lease snapshots bracket two independent full descriptor passes, their derived
+records must match, and output validation is followed by a closing snapshot and
+path-free descriptor identity/metadata/flags anchor check.
+
+One immutable `RepositoryExecutableShebangTargetShebangRequirement` is emitted
+per upstream target-runtime requirement and one
+`RepositoryExecutableShebangTargetShebangRequirementBinding` per upstream
+binding. Each unique target file is parsed once per descriptor pass, so shared
+rows reuse its directive/token/tail references while their terminal
+requirement references remain distinct and bound to their own upstream
+lineage. The fixed dispositions are `native_not_applicable`, `native_binary_no_shebang`,
+`absolute_interpreter_token`, `non_absolute_interpreter_token`,
+`unsupported_shebang`, and `unknown_runtime_format`; leading `/` is a bounded
+syntactic fact only. Native-only chains preserve nonempty requirements and
+bindings with zero files and no descriptor reads. `unique_target_count`,
+`target_posix_shebang_requirement_count`, `argument_tail_requirement_count`,
+`total_interpreter_token_bytes`, and `total_argument_tail_bytes` count unique
+target extractions; `requirement_count`, `direct_target_requirement_count`,
+and `native_not_applicable_count` count upstream rows, and `command_count`
+counts bindings.
+
+`RepositoryExecutableShebangTargetRequirementsReceipt` is historical PIP
+syntax evidence only. Canonical data is digest/reference- and bounded-count-
+only and outward evidence is aggregate-only; paths, bytes, directives, tokens,
+tails, temporary names, and descriptors are absent. Digest equality and length
+leakage remain and low-entropy values may be guessable, so no secrecy or
+unlinkability is claimed. The call opens no path, changes or cleans up no
+lease, and performs no recursive resolution/staging. It verifies no
+interpreter/`env`/`PATH`/launcher/argument semantics, dependency or runtime
+closure, freshness, atomicity, immutability, alias/writer/fork exclusion,
+authenticity, provenance, or invocability. It is not authority, authorization,
+a decision, or an action receipt and cannot enter proposal lineage,
+persistence, dispatch, routing, billing, capacity, circuit, live eligibility,
+CLI/state/runner, subprocess, harness, model, or execution. The Class 0/1
+ceiling remains unchanged.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -722,6 +767,15 @@ byte five-way classification, and preserves native-only zero-file requirement
 and command correspondence. The Class 0 result is not a PDP decision or PEP
 receipt and grants no proposal, route, billing, live, subprocess, harness,
 model, or execution capability.
+
+The sixteenth bounded Phase 3 slice adds the staged-target shebang-
+requirements PIP described above. Independent target-runtime reproduction,
+two matching full descriptor passes, and closing lease snapshots yield one
+lineage-distinct row and binding per upstream target-runtime requirement while
+parsing each shared target once per pass. Native-only input is zero-file and
+zero-read. The digest-only Class 0 result is not a PDP decision or PEP receipt and
+grants no recursive resolution, staging, proposal, route, billing, live,
+subprocess, harness, model, or execution capability.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
