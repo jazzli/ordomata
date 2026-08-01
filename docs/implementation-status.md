@@ -610,8 +610,78 @@ up no lease, invokes no subprocess, harness, or model, and executes nothing. It
 grants no authority, authorization, action receipt, proposal/worktree lineage,
 persistence, dispatch, routing, billing, capacity, circuit, live eligibility,
 or CLI/state/runner integration. The seventeenth resolver's narrower schema-v1
-contract is unchanged. Separate Class 1 nested-target staging remains next,
-and only Class 0/1 effects remain enabled.
+contract and the public guard are unchanged. The nineteenth slice freshly
+consumes their evidence at its own separate Class 1 effect boundary.
+
+Implemented as the nineteenth bounded Phase 3 slice, the separate library-only
+schema-v1 `ordomata.repository_executable_shebang_nested_target_staging` API
+exposes `stage_repository_executable_shebang_nested_target_bytes(
+registration, *, search_directories, expected_chain_guard,
+expected_nested_resolution, expected_target_requirements,
+expected_target_runtime, expected_target_staging, target_lease,
+expected_source_staging, source_lease, expected_nested_target_paths, lease)`.
+This Class 1 primitive requires exact expected nested-resolution and known-
+chain-guard receipts, the complete active same-PID source- and target-stage
+receipt/lease lineages, the exact nested-target path expectation, a freshly revalidated
+schema-v4 registration and search context, and a new caller-owned
+`RepositoryExecutableShebangNestedTargetStageLease`. Under fixed
+`controller_copied` / `posix_shebang_nested_target_unlinked_readonly_v1`
+semantics, the action-boundary guard replay passes each unique depth-2 target's
+same still-pinned guarded descriptor to a bounded capture sink without changing
+its metadata, identity, flags, offset, or inheritance state. The action guard
+must exactly reproduce the expected guard. After the local effect, a complete
+guard replay must again reproduce both while the exact source and target leases
+remain active and unchanged.
+Only the first guarded action measurement invokes the capture sink; its later
+measurement, closing reproduction, and the post-stage replay are consumer-free.
+Capture is capped at 80 unique targets, 64 MiB per target, and 256 MiB total;
+the receipt admits at most 80 requirements and 80 command bindings.
+
+The caller-supplied nested staging root must be an exact concrete absolute,
+effective-user-owned mode-`0700`, empty directory. Freshly pinned repository,
+search, source-stage, and target-stage roots remain identity-stable and
+distinct; path overlap with those roots or an expected nested-target path is
+rejected, and no expected target ancestor may alias the staging-root identity.
+Every unique target is copied once into an exclusive no-follow temporary
+regular file. Its name is unlinked and its directory synchronized before any
+captured bytes are written. The file is changed to mode `0400`, synchronized,
+independently read back in full, and retained only by a non-inheritable
+`O_RDONLY` descriptor after writer closure. Shared targets preserve exact
+ordered requirement and command correspondence. Source-native and target-
+native chains return an active zero-file lease without inspecting or mutating
+the nested staging root.
+
+The immutable `RepositoryExecutableShebangNestedTargetStagingReceipt` contains
+`RepositoryExecutableShebangNestedTargetStagedFile`,
+`RepositoryExecutableShebangNestedTargetStageRequirement`, and
+`RepositoryExecutableShebangNestedTargetStageBinding` records. It binds the
+expected/action/post-stage guard digests, all upstream and guarded identity-set
+lineage, the nested staging context, and `requirement_count`, `command_count`,
+`known_chain_guard_staged_count`, `target_native_not_applicable_count`,
+`source_native_not_applicable_count`, `unique_nested_target_count`, and
+`total_staged_bytes`. Canonical records and aggregate evidence exclude raw
+paths, content, device/inode values, temporary names, and descriptors. Digest
+equality and bounded lengths remain visible and potentially guessable.
+The lease is same-PID, one-shot, noncopyable, nonserializable process-local
+state rather than canonical evidence.
+
+`cleanup_repository_executable_shebang_nested_target_stage` explicitly and
+idempotently releases the process-local lease. Its bounded cleanup receipt
+distinguishes `removed`, `already_absent_verified`, and `unverifiable`;
+uncertain namespace absence or descriptor release fails closed, and neither
+staging-root metadata restoration nor secure erasure is reported. This is a
+temporary Class 1 byte-staging effect, not authority, authorization, or an
+action receipt. It adds no persistence,
+proposal/worktree lineage, dispatch, routing, billing, capacity, circuit, live
+eligibility, worker, CLI/state/runner integration, subprocess, harness, model,
+or execution path. It does not parse or follow the retained target, recurse beyond
+depth 2, establish interpreter/`env`/`PATH`/launcher/argument semantics or
+dependency/loader/runtime/toolchain closure, close the guard's generic source-
+path/staging-root-path-domain or generic-cycle/broader-protected-root gaps, or
+prove freshness, atomicity, immutability, authenticity, provenance,
+invocability, same-UID/external-writer/fork/hardlink/
+mount-alias exclusion, crash cleanup, or secure erasure. Only Class 0/1 effects
+remain enabled.
 
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
@@ -865,8 +935,16 @@ Native-only input performs no nested-target or staging-root path lookup. The
 privacy-bounded Class 0 result has no source-path/root-path, generic-cycle,
 broader-protected-root, staging, write, persistence, proposal/worktree,
 routing, billing, live, subprocess, harness, model, or execution integration.
-The seventeenth resolver remains unchanged; Class 1 nested-target staging is
-next.
+The seventeenth resolver and public guard remain unchanged.
+
+The nineteenth bounded Phase 3 slice is the separate schema-v1 Class 1 nested-
+target staging primitive described above. Exact guarded same-descriptor
+capture, active source/target receipt and lease lineage, a protected owner-
+private root, unlinked mode-`0400` read-only descriptors, and matching action/
+post-stage guard replays retain the measured depth-2 bytes. Native-only input
+is a zero-file, no-root-touch no-op. Privacy-bounded staging and explicit fail-
+closed cleanup evidence add no authority, persistence, proposal/worktree,
+routing, billing, live, subprocess, harness, model, or execution integration.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and

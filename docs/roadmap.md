@@ -546,8 +546,57 @@ parallel because it cannot exercise worker authority.
   action receipt, proposal/worktree lineage, persistence, routing, billing,
   capacity, circuit, or live capability; and invokes no subprocess, harness,
   model, or execution. The seventeenth resolver retains its narrower contract,
-  the Class 0/1 ceiling is unchanged, and separate Class 1 nested-target
-  staging remains next.
+  and the public guard remains unchanged.
+- The nineteenth bounded Phase 3 slice implements the separate library-only
+  schema-v1 Class 1
+  `ordomata.repository_executable_shebang_nested_target_staging` primitive.
+  `stage_repository_executable_shebang_nested_target_bytes(
+  registration, *, search_directories, expected_chain_guard,
+  expected_nested_resolution, expected_target_requirements,
+  expected_target_runtime, expected_target_staging, target_lease,
+  expected_source_staging, source_lease, expected_nested_target_paths, lease)`
+  requires the exact expected nested-resolution and known-chain-guard receipts,
+  exact active same-PID source- and target-stage receipt/lease lineages, the exact nested-target
+  path expectation, a freshly revalidated schema-v4 registration/search
+  context, and a new caller-owned nested-target stage lease. Fixed
+  `controller_copied` /
+  `posix_shebang_nested_target_unlinked_readonly_v1` semantics capture every
+  unique depth-2 target through the same still-pinned descriptor used by the
+  guarded action replay. Descriptor identity, metadata, flags, offset, and
+  inheritance state remain unchanged; the action guard must equal the expected
+  guard, and a complete post-stage guard replay must equal both while the exact
+  source and target leases remain active.
+  Only the first guarded action measurement invokes the capture sink; its later
+  measurement, closing reproduction, and post-stage replay are consumer-free.
+  Capture is capped at 80 unique targets, 64 MiB per target, and 256 MiB total;
+  the receipt admits at most 80 requirements and 80 command bindings.
+  The caller-owned root must be an exact concrete absolute, effective-user-
+  owned mode-`0700`, empty directory disjoint by path and identity from the
+  freshly pinned repository/search roots, source/target stage roots, and exact
+  nested targets and their ancestors. Each unique target is copied once
+  through an exclusive no-follow temporary file whose name is unlinked and
+  whose directory is synchronized before byte writes; after mode `0400`,
+  synchronization and independent readback, only a non-inheritable `O_RDONLY`
+  descriptor remains. Shared targets preserve exact ordered correspondence.
+  Source-native and target-native input creates an active zero-file lease
+  without inspecting or mutating the nested staging root.
+  `RepositoryExecutableShebangNestedTargetStagingReceipt` and its staged-file,
+  stage-requirement, and stage-binding rows bind expected/action/post-stage
+  guard evidence, all upstream and guarded identity-set lineage, the staging
+  context, fixed outcomes, bounded identifiers, counts, and byte totals. Raw
+  paths, content, identity numbers, temporary names, and descriptors are
+  absent. Explicit cleanup reports only `removed`,
+  `already_absent_verified`, or `unverifiable`, fails closed on uncertainty,
+  and claims neither staging-root metadata restoration nor secure erasure. The
+  same-PID one-shot lease is noncopyable, nonserializable, and noncanonical. The
+  primitive grants no authority, authorization, action receipt, persistence,
+  proposal/worktree lineage, routing, billing, capacity, circuit, live,
+  subprocess, harness, model, worker, or execution capability; it neither
+  parses nor follows the retained bytes nor
+  closes recursion, interpreter/argument/dependency/toolchain, generic source/
+  staging-root path-domain, generic-cycle, broader-protected-root, freshness,
+  atomicity, immutability, provenance, invocability, writer/fork/alias, crash-
+  cleanup, or secure-erasure gaps. Only Class 0/1 effects remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

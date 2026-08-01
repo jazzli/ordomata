@@ -612,8 +612,70 @@ staging, write, cleanup, lease mutation, subprocess, harness, model, or
 execution; and grants no authority, authorization, action receipt, proposal/
 worktree lineage, persistence, dispatch, routing, billing, capacity, circuit,
 live eligibility, or CLI/state/runner capability. The seventeenth resolver
-keeps its narrower contract. Separate Class 1 nested-target staging remains
-next, and only Class 0/1 effects remain enabled.
+keeps its narrower contract and the public guard is unchanged. The nineteenth
+slice freshly consumes their evidence at a separate Class 1 effect boundary.
+
+The nineteenth slice adds the separate library-only schema-v1 Class 1
+`ordomata.repository_executable_shebang_nested_target_staging` primitive.
+`stage_repository_executable_shebang_nested_target_bytes(
+registration, *, search_directories, expected_chain_guard,
+expected_nested_resolution, expected_target_requirements,
+expected_target_runtime, expected_target_staging, target_lease,
+expected_source_staging, source_lease, expected_nested_target_paths, lease)`
+requires exact expected nested-resolution and known-chain-guard receipts, their
+complete active same-PID source- and target-stage receipt/lease lineages, the exact
+nested-target path expectation, a freshly revalidated schema-v4 registration
+and search context, and a new caller-owned nested-target stage lease. Under
+fixed `controller_copied` /
+`posix_shebang_nested_target_unlinked_readonly_v1` semantics, the guarded
+action replay captures every unique depth-2 target through the same still-
+pinned descriptor used for measurement. Descriptor identity, metadata, flags,
+offset, and inheritance state must remain unchanged. The action guard must
+equal the expected guard, and a complete post-stage guard replay must equal
+both while the exact source and target leases remain active.
+Only the first guarded action measurement invokes the capture sink; its later
+measurement, closing reproduction, and the post-stage replay are consumer-free.
+Capture is capped at 80 unique targets, 64 MiB per target, and 256 MiB total;
+the receipt admits at most 80 requirements and 80 command bindings.
+
+The caller's staging root must be exact, concrete, absolute, effective-user-
+owned, mode `0700`, and empty. It remains path- and identity-disjoint from the
+freshly pinned repository/search roots, active source and target staging roots,
+and exact nested targets and their ancestors. Each unique captured target is
+copied once through an exclusive no-follow temporary file. Its name is unlinked
+and its directory synchronized before bytes are written; the copy is fixed at
+mode `0400`, synchronized, independently read back, and retained only through
+a non-inheritable `O_RDONLY` descriptor after writer closure. Shared target
+correspondence remains exact and ordered. Source-native and target-native input
+returns an active zero-file lease without inspecting or mutating the nested-
+target staging root.
+
+The immutable `RepositoryExecutableShebangNestedTargetStagingReceipt` and its
+staged-file, stage-requirement, and stage-binding records bind expected/action/
+post-stage guard evidence, all upstream and identity-set lineage, the staging
+context, and bounded counts and byte totals. Canonical records and aggregate
+evidence exclude raw paths, content, device/inode values, temporary names, and
+descriptors; deterministic digests and bounded lengths still expose equality
+and can be guessable. Explicit
+`cleanup_repository_executable_shebang_nested_target_stage` is idempotent,
+reports only `removed`, `already_absent_verified`, or `unverifiable`, fails
+closed on cleanup uncertainty, and claims neither staging-root metadata
+restoration nor secure erasure.
+The lease is same-PID, one-shot, noncopyable, nonserializable process-local
+state rather than canonical evidence.
+
+This is a temporary Class 1 byte-staging effect, not authority,
+authorization, or an action receipt. It adds no persistence, proposal/worktree
+lineage, dispatch, routing, billing, capacity, circuit, live eligibility,
+worker, CLI/state/runner integration, subprocess, harness, model, or execution. It
+does not parse or follow retained bytes, recurse beyond depth 2, establish
+interpreter/`env`/`PATH`/launcher/argument semantics or dependency/loader/
+runtime/toolchain closure, close the guard's generic source-path/staging-root-
+path-domain or generic-cycle/broader-protected-root gaps, or prove freshness,
+immutability, authenticity, atomicity, provenance, invocability, same-UID/external-writer/
+fork/hardlink/mount-alias
+exclusion, crash cleanup, or secure erasure. Only Class 0/1 effects remain
+enabled.
 
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
@@ -1438,10 +1500,24 @@ Only Class 0/1 effects remain enabled.
     lookup; privacy-bounded records preserve exact requirement/binding lineage,
     identity-set digests, fixed outcomes, bounded identifiers, counts, and byte
     totals, while source-path/root-path exclusion, generic cycle closure,
-    broader protected-root closure, staging, writes, authority, authorization,
+    broader protected-root closure, authority, authorization,
     persistence, proposal/worktree integration, routing, billing, subprocess,
-    harness, model, and execution remain deferred; separate Class 1 nested-
-    target staging remains next);
+    harness, model, and execution remain deferred);
+  - controller-copied guarded nested-target bytes (separate schema-v1 Class 1
+    process-local lease implemented; exact expected/action/post-stage chain-
+    guard correspondence, exact active source- and target-stage lineage,
+    same-guarded-descriptor bounded capture, fresh schema-v4 registration and
+    search context, authoritative protected roots, unlinked mode-`0400`
+    read-only descriptors, explicit fail-closed cleanup, and source-/target-
+    native zero-file/no-root-touch behavior are implemented; privacy-bounded
+    records preserve exact requirement/binding and identity-set lineage,
+    counts, and byte totals, while retained-byte parsing, recursion beyond
+    depth 2, interpreter/`env`/`PATH`/launcher/argument semantics, dependency/
+    loader/toolchain closure, generic source-path/staging-root-path-domain
+    exclusion, generic cycle and broader protected-root closure, freshness,
+    immutability, authority, authorization, persistence, proposal/worktree
+    integration, routing,
+    billing, subprocess, harness, model, and execution remain deferred);
   - protected and allowed paths;
   - generated/vendor exclusions (schema v2 validation implemented; operational
     consumption remains deferred);

@@ -133,6 +133,7 @@ _BUILTIN_SHA256 = hashlib.sha256
 _BUILTIN_OPEN = os.open
 _BUILTIN_CLOSE = os.close
 _BUILTIN_READ = os.read
+_BUILTIN_LSEEK = os.lseek
 _BUILTIN_FSTAT = os.fstat
 _BUILTIN_STAT = os.stat
 _BUILTIN_SCANDIR = os.scandir
@@ -142,6 +143,7 @@ _BUILTIN_GETEUID = os.geteuid
 _BUILTIN_GET_INHERITABLE = os.get_inheritable
 _BUILTIN_FCNTL = fcntl.fcntl
 _BUILTIN_F_GETFL = fcntl.F_GETFL
+_BUILTIN_F_GETFD = fcntl.F_GETFD
 _BUILTIN_UNICODE_NORMALIZE = unicodedata.normalize
 _BUILTIN_UNICODE_CATEGORY = unicodedata.category
 _FIXED_CONCRETE_PATH_TYPE = type(Path())
@@ -1053,6 +1055,12 @@ class _MeasuredNestedTarget:
     content_bytes: int
 
 
+_UniqueNestedTargetConsumer = Callable[
+    [int, os.stat_result, _MeasuredNestedTarget],
+    None,
+]
+
+
 @dataclass(frozen=True, slots=True)
 class _NestedTargetGuardContext:
     """Private stronger exclusions for a separate proof boundary.
@@ -1945,6 +1953,65 @@ def _target_metadata_digest(
     )
 
 
+def _consume_measured_nested_target(
+    descriptor: int,
+    metadata: os.stat_result,
+    measured: _MeasuredNestedTarget,
+    consumer: _UniqueNestedTargetConsumer,
+) -> None:
+    """Hand one still-pinned guarded target to a private action sink."""
+
+    _BUILTIN_MEASURED_NESTED_TARGET_PROJECTION(measured)
+    try:
+        before_metadata = _BUILTIN_FSTAT(descriptor)
+        before_status_flags = _BUILTIN_FCNTL(descriptor, _BUILTIN_F_GETFL)
+        before_descriptor_flags = _BUILTIN_FCNTL(
+            descriptor,
+            _BUILTIN_F_GETFD,
+        )
+        before_offset = _BUILTIN_LSEEK(descriptor, 0, os.SEEK_CUR)
+        before_inheritable = _BUILTIN_GET_INHERITABLE(descriptor)
+    except (OSError, ValueError):
+        raise _InvalidNestedTargetResolution from None
+    if (
+        _BUILTIN_METADATA_SIGNATURE(before_metadata) != measured.metadata
+        or _BUILTIN_METADATA_SIGNATURE(metadata) != measured.metadata
+        or (before_metadata.st_dev, before_metadata.st_ino)
+        != measured.identity
+        or before_status_flags & _FIXED_O_ACCMODE != _FIXED_O_RDONLY
+        or before_offset != measured.content_bytes
+        or before_inheritable
+    ):
+        raise _InvalidNestedTargetResolution
+    try:
+        consumer(descriptor, metadata, measured)
+    except Exception:
+        raise _InvalidNestedTargetResolution from None
+    try:
+        after_metadata = _BUILTIN_FSTAT(descriptor)
+        after_status_flags = _BUILTIN_FCNTL(descriptor, _BUILTIN_F_GETFL)
+        after_descriptor_flags = _BUILTIN_FCNTL(
+            descriptor,
+            _BUILTIN_F_GETFD,
+        )
+        after_offset = _BUILTIN_LSEEK(descriptor, 0, os.SEEK_CUR)
+        after_inheritable = _BUILTIN_GET_INHERITABLE(descriptor)
+    except (OSError, ValueError):
+        raise _InvalidNestedTargetResolution from None
+    if (
+        _BUILTIN_METADATA_SIGNATURE(after_metadata) != measured.metadata
+        or (after_metadata.st_dev, after_metadata.st_ino) != measured.identity
+        or after_status_flags != before_status_flags
+        or after_descriptor_flags != before_descriptor_flags
+        or after_offset != before_offset
+        or after_inheritable != before_inheritable
+    ):
+        raise _InvalidNestedTargetResolution
+
+
+_BUILTIN_CONSUME_MEASURED_NESTED_TARGET = _consume_measured_nested_target
+
+
 def _measure_nested_target_path(
     path: str,
     *,
@@ -1952,6 +2019,9 @@ def _measure_nested_target_path(
     protected_root_identity: tuple[int, int] | None,
     known_first_hop_identities: frozenset[str],
     guard_context: _NestedTargetGuardContext | None = None,
+    unique_nested_target_consumer: (
+        _UniqueNestedTargetConsumer | None
+    ) = None,
 ) -> _MeasuredNestedTarget:
     if type(path) is not str:
         raise _InvalidNestedTargetResolution
@@ -2088,6 +2158,13 @@ def _measure_nested_target_path(
             content_digest=_DIGEST_PREFIX + digest.hexdigest(),
             content_bytes=before.st_size,
         )
+        if unique_nested_target_consumer is not None:
+            _BUILTIN_CONSUME_MEASURED_NESTED_TARGET(
+                file_descriptor,
+                before,
+                measured,
+                unique_nested_target_consumer,
+            )
 
         reopened_descriptor: int | None = None
         try:
@@ -2402,6 +2479,58 @@ def _measure_guarded_target_set(
     return tuple(measured)
 
 
+def _measure_guarded_target_set_with_consumer(
+    paths: tuple[str, ...],
+    *,
+    protected_root_identity: tuple[int, int] | None,
+    known_first_hop_identities: frozenset[str],
+    guard_context: _NestedTargetGuardContext,
+    consumer: _UniqueNestedTargetConsumer,
+) -> tuple[_MeasuredNestedTarget, ...]:
+    """Guardedly measure once while a private sink sees each pinned FD."""
+
+    _BUILTIN_NESTED_TARGET_GUARD_CONTEXT_PROJECTION(guard_context)
+    if type(paths) is not tuple or any(type(path) is not str for path in paths):
+        raise _InvalidNestedTargetResolution
+    measured: list[_MeasuredNestedTarget] = []
+    identities: set[tuple[int, int]] = set()
+    total_bytes = 0
+
+    def consume_unique_nested_target(
+        descriptor: int,
+        metadata: os.stat_result,
+        target: _MeasuredNestedTarget,
+    ) -> None:
+        if target.identity in identities:
+            raise _InvalidNestedTargetResolution
+        consumer(descriptor, metadata, target)
+
+    for path in paths:
+        item = _BUILTIN_MEASURE_NESTED_TARGET_PATH(
+            path,
+            total_measured_bytes=total_bytes,
+            protected_root_identity=protected_root_identity,
+            known_first_hop_identities=known_first_hop_identities,
+            guard_context=guard_context,
+            unique_nested_target_consumer=consume_unique_nested_target,
+        )
+        _BUILTIN_MEASURED_NESTED_TARGET_PROJECTION(item)
+        if (
+            item.identity in identities
+            or not _BUILTIN_NESTED_TARGET_NAMESPACE_MATCHES(
+                item,
+                protected_root_identity=protected_root_identity,
+                known_first_hop_identities=known_first_hop_identities,
+                guard_context=guard_context,
+            )
+        ):
+            raise _InvalidNestedTargetResolution
+        identities.add(item.identity)
+        measured.append(item)
+        total_bytes += item.content_bytes
+    return tuple(measured)
+
+
 def _prevalidate_protected_root_ancestors(
     paths: tuple[str, ...],
     *,
@@ -2528,6 +2657,9 @@ _BUILTIN_NESTED_TARGET_NAMESPACE_SNAPSHOT = (
 _BUILTIN_NESTED_TARGET_NAMESPACE_MATCHES = _nested_target_namespace_matches
 _BUILTIN_MEASURE_TARGET_SET = _measure_target_set
 _BUILTIN_MEASURE_GUARDED_TARGET_SET = _measure_guarded_target_set
+_BUILTIN_MEASURE_GUARDED_TARGET_SET_WITH_CONSUMER = (
+    _measure_guarded_target_set_with_consumer
+)
 _BUILTIN_PREVALIDATE_PROTECTED_ROOT_ANCESTORS = (
     _prevalidate_protected_root_ancestors
 )
@@ -2714,6 +2846,9 @@ def _inspect_staged_executable_shebang_nested_targets(
     guard_context: _NestedTargetGuardContext | None = None,
     expected_receipt_canonical: dict[str, Any] | None = None,
     closing_guard_anchor: Callable[[], None] | None = None,
+    unique_nested_target_consumer: (
+        _UniqueNestedTargetConsumer | None
+    ) = None,
 ) -> RepositoryExecutableShebangNestedTargetResolutionReceipt:
     """Frozen private resolver with optional stronger pre-read exclusions."""
 
@@ -2733,6 +2868,8 @@ def _inspect_staged_executable_shebang_nested_targets(
                 or type(closing_guard_anchor) is not _FIXED_FUNCTION_TYPE
             )
         ):
+            raise _InvalidNestedTargetResolution
+        if unique_nested_target_consumer is not None and guard_context is None:
             raise _InvalidNestedTargetResolution
         _BUILTIN_REQUIRE_SUPPORTED_PLATFORM()
         (
@@ -2763,7 +2900,7 @@ def _inspect_staged_executable_shebang_nested_targets(
                 protected_root_identity=protected_root_identity,
                 known_first_hop_identities=known_first_hop_identities,
             )
-        else:
+        elif unique_nested_target_consumer is None:
             _BUILTIN_PREVALIDATE_GUARDED_ROOT_ANCESTORS(
                 paths,
                 protected_root_identity=protected_root_identity,
@@ -2774,6 +2911,21 @@ def _inspect_staged_executable_shebang_nested_targets(
                 protected_root_identity=protected_root_identity,
                 known_first_hop_identities=known_first_hop_identities,
                 guard_context=guard_context,
+            )
+        else:
+            _BUILTIN_PREVALIDATE_GUARDED_ROOT_ANCESTORS(
+                paths,
+                protected_root_identity=protected_root_identity,
+                guard_context=guard_context,
+            )
+            first_measurement = (
+                _BUILTIN_MEASURE_GUARDED_TARGET_SET_WITH_CONSUMER(
+                    paths,
+                    protected_root_identity=protected_root_identity,
+                    known_first_hop_identities=known_first_hop_identities,
+                    guard_context=guard_context,
+                    consumer=unique_nested_target_consumer,
+                )
             )
         derived_projection = tuple(
             _BUILTIN_DERIVED_NESTED_REQUIREMENT_PROJECTION(item)
