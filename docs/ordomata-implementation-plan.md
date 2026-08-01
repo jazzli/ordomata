@@ -734,6 +734,37 @@ immutability, authenticity, provenance, invocability, alias, containment, and
 future-execution semantics remain deferred. Only Class 0/1 effects remain
 enabled.
 
+The twenty-second bounded Phase 3 slice adds the separate library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_loader_requirements` PIP.
+`inspect_staged_executable_native_loader_requirements(expected_runtime, *,
+expected_staging, lease)` accepts only the exact direct-executable runtime and
+staging receipts plus their active same-PID lease. It validates their complete
+correspondence, freshly reproduces runtime evidence before and after
+inspection, performs matching extraction passes bracketed by full descriptor
+remeasurement, and requires exact closing lease anchors.
+
+Its bounded fixed-format parser reads ELF32/ELF64 program-header tables only
+far enough to classify at most one `PT_INTERP`, and thin Mach-O32/Mach-O64
+load-command tables only far enough to classify at most one
+`LC_LOAD_DYLINKER`. It does not select an architecture from a fat Mach-O image.
+Malformed, duplicate, fat, or out-of-scope layouts collapse to the fixed
+`unsupported_native_layout` disposition, while non-native files produce
+`non_native_not_applicable`. Supported records contain only format class, byte
+order, image kind, declared/absent disposition, canonical-absolute-path fact,
+bounded loader-path byte count, digest-only loader-path reference, and exact
+runtime/staging/command lineage.
+
+Canonical records and evidence contain no raw loader path, header, content,
+identity number, temporary name, or descriptor. The Class 0 receipt adds no
+authority, authorization, path/loader resolution, shared-library/dependency
+closure, fat-image architecture selection, write, cleanup, persistence,
+proposal/worktree, dispatch, route, billing, live, network, worker,
+subprocess, harness, model, or execution path. Loader identity,
+runtime/toolchain completeness, freshness, authenticity, provenance,
+invocability, containment, and future-execution semantics remain deferred.
+Only Class 0/1 effects remain enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -1493,6 +1524,18 @@ Only Class 0/1 effects remain enabled.
     argument-tail extraction are implemented, while interpreter, `env`,
     `PATH`, argument, and kernel semantics plus dependency/toolchain closure
     and execution remain deferred);
+  - controller-inspected direct staged native-loader declarations (separate
+    schema-v1 Class 0 receipt implemented; exact direct runtime/staging/active-
+    lease anchoring, fresh runtime reproduction before and after inspection,
+    matching descriptor remeasurement, bounded ELF32/ELF64 `PT_INTERP` and
+    thin Mach-O32/Mach-O64 `LC_LOAD_DYLINKER` parsing, fixed unsupported/fat
+    and non-native dispositions, digest-only canonical-absolute loader-path
+    references, and exact file/command lineage are implemented; raw loader
+    paths/headers/content/identity/descriptor data remain excluded, while fat-
+    image architecture selection, loader resolution/identity, shared-library/
+    dependency/runtime/toolchain closure, freshness, authority, persistence,
+    proposal/worktree integration, routing, billing, subprocess, harness,
+    model, and execution remain deferred);
   - controller-measured direct absolute shebang targets (separate schema-v1
     Class 0 receipt implemented; exact requirements/runtime/staging/active-
     lease anchoring, canonical ASCII absolute targets, an exactly expected

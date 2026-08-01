@@ -1196,6 +1196,37 @@ path. Interpreter, launcher, argument, dependency, loader, toolchain,
 freshness, authenticity, provenance, invocability, alias, containment, and
 future-execution closure remain deferred. The Class 0/1 ceiling is unchanged.
 
+The twenty-second bounded Phase 3 slice is the separate library-only schema-v1
+Class 0 `ordomata.repository_executable_native_loader_requirements` PIP.
+`inspect_staged_executable_native_loader_requirements(expected_runtime, *,
+expected_staging, lease)` accepts only the exact direct staged-executable
+runtime/staging receipts and their active same-PID lease. The frozen proof
+graph checks complete receipt correspondence, reproduces runtime evidence
+before and after parsing, runs matching bounded extraction passes bracketed by
+full detached-descriptor remeasurement, and requires closing lease anchors.
+
+The parser reads only bounded native declaration tables: ELF32/ELF64 program
+headers for at most one `PT_INTERP`, and thin 32-/64-bit Mach-O load commands
+for at most one `LC_LOAD_DYLINKER`. It neither selects an architecture from a
+fat Mach-O image nor follows any declaration. Malformed, duplicate, fat, or
+otherwise unsupported layouts collapse to the fixed
+`unsupported_native_layout` outcome without diagnostic or byte disclosure.
+Supported records contain only format class, byte order, image kind, a
+declared/absent disposition, canonical-absolute-path boolean, bounded path
+byte count, digest-only path reference, and exact file/command lineage.
+Non-native inputs produce `non_native_not_applicable`.
+
+Raw loader paths, headers, content, identity numbers, temporary names, and
+descriptors remain outside canonical records and aggregate evidence. The
+receipt is historical Class 0 syntax evidence, not authority, authorization,
+or an action receipt. It performs no loader/path resolution, shared-library or
+dependency closure, architecture selection, write, cleanup, persistence,
+proposal/worktree, dispatch, routing, billing, live, network, worker,
+subprocess, harness, model, or execution. Loader identity, runtime/toolchain
+completeness, freshness, authenticity, provenance, invocability, containment,
+and future-action correspondence remain deferred. The Class 0/1 ceiling is
+unchanged.
+
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
 It freshly revalidates a `RepositoryRegistration`, requires an existing
@@ -1469,6 +1500,12 @@ The twenty-first slice adds the matching Class 0 nested-target shebang-
 requirements PIP. It reproduces runtime evidence around two independent
 remeasurement passes and emits only digest-bound token/tail syntax and exact
 lineage; it resolves, follows, and executes nothing.
+
+The twenty-second slice adds the matching Class 0 direct native-loader
+declaration PIP. It reads only bounded ELF `PT_INTERP` and thin Mach-O
+`LC_LOAD_DYLINKER` syntax and emits digest-only path references; it resolves
+no loader or shared library, selects no fat-binary architecture, and executes
+nothing.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor

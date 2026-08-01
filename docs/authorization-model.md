@@ -753,6 +753,31 @@ network, worker, subprocess, harness, model, or execution capability. Complete
 interpreter, launcher, argument, dependency/toolchain, containment, and future-
 action semantics remain deferred. The current Class 0/1 ceiling is unchanged.
 
+The twenty-second bounded Phase 3 slice adds another separate Class 0 PIP, not
+a PDP or PEP: `ordomata.repository_executable_native_loader_requirements`.
+Its inspector accepts only exact direct-executable runtime/staging receipts
+and their active same-PID lease, verifies complete lineage, reproduces the
+runtime manifest before and after extraction, brackets bounded parsing with
+full descriptor remeasurement, and requires exact closing lease anchors.
+
+Only direct declaration syntax becomes an attribute: ELF32/ELF64
+`PT_INTERP`, or thin Mach-O32/Mach-O64 `LC_LOAD_DYLINKER`. Supported records
+carry fixed format, byte-order, image-kind, declared/absent, path-length, and
+canonical-absolute-path facts plus a digest-only path reference. Fat Mach-O,
+duplicate, malformed, or out-of-scope layouts collapse to a fixed unsupported
+outcome; non-native files receive a fixed not-applicable outcome. These remain
+untrusted descriptive attributes until a future PDP evaluates exact current
+facts under policy.
+
+The receipt grants no authority and is neither authorization nor an action
+receipt. It exposes no raw path/header/content/identity/descriptor, performs
+no path or loader resolution, shared-library traversal, dependency closure, or
+fat-binary architecture selection, and adds no write, cleanup, persistence,
+proposal/worktree, dispatch, route, billing, live, network, worker,
+subprocess, harness, model, or execution capability. Loader identity,
+runtime/toolchain completeness, containment, and future-action semantics
+remain deferred. The current Class 0/1 ceiling is unchanged.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -1029,6 +1054,11 @@ The twenty-first slice adds the matching Class 0 nested-target shebang-
 requirements PIP. Its digest-only token/tail syntax is descriptive evidence,
 not a PDP decision or PEP receipt, and grants no resolution or execution
 authority.
+
+The twenty-second slice adds the matching Class 0 direct native-loader
+declaration PIP. Digest-only `PT_INTERP`/`LC_LOAD_DYLINKER` syntax is
+descriptive evidence, not a PDP decision or PEP receipt, and grants no loader,
+dependency, shared-library, or execution authority.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and

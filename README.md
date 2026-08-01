@@ -813,6 +813,37 @@ immutability, authenticity, provenance, invocability, alias, containment, and
 future-execution semantics remain unproved. Only Class 0/1 effects remain
 enabled.
 
+The twenty-second bounded Phase 3 slice adds the separate library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_loader_requirements` PIP.
+`inspect_staged_executable_native_loader_requirements(expected_runtime, *,
+expected_staging, lease)` requires the exact direct-executable runtime and
+staging receipts plus their active same-PID lease. It reproduces the runtime
+manifest before and after inspection, performs matching bounded extraction
+passes bracketed by full detached-descriptor remeasurement, and finishes with
+exact closing lease anchors.
+
+For each unique direct staged ELF file it parses only the bounded program-
+header table and an optional single `PT_INTERP`; for each thin Mach-O file it
+parses only the bounded load-command table and an optional single
+`LC_LOAD_DYLINKER`. Fat Mach-O architecture selection and malformed or
+unsupported native layouts produce a fixed `unsupported_native_layout`
+disposition. Supported native records report only format class, byte order,
+image kind, declared/absent disposition, a digest reference and byte count for
+a canonical absolute loader path, and exact file/command lineage. Non-native
+files produce the fixed descriptive `non_native_not_applicable` outcome.
+
+Canonical records expose no raw loader path, header, content, filesystem
+identity number, temporary name, or descriptor. This syntax receipt is
+historical descriptive evidence, not authority, authorization, path
+resolution, shared-library closure, or an action receipt. It performs no
+loader lookup, architecture selection, dependency traversal, write, cleanup,
+persistence, proposal/worktree, dispatch, route, billing, live, network,
+worker, subprocess, harness, model, or execution. Loader identity,
+dependency/runtime/toolchain completeness, freshness, authenticity,
+provenance, invocability, containment, and future-execution semantics remain
+unproved. Only Class 0/1 effects remain enabled.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -1110,6 +1141,12 @@ The twenty-first slice adds matching Class 0 nested-target shebang syntax
 requirements. It reproduces the runtime evidence twice, independently
 remeasures detached bytes twice, and emits only digest-bound token/tail syntax
 and exact lineage without resolving or executing anything.
+
+The twenty-second slice adds matching Class 0 direct native-loader declaration
+syntax. It inspects only bounded ELF `PT_INTERP` and thin Mach-O
+`LC_LOAD_DYLINKER` declarations, emits digest-only path references and exact
+lineage, and performs no loader resolution, shared-library traversal, fat-
+binary architecture selection, subprocess, model, or execution.
 
 ## Quick start
 
