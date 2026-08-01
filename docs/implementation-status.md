@@ -834,6 +834,32 @@ persistence, proposal/worktree, routing, billing, network, worker, subprocess,
 harness, model, or execution integration. Only Class 0/1 effects remain
 enabled.
 
+Implemented as the twenty-fifth bounded Phase 3 slice, the library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_loader_target_runtime_manifest` API
+inspects only an exact active same-PID native-loader target-stage receipt and
+lease. It validates receipt/digest/object anchors, the stored root context,
+retained tuple identity, and complete staged-file/requirement/command
+correspondence before reading any detached descriptor.
+
+Each unique retained loader target is fully remeasured while at most 4,096
+header bytes are captured, independently reread with position-independent
+`pread`, then fully remeasured again before a closing active-stage snapshot.
+Fixed ELF, Mach-O, bounded valid ASCII POSIX-shebang, unsupported-shebang, and
+unknown classifications are implemented. No-target input is zero-file and
+zero-read. Public evidence retains digest-only header/classification and exact
+upstream lineage; raw paths, headers, content, identity numbers, names, and
+descriptors remain private, while deterministic digests remain correlatable
+and potentially guessable.
+
+This historical Class 0 manifest adds no loader identity/authenticity,
+compatibility, invocability, authorization, action receipt, shared-library/
+dependency closure, path lookup, lease mutation/cleanup, architecture
+selection, persistence, proposal/worktree, routing, billing, network, worker,
+subprocess, harness, model, loader invocation, or execution integration.
+Freshness, containment, runtime/toolchain completeness, and future execution
+remain deferred. Only Class 0/1 effects remain enabled.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -1122,6 +1148,11 @@ The twenty-fourth slice adds matching Class 1 native-loader target staging.
 Same-descriptor capture, unlinked mode-0400 read-only copies, post-stage chain
 replay, and fail-closed cleanup are implemented without loader authenticity,
 dependency closure, persistence, subprocess, model, or execution integration.
+
+The twenty-fifth slice adds matching Class 0 runtime-header inspection of the
+detached loader copies. Two descriptor remeasurements around one bounded
+position-independent header read emit fixed digest-only classifications with
+no path, lease, subprocess, model, loader, or execution integration.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and

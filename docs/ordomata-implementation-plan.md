@@ -826,6 +826,33 @@ traversal, persistence, proposal/worktree integration, routing, billing,
 network, worker, subprocess, harness, model, or execution is introduced. Only
 Class 0/1 effects remain enabled.
 
+The twenty-fifth bounded Phase 3 slice adds the separate library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_loader_target_runtime_manifest` PIP.
+Its inspector accepts only the exact native-loader target-staging receipt and
+active same-PID lease, then validates receipt/digest/object anchors, stored
+root context, retained tuple identity, and every staged-file/requirement/
+command binding before descriptor inspection.
+
+Each unique target is fully remeasured while capturing at most 4,096 header
+bytes, reread independently through bounded position-independent `pread`, and
+fully remeasured again before a closing stage snapshot. Fixed ELF, Mach-O,
+valid bounded ASCII POSIX-shebang, unsupported-shebang, and unknown outcomes
+preserve exact upstream lineage. No-target input produces a zero-file,
+zero-read manifest. Canonical records contain digest-bound classification,
+header, content, and lineage only; raw paths, headers, bytes, identity numbers,
+names, and descriptors are omitted, while deterministic digests remain
+correlatable and potentially guessable.
+
+This historical Class 0 evidence is not loader identity/authenticity,
+compatibility, invocability, authority, authorization, dependency/shared-
+library closure, or an action receipt. It performs no path lookup, lease
+mutation/cleanup, architecture selection, persistence, proposal/worktree,
+routing, billing, network, worker, subprocess, harness, model, loader
+invocation, or execution. Freshness, containment, runtime/toolchain
+completeness, and future-execution semantics remain deferred. Only Class 0/1
+effects remain enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -1616,6 +1643,17 @@ Only Class 0/1 effects remain enabled.
     implemented; raw paths/bytes/names/descriptors remain private, while
     loader authenticity/parsing/invocation, immutability, fat-image selection,
     shared-library/dependency/runtime/toolchain closure, authority,
+    persistence, proposal/worktree integration, routing, billing, subprocess,
+    harness, model, and execution remain deferred);
+  - controller-inspected staged native-loader target runtime headers (separate
+    schema-v1 Class 0 receipt implemented; exact active same-PID target-stage
+    receipt/lease/object/root-context validation, two complete descriptor
+    remeasurements around one bounded 4,096-byte position-independent header
+    read, fixed ELF/Mach-O/POSIX-shebang/unsupported-shebang/unknown outcomes,
+    exact file/requirement/command lineage, and no-target zero-read behavior are
+    implemented; raw paths/headers/bytes/identity/names/descriptors remain
+    private, while loader authenticity/compatibility/invocation, dependency/
+    shared-library/runtime/toolchain closure, freshness, authority,
     persistence, proposal/worktree integration, routing, billing, subprocess,
     harness, model, and execution remain deferred);
   - controller-measured direct absolute shebang targets (separate schema-v1
