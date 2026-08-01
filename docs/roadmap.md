@@ -466,6 +466,42 @@ parallel because it cannot exercise worker authority.
   authorization, action receipt, proposal/worktree lineage, persistence,
   routing, billing, capacity, circuit, live, subprocess, harness, model, or
   execution capability. The Class 0/1 ceiling remains unchanged.
+- The seventeenth bounded Phase 3 slice implements the separate library-only
+  schema-v1
+  `ordomata.repository_executable_shebang_nested_target_resolution` Class 0
+  inspection. `inspect_staged_executable_shebang_nested_targets(
+  expected_target_requirements, *, expected_target_runtime,
+  expected_target_staging, lease, expected_nested_target_paths)` requires the
+  exact staged-target shebang-requirements/runtime/staging chain, its
+  exactly anchored active same-PID target-stage lease, and the controller's
+  exact first-use-ordered canonical ASCII absolute depth-2 target paths. It
+  measures exactly one additional hop under fixed `controller_measured` /
+  `posix_absolute_shebang_nested_target_nofollow_v1` and
+  `immediate_target_reentry_v1` controls. The three successful dispositions are
+  `source_native_not_applicable`, `target_native_not_applicable`, and
+  `direct_absolute_nested_target_measured`; every unique selected path must
+  match across two exact-spelling no-follow content/identity/metadata/namespace
+  passes and a closing namespace check. Known depth-1 path or identity re-entry
+  and descent through the anchored target-stage root fail closed. Source-native
+  input performs no descriptor or path read; a native depth-1 target is freshly
+  reproduced from its staged descriptor but performs no nested-path lookup or
+  measurement.
+  Receipt totals are `requirement_count`, `command_count`,
+  `nested_target_requirement_count`, `target_native_not_applicable_count`,
+  `source_native_not_applicable_count`, `unique_nested_target_count`, and
+  `total_measured_bytes`.
+  Privacy-bounded canonical records contain digest/reference lineage, fixed
+  outcomes, bounded command identifiers, counts, and byte totals; outward
+  evidence is aggregate-only, excluding raw paths, target/token bytes,
+  temporary names, and descriptors. The boundary does not inspect or follow a
+  measured depth-2
+  target, recurse further, stage bytes, change or clean up a lease, or execute.
+  It supplies no semantic interpreter/`env`/`PATH`/launcher/argument
+  resolution, source-chain or generic cycle closure, broader protected-root
+  closure, dependency/toolchain/loader closure, freshness, immutability,
+  authority, authorization, action receipt, proposal/worktree lineage,
+  persistence, routing, billing, capacity, circuit, live, subprocess, harness,
+  model, or execution capability. The Class 0/1 ceiling remains unchanged.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

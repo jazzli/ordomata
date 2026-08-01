@@ -521,6 +521,47 @@ proposal/worktree lineage, persistence, dispatch, route, billing, capacity,
 circuit, live eligibility, or CLI/state/runner integration. Only Class 0/1
 effects remain enabled.
 
+The seventeenth slice adds the separate library-only schema-v1 Class 0
+`ordomata.repository_executable_shebang_nested_target_resolution` boundary.
+`inspect_staged_executable_shebang_nested_targets(
+expected_target_requirements, *, expected_target_runtime,
+expected_target_staging, lease, expected_nested_target_paths)` takes the exact
+staged-target shebang-requirements/runtime/staging proof chain, its exactly
+anchored active same-PID target-stage lease, and the controller's exact first-use-
+ordered tuple of canonical ASCII absolute nested-target paths. Measurement is
+fixed to exactly one additional hop at depth 2 under `controller_measured` /
+`posix_absolute_shebang_nested_target_nofollow_v1` and
+`immediate_target_reentry_v1` controls. Successful rows are fixed as
+`source_native_not_applicable`, `target_native_not_applicable`, or
+`direct_absolute_nested_target_measured`. Every unique selected path is
+walked with exact spelling and no symlink following and must match across two
+complete controller-measured content, identity, metadata, and namespace passes
+plus a closing namespace check. A known depth-1 path-reference or measured-
+identity re-entry is rejected, and no candidate walk may descend through the
+anchored target-stage-root identity. Source-native input has no target files
+and performs no descriptor or path read; a native depth-1 target is freshly
+reproduced from its staged descriptor but performs no nested-path lookup or
+measurement.
+
+The receipt fixes `requirement_count`, `command_count`,
+`nested_target_requirement_count`, `target_native_not_applicable_count`,
+`source_native_not_applicable_count`, `unique_nested_target_count`, and
+`total_measured_bytes`.
+
+The immutable receipt and aggregate evidence contain only digest/reference
+lineage, fixed outcomes, bounded identifiers, counts, and byte totals. They
+emit no raw path, content, token/tail byte, temporary name, or descriptor
+number. The API does not inspect or follow a measured depth-2 target's own
+shebang, recurse beyond depth 2, stage bytes, mutate or clean up a lease, create
+a subprocess, call a harness/model, or execute. It establishes no semantic
+interpreter/`env`/`PATH`/launcher/argument resolution, source-chain or generic
+cycle closure, broader protected-root closure, dependency/loader/environment/
+runtime/toolchain closure, freshness, immutability, authenticity, provenance,
+authority, authorization, action receipt, proposal/worktree lineage,
+persistence, dispatch, routing, billing, capacity, circuit, live eligibility,
+CLI/state/runner, or execution capability. Only Class 0/1 effects remain
+enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -1241,7 +1282,8 @@ point-in-time direct-executable receipt, temporary staging lease, bounded
 staged runtime-header manifest, privacy-bounded shebang-requirements receipt,
 privacy-bounded direct-shebang-target measurement receipt, temporary direct-
 target staging lease, bounded staged-target runtime-header manifest, and
-privacy-bounded staged-target shebang-requirements receipt are implemented but
+privacy-bounded staged-target shebang-requirements receipt, plus the fixed-
+depth privacy-bounded nested-target measurement receipt are implemented but
 are not proposal evidence or execution authority. Complete
 interpreter/dependency/runtime/toolchain closure, future `shell=False` action-
 boundary execution, and every worker-cell deliverable below remain deferred.
@@ -1317,6 +1359,21 @@ Only Class 0/1 effects remain enabled.
     staging, interpreter/`env`/`PATH`/launcher/argument semantics, dependency/
     loader/toolchain closure, freshness, authority, persistence, routing,
     billing, subprocess, harness, model, and execution remain deferred);
+  - controller-measured nested shebang targets (separate schema-v1 Class 0
+    receipt implemented; the exact active target-stage chain and exact ordered
+    canonical absolute depth-2 paths, two matching exact-spelling no-follow
+    measurements, closing namespace validation, immediate depth-1 path/
+    identity re-entry rejection, target-stage-root descendant rejection,
+    source-native zero-read behavior, and depth-1-native zero nested-path-read
+    behavior are implemented; privacy-bounded canonical records and evidence
+    contain digest/reference lineage, fixed outcomes, bounded command
+    identifiers, counts, and byte totals, while recursion beyond depth 2,
+    semantic interpreter/`env`/`PATH`/launcher/argument resolution, source-
+    chain or generic cycle
+    closure, broader protected-root closure, dependency/loader/toolchain
+    closure, freshness, immutability, authority, authorization, persistence,
+    proposal/worktree integration, routing, billing, subprocess, harness,
+    model, and execution remain deferred);
   - protected and allowed paths;
   - generated/vendor exclusions (schema v2 validation implemented; operational
     consumption remains deferred);
