@@ -647,6 +647,30 @@ parallel because it cannot exercise worker authority.
   model, or execution capability. Interpreter/launcher/argument/dependency/
   toolchain, freshness, immutability, provenance, containment, and future-
   execution semantics remain deferred. Only Class 0/1 effects remain enabled.
+- The twenty-second bounded Phase 3 slice implements the separate library-only
+  schema-v1 Class 0
+  `ordomata.repository_executable_native_loader_requirements` PIP.
+  `inspect_staged_executable_native_loader_requirements(expected_runtime, *,
+  expected_staging, lease)` requires the exact direct-executable runtime/
+  staging receipts and active same-PID lease, validates full correspondence,
+  reproduces runtime evidence before and after extraction, brackets matching
+  bounded parsing passes with full descriptor remeasurement, and closes on
+  exact lease anchors.
+  Only ELF32/ELF64 program headers for at most one `PT_INTERP` and thin Mach-
+  O32/Mach-O64 load commands for at most one `LC_LOAD_DYLINKER` are parsed.
+  Fat-image architecture selection is not performed. Malformed, duplicate,
+  fat, or unsupported layouts and non-native inputs receive fixed outcomes;
+  supported records retain only format, byte order, image kind, declared/
+  absent status, a canonical-absolute-path fact, bounded path byte count,
+  digest-only path reference, and exact lineage.
+  Canonical records expose no raw loader path, header, content, identity
+  number, temporary name, or descriptor. The historical receipt is not
+  authority, authorization, loader resolution, dependency/shared-library
+  closure, or an action receipt and adds no write, cleanup, persistence,
+  proposal/worktree, routing, billing, live, network, worker, subprocess,
+  harness, model, or execution capability. Loader identity, runtime/toolchain
+  completeness, freshness, containment, and future-execution semantics remain
+  deferred. Only Class 0/1 effects remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.
