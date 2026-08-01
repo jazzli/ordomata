@@ -844,6 +844,36 @@ dependency/runtime/toolchain completeness, freshness, authenticity,
 provenance, invocability, containment, and future-execution semantics remain
 unproved. Only Class 0/1 effects remain enabled.
 
+The twenty-third bounded Phase 3 slice adds the separate library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_loader_target_resolution` PIP.
+`inspect_staged_executable_native_loader_targets(expected_requirements, *,
+expected_runtime, expected_staging, lease, expected_loader_paths)` requires the
+exact native-loader requirements/runtime/staging chain and its active same-PID
+lease. The caller supplies one exact ordered unique tuple of canonical ASCII
+absolute paths; every path must cryptographically reproduce a merged
+`PT_INTERP` or `LC_LOAD_DYLINKER` digest reference before any target lookup.
+Absent, unsupported, fat, and non-native declarations require no path.
+
+Each unique declaration-bound target is measured twice through exact-spelling,
+component-by-component no-follow traversal. Only bounded, non-sparse, regular,
+executable files are accepted; duplicate filesystem identities, content or
+metadata drift, symlinks, case aliases, and closing namespace drift fail
+closed. The receipt retains digest-only path, identity, metadata, content, and
+requirement/command lineage plus counts and byte totals. Raw target paths and
+bytes remain outside canonical records and aggregate evidence. Deterministic
+digests and byte lengths remain correlatable and potentially guessable, so
+this is privacy minimization rather than secrecy.
+
+This point-in-time target measurement is historical descriptive evidence, not
+loader authenticity, authorization, shared-library or dependency closure, or
+an action receipt. It performs no fat-image architecture selection, staging,
+write, cleanup, persistence, proposal/worktree, dispatch, route, billing,
+live, network, worker, subprocess, harness, model, loader invocation, or
+execution. Current freshness, provenance, invocability, dependency/runtime/
+toolchain completeness, containment, and future-execution semantics remain
+unproved. Only Class 0/1 effects remain enabled.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -1147,6 +1177,12 @@ syntax. It inspects only bounded ELF `PT_INTERP` and thin Mach-O
 `LC_LOAD_DYLINKER` declarations, emits digest-only path references and exact
 lineage, and performs no loader resolution, shared-library traversal, fat-
 binary architecture selection, subprocess, model, or execution.
+
+The twenty-third slice adds matching Class 0 declaration-bound loader-target
+measurement. Exact caller-supplied paths must reproduce the digest-only
+declarations before two no-follow file measurements; raw paths stay private,
+and no loader, shared library, dependency, subprocess, model, or executable is
+invoked.
 
 ## Quick start
 

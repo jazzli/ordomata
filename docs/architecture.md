@@ -1227,6 +1227,37 @@ completeness, freshness, authenticity, provenance, invocability, containment,
 and future-action correspondence remain deferred. The Class 0/1 ceiling is
 unchanged.
 
+The twenty-third bounded Phase 3 slice is the separate library-only schema-v1
+Class 0 `ordomata.repository_executable_native_loader_target_resolution` PIP.
+Its inspector consumes only the exact loader-requirements/runtime/staging
+receipts, their active same-PID lease, and an exactly expected ordered unique
+tuple of canonical ASCII absolute loader paths. Before target I/O, each
+supplied path must recompute the digest-only `PT_INTERP` or
+`LC_LOAD_DYLINKER` reference for its exact upstream runtime file, format, and
+declaration kind. The first-appearance path order must equal the caller's
+tuple; absent, unsupported/fat, and non-native requirements bind no path.
+
+Each unique matched target undergoes two complete bounded measurements through
+component-by-component `O_NOFOLLOW` traversal from a pinned root descriptor.
+Exact namespace spelling is required. Symlinks, non-regular or non-executable
+files, sparse or oversized content, duplicate identities, path aliases, and
+content/metadata/ancestor/leaf drift fail closed. A final no-follow namespace
+walk and active-lease anchor close the point-in-time boundary. Public records
+contain only digest references for path, filesystem identity, metadata, and
+content, exact upstream requirement/command lineage, counts, and byte totals;
+raw target paths and bytes are omitted. Deterministic digests and lengths
+remain correlatable and potentially guessable; the boundary minimizes data but
+does not claim secrecy or unlinkability.
+
+This target measurement is historical Class 0 evidence, not a loader identity
+or authenticity verdict, PDP decision, PEP receipt, or future freshness proof.
+It adds no shared-library/dependency closure, fat-image architecture selection,
+staging, write, cleanup, persistence, proposal/worktree, dispatch, routing,
+billing, live, network, worker, subprocess, harness, model, loader invocation,
+or execution. Runtime/toolchain completeness, provenance, invocability,
+containment, and future-action correspondence remain deferred. The Class 0/1
+ceiling is unchanged.
+
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
 It freshly revalidates a `RepositoryRegistration`, requires an existing
@@ -1506,6 +1537,11 @@ declaration PIP. It reads only bounded ELF `PT_INTERP` and thin Mach-O
 `LC_LOAD_DYLINKER` syntax and emits digest-only path references; it resolves
 no loader or shared library, selects no fat-binary architecture, and executes
 nothing.
+
+The twenty-third slice adds the matching Class 0 native-loader target-
+measurement PIP. Exact expected paths must reproduce the declaration digests
+before two no-follow measurements; only digest-bound identity/content evidence
+is returned, and no loader, shared library, dependency, or process is invoked.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor
