@@ -729,6 +729,30 @@ capability and establishes no recursive interpreter or dependency semantics,
 immutability, authenticity, provenance, invocability, containment, or future-
 action correspondence. The current Class 0/1 ceiling is unchanged.
 
+The twenty-first bounded Phase 3 slice adds another separate Class 0 PIP, not
+a PDP or PEP:
+`ordomata.repository_executable_shebang_nested_target_requirements`. It accepts
+only the exact nested-target runtime/staging receipts and their active same-PID
+lease, checks complete correspondence, reproduces runtime evidence before and
+after extraction, independently remeasures retained descriptors twice, and
+requires closing lease and descriptor anchors.
+
+Its fixed syntax attributes distinguish source-/target-native no-ops, native
+binaries, absolute and non-absolute tokens, unsupported shebangs, and unknown
+formats. Token and opaque argument-tail bytes become only digest references,
+bounded byte counts, a separator kind, and an absolute-token boolean. Shared
+targets preserve distinct complete lineage; native-only input performs no
+descriptor read. These remain untrusted descriptive attributes until a future
+PDP evaluates them under fresh policy.
+
+The receipt grants no authority and is neither authorization nor an action
+receipt. It exposes no raw path/header/content/token/tail/identity/descriptor,
+performs no path or environment lookup, and adds no recursion beyond depth 2,
+write, cleanup, persistence, proposal/worktree, dispatch, route, billing,
+network, worker, subprocess, harness, model, or execution capability. Complete
+interpreter, launcher, argument, dependency/toolchain, containment, and future-
+action semantics remain deferred. The current Class 0/1 ceiling is unchanged.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -1000,6 +1024,11 @@ The twentieth slice adds the matching Class 0 nested-target runtime-header PIP.
 Its exact active-lease remeasurement and privacy-bounded classification receipt
 remain descriptive evidence, not a PDP decision or PEP receipt, and grant no
 route, worker, subprocess, harness, model, or execution capability.
+
+The twenty-first slice adds the matching Class 0 nested-target shebang-
+requirements PIP. Its digest-only token/tail syntax is descriptive evidence,
+not a PDP decision or PEP receipt, and grants no resolution or execution
+authority.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and

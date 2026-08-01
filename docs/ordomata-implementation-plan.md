@@ -707,6 +707,33 @@ freshness, immutability, authenticity, provenance, invocability, alias
 exclusion, containment, and future execution remain deferred. Only Class 0/1
 effects remain enabled.
 
+The twenty-first bounded Phase 3 slice adds the separate library-only
+schema-v1 Class 0
+`ordomata.repository_executable_shebang_nested_target_requirements` PIP.
+`inspect_staged_executable_shebang_nested_target_requirements(
+expected_nested_target_runtime, *, expected_nested_target_staging, lease)`
+requires the exact nested runtime/staging receipts and their active same-PID
+lease. It validates complete correspondence, reproduces runtime evidence
+before and after extraction, runs two matching independent full descriptor
+remeasurements, and closes with exact lease and descriptor anchors.
+
+Fixed source-/target-native, native-binary, absolute-token, non-absolute-token,
+unsupported-shebang, and unknown-format outcomes preserve complete upstream
+and command lineage. Valid POSIX token and opaque argument-tail bytes become
+only digest references, bounded byte counts, a separator kind, and an absolute-
+token boolean. Shared files are extracted once; native-only input performs no
+descriptor read.
+
+The privacy-bounded Class 0 receipt contains no raw path, header, content,
+token, argument tail, identity number, temporary name, or descriptor. It adds
+no authority, authorization, path/environment lookup, shebang following,
+recursion beyond depth 2, write, cleanup, persistence, proposal/worktree,
+route, billing, live, network, worker, subprocess, harness, model, or execution
+path. Complete interpreter/launcher/argument/dependency/toolchain, freshness,
+immutability, authenticity, provenance, invocability, alias, containment, and
+future-execution semantics remain deferred. Only Class 0/1 effects remain
+enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -1560,6 +1587,20 @@ Only Class 0/1 effects remain enabled.
     semantics, dependency/loader/toolchain closure, freshness, immutability,
     authority, persistence, proposal/worktree integration, routing, billing,
     subprocess, harness, model, and execution remain deferred);
+  - controller-inspected guarded nested-target shebang requirements (separate
+    schema-v1 Class 0 receipt implemented; exact active same-PID nested-stage
+    and runtime receipt/lease anchoring, full runtime/staging correspondence,
+    fresh runtime reproduction before and after extraction, two matching
+    independent complete descriptor passes, closing anchors, fixed seven-way
+    dispositions, unique-file parsing, digest-only interpreter-token/opaque-
+    argument-tail evidence, exact complete requirement/binding lineage, and
+    source-/target-native zero-file/zero-read behavior are implemented; raw
+    path/header/content/token/tail/identity/descriptor data remains excluded,
+    while token resolution/following, recursion beyond depth 2, interpreter/
+    `env`/`PATH`/launcher/argument semantics, dependency/loader/toolchain
+    closure, freshness, immutability, authority, persistence, proposal/
+    worktree integration, routing, billing, subprocess, harness, model, and
+    execution remain deferred);
   - protected and allowed paths;
   - generated/vendor exclusions (schema v2 validation implemented; operational
     consumption remains deferred);
