@@ -34,8 +34,10 @@ from .repository_executable_runtime_manifest import (
 )
 from .repository_executable_shebang_target_resolution import (
     _MeasuredTarget,
+    _UniqueTargetConsumer,
     _canonical_target_path_from_token as _canonical_target_path,
     _measure_target_set as _measure_target_set,
+    _measure_target_set_with_consumer as _measure_target_set_with_consumer,
     _require_supported_platform as _require_supported_platform,
     _target_namespace_matches as _target_namespace_matches,
 )
@@ -150,6 +152,9 @@ _BUILTIN_ACTIVE_STAGE_SNAPSHOT = _active_stage_snapshot
 _BUILTIN_REQUIRE_SUPPORTED_PLATFORM = _require_supported_platform
 _BUILTIN_CANONICAL_TARGET_PATH = _canonical_target_path
 _BUILTIN_MEASURE_TARGET_SET = _measure_target_set
+_BUILTIN_MEASURE_TARGET_SET_WITH_CONSUMER = (
+    _measure_target_set_with_consumer
+)
 _BUILTIN_TARGET_NAMESPACE_MATCHES = _target_namespace_matches
 _FIXED_NATIVE_REQUIREMENTS_TYPE = (
     RepositoryExecutableNativeLoaderRequirementsReceipt
@@ -1199,15 +1204,16 @@ def _public_requirement(
 _BUILTIN_PUBLIC_REQUIREMENT = _public_requirement
 
 
-def inspect_staged_executable_native_loader_targets(
+def _inspect_staged_executable_native_loader_targets(
     expected_requirements: RepositoryExecutableNativeLoaderRequirementsReceipt,
     *,
     expected_runtime: RepositoryExecutableRuntimeManifestReceipt,
     expected_staging: RepositoryExecutableStagingReceipt,
     lease: RepositoryExecutableStageLease,
     expected_loader_paths: tuple[Path, ...],
+    unique_target_consumer: _UniqueTargetConsumer | None = None,
 ) -> RepositoryExecutableNativeLoaderTargetResolutionReceipt:
-    """Measure the exact declaration-bound canonical loader target set."""
+    """Internal inspector with an optional same-descriptor action consumer."""
 
     try:
         _BUILTIN_REQUIRE_SUPPORTED_PLATFORM()
@@ -1224,7 +1230,15 @@ def inspect_staged_executable_native_loader_targets(
             lease,
             expected_loader_paths,
         )
-        first_measurement = _BUILTIN_MEASURE_TARGET_SET(paths)
+        if unique_target_consumer is None:
+            first_measurement = _BUILTIN_MEASURE_TARGET_SET(paths)
+        else:
+            first_measurement = (
+                _BUILTIN_MEASURE_TARGET_SET_WITH_CONSUMER(
+                    paths,
+                    unique_target_consumer,
+                )
+            )
 
         (
             middle_derived,
@@ -1388,6 +1402,30 @@ def inspect_staged_executable_native_loader_targets(
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise
         raise _FIXED_VALIDATION_ERROR(_INVALID_MESSAGE) from None
+
+
+_BUILTIN_INSPECT_NATIVE_LOADER_TARGETS = (
+    _inspect_staged_executable_native_loader_targets
+)
+
+
+def inspect_staged_executable_native_loader_targets(
+    expected_requirements: RepositoryExecutableNativeLoaderRequirementsReceipt,
+    *,
+    expected_runtime: RepositoryExecutableRuntimeManifestReceipt,
+    expected_staging: RepositoryExecutableStagingReceipt,
+    lease: RepositoryExecutableStageLease,
+    expected_loader_paths: tuple[Path, ...],
+) -> RepositoryExecutableNativeLoaderTargetResolutionReceipt:
+    """Measure the exact declaration-bound canonical loader target set."""
+
+    return _BUILTIN_INSPECT_NATIVE_LOADER_TARGETS(
+        expected_requirements,
+        expected_runtime=expected_runtime,
+        expected_staging=expected_staging,
+        lease=lease,
+        expected_loader_paths=expected_loader_paths,
+    )
 
 
 __all__ = [

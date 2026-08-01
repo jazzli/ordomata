@@ -874,6 +874,40 @@ execution. Current freshness, provenance, invocability, dependency/runtime/
 toolchain completeness, containment, and future-execution semantics remain
 unproved. Only Class 0/1 effects remain enabled.
 
+The twenty-fourth bounded Phase 3 slice adds the separate library-only
+schema-v1 Class 1
+`ordomata.repository_executable_native_loader_target_staging` primitive.
+`stage_repository_executable_native_loader_target_bytes(registration, *,
+search_directories, expected_target_resolution, expected_requirements,
+expected_runtime, expected_staging, executable_lease,
+expected_loader_paths, lease)` requires the exact target-resolution chain,
+active same-PID source lease, freshly revalidated schema-v4 registration and
+search context, and a fresh caller-scoped target-stage lease. The Class 1
+caller supplies an existing empty owner-controlled mode-0700 directory outside
+the repository, search roots, source staging root, and loader-target paths.
+
+The action-bound remeasurement hands each still-pinned unique loader descriptor
+to a bounded copy sink. Each copy is written under an unpredictable private
+name, synchronized, reopened and fully read back, changed to mode 0400, then
+unlinked while its non-inheritable read-only descriptor remains leased. Shared
+targets are copied once. The controller replays the complete target-resolution
+chain after staging and rechecks protected directories and retained descriptors
+before issuing the receipt. A chain with no declared target creates an active
+empty lease without inspecting or mutating the supplied target-stage root.
+Cleanup is explicit and idempotent; an unproved namespace or descriptor release
+becomes fixed-redacted cleanup uncertainty rather than success.
+
+The canonical receipt exposes digest/reference/count/byte-total lineage only;
+raw paths, bytes, names, descriptors, and filesystem identity numbers remain
+private. Deterministic digests remain correlatable and potentially guessable.
+The retained descriptors are read-only, not immutable: same-UID writers,
+external descriptors, hardlink or mount aliases, crash cleanup, and secure
+erasure are not excluded. This primitive does not authenticate, parse, or
+invoke a loader; select a fat-image architecture; traverse shared libraries or
+dependencies; persist controller state; dispatch a worker; call a network or
+model; or execute repository code. It grants no authority and does not raise
+the Class 0/1 ceiling.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -1183,6 +1217,13 @@ measurement. Exact caller-supplied paths must reproduce the digest-only
 declarations before two no-follow file measurements; raw paths stay private,
 and no loader, shared library, dependency, subprocess, model, or executable is
 invoked.
+
+The twenty-fourth slice adds matching Class 1 native-loader target staging.
+Each unique target is copied through its still-pinned action-measurement
+descriptor into an unlinked mode-`0400` read-only lease, followed by exact
+post-stage correspondence checks and explicit fail-closed cleanup. Raw paths
+and bytes remain private, and no loader, dependency, subprocess, model, or
+executable is invoked.
 
 ## Quick start
 
