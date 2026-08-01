@@ -1801,6 +1801,19 @@ def _guard_leaf_identity_is_excluded(
                 "staged_file_identity"
             ),
         ),
+        _BUILTIN_IDENTITY_REF_IN_DOMAIN(
+            metadata,
+            kind=(
+                "repository_executable_native_loader_target_file_identity"
+            ),
+        ),
+        _BUILTIN_IDENTITY_REF_IN_DOMAIN(
+            metadata,
+            kind=(
+                "repository_executable_native_loader_target_"
+                "staged_file_identity"
+            ),
+        ),
     )
     return any(
         reference in guard_context.known_source_identity_refs

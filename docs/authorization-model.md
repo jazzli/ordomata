@@ -884,6 +884,37 @@ fat-image selection, persistence, proposal/worktree integration, routing,
 billing, network, worker, subprocess, harness, model, loader invocation, or
 execution. The current Class 0/1 ceiling is unchanged.
 
+The twenty-seventh bounded Phase 3 slice adds another separate Class 0 PIP,
+not a policy decision point (PDP) or policy enforcement point (PEP):
+`ordomata.repository_executable_native_loader_nested_target_resolution`. It
+requires the exact loader-of-loader requirements receipt, target-runtime
+manifest, target-staging receipt, first-hop target-resolution receipt, active
+same-PID target-stage lease, exact ordered current-loader paths, and exact
+ordered newly declared nested-loader paths. Three fresh chain reproductions,
+the same retained target tuple, and a closing active-stage snapshot are
+mandatory.
+
+Each declared canonical absolute path must reproduce its digest-only loader
+declaration before two guarded no-follow measurements. The private guard
+rejects exact current-loader path re-entry, original first-hop target identity
+or hardlink re-entry, detached staged-target identity re-entry, and traversal
+into the target staging root before leaf reads. Shared declarations deduplicate
+measurement while exact target, source, requirement, lineage, and command
+bindings remain distinct. Absent, unsupported/fat, non-native, and no-target
+outcomes cause no unnecessary nested read. Only digest-bound path, identity,
+metadata, content, byte-count, disposition, count, and lineage facts leave the
+PIP; raw paths, bytes, identity numbers, names, and descriptors remain private.
+
+This is historical depth-two evidence, not authority, authorization, or an
+action receipt. Newly measured bytes remain opaque and are not parsed, staged,
+followed, invoked, or executed. Source-path/source-staging-root re-entry,
+general cycle detection, broader protected-root closure, loader identity,
+authenticity, compatibility, invocability, shared-library/dependency closure,
+freshness, and future correspondence remain unproved. No lease mutation,
+persistence, proposal/worktree integration, routing, billing, network, worker,
+subprocess, harness, model, loader invocation, or execution is enabled. The
+current Class 0/1 ceiling is unchanged.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -1185,6 +1216,13 @@ The twenty-sixth slice adds matching Class 0 loader-of-loader declaration
 inspection. Its bounded digest-only ELF/Mach-O syntax and exact lineage remain
 descriptive PIP evidence, not a PDP decision or PEP receipt, and grant no path,
 loader, dependency, shared-library, or execution authority.
+
+The twenty-seventh slice adds matching Class 0 measurement of one declared
+native-loader hop. Its exact declaration/path binding, guarded no-follow
+measurements, and immediate target/hardlink/staged-target/staging-root re-entry
+exclusions remain descriptive PIP evidence, not a PDP decision or PEP receipt,
+and grant no recursive, loader, dependency, shared-library, or execution
+authority.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and

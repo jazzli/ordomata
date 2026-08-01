@@ -890,6 +890,37 @@ loader invocation, or execution integration. Recursive closure, containment,
 and runtime/toolchain completeness remain deferred. Only Class 0/1 effects
 remain enabled.
 
+Implemented as the twenty-seventh bounded Phase 3 slice, the library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_loader_nested_target_resolution` API
+accepts only the exact loader-of-loader requirements receipt, target-runtime
+manifest, target-staging receipt, first-hop target-resolution receipt, active
+same-PID target-stage lease, exact ordered current-loader paths, and exact
+ordered newly declared nested-loader paths. It freshly reproduces the loader-
+of-loader receipt on three chain snapshots, retains the exact same target-stage
+tuple, and requires a closing active-stage snapshot.
+
+Each declared canonical absolute nested-loader path reproduces its digest-only
+declaration before two complete guarded no-follow measurements. Shared paths
+are measured once while every exact target, source, requirement, lineage, and
+command binding remains. Exact current-loader path re-entry and original first-
+hop target, hardlink, detached staged-target, or target-staging-root identity
+re-entry fail before leaf reads. Fixed absent, unsupported/fat, non-native, and
+no-target outcomes perform no unnecessary nested read. Canonical evidence
+contains only digest-bound path, identity, metadata, content, bounded byte-
+count, disposition, count, and lineage facts. Raw paths, bytes, identity
+numbers, temporary names, and descriptors remain private, while deterministic
+digests remain correlatable and potentially guessable.
+
+Resolution stops at depth two, so newly measured bytes remain opaque and are
+not parsed, staged, followed, invoked, or executed. Source-path/source-staging-
+root re-entry, general cycle detection, broader protected-root closure, loader
+identity/authenticity/compatibility/invocability, dependency/shared-library
+closure, freshness, authorization, and future-execution correspondence remain
+deferred. No lease mutation/cleanup, persistence, proposal/worktree, routing,
+billing, network, worker, subprocess, harness, model, loader invocation, or
+execution integration is added. Only Class 0/1 effects remain enabled.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -1189,6 +1220,13 @@ inspection. Fresh target-runtime reproduction and repeated descriptor
 measurements bind bounded ELF `PT_INTERP` or thin Mach-O
 `LC_LOAD_DYLINKER` syntax to exact target and command lineage without path,
 lease, subprocess, model, loader, or execution integration.
+
+The twenty-seventh slice adds matching Class 0 measurement of one newly
+declared native-loader hop. Exact declaration/path reproduction, two guarded
+no-follow measurements, and immediate current-target, hardlink, detached-
+target, and target-staging-root re-entry exclusions extend digest-only lineage
+to depth two without parsing the new bytes or adding lease, subprocess, model,
+loader, or execution integration.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and

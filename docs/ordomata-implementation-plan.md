@@ -881,6 +881,37 @@ subprocess, harness, model, loader invocation, or execution. Freshness,
 containment, runtime/toolchain completeness, and future-execution semantics
 remain deferred. Only Class 0/1 effects remain enabled.
 
+The twenty-seventh bounded Phase 3 slice adds the separate library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_loader_nested_target_resolution` PIP.
+It accepts only the exact loader-of-loader requirements receipt, target-runtime
+manifest, target-staging receipt, first-hop target-resolution receipt, active
+same-PID target-stage lease, exact ordered current-loader paths, and exact
+ordered newly declared nested-loader paths. Three complete chain snapshots
+freshly reproduce the loader-of-loader receipt, retain the same detached target
+tuple around both measurements, and close on the same active stage.
+
+Each declared canonical absolute path must reproduce its digest-only loader
+declaration before two guarded no-follow measurements. Shared nested paths
+deduplicate without collapsing exact target, source, requirement, lineage, or
+command bindings. Exact current-loader path re-entry and original first-hop
+target, hardlink, detached staged-target, or target-staging-root identity re-
+entry fail before leaf reads. Fixed absent, unsupported/fat, non-native, and
+no-target outcomes avoid unnecessary nested lookup or read. Public evidence
+contains digest-bound path, identity, metadata, content, byte-count,
+disposition, count, and lineage facts only; raw paths, bytes, identity numbers,
+names, and descriptors remain private, while deterministic digests remain
+correlatable and potentially guessable.
+
+Resolution ends at depth two. The newly measured bytes are not parsed, staged,
+followed, invoked, or executed. Source-path/source-staging-root re-entry,
+general cycle detection, broader protected-root closure, loader identity,
+authenticity, compatibility, invocability, dependency/shared-library closure,
+freshness, authority, authorization, and future correspondence remain
+deferred. It adds no lease mutation/cleanup, persistence, proposal/worktree,
+routing, billing, network, worker, subprocess, harness, model, loader
+invocation, or execution. Only Class 0/1 effects remain enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -1698,6 +1729,21 @@ Only Class 0/1 effects remain enabled.
     runtime/toolchain closure, freshness, authority, persistence, proposal/
     worktree integration, routing, billing, subprocess, harness, model, and
     execution remain deferred);
+  - controller-measured one-hop nested native-loader targets (separate
+    schema-v1 Class 0 receipt implemented; exact loader-of-loader/target-
+    runtime/target-staging/first-resolution/active-lease anchoring, exact
+    ordered current and nested canonical paths, fresh declaration
+    reproduction on three chain snapshots, two guarded no-follow
+    measurements, shared-target deduplication, and immediate current-target,
+    hardlink, detached-target, and target-staging-root re-entry rejection
+    before leaf reads are implemented; raw paths/bytes/identity numbers/names/
+    descriptors remain private, while depth greater than two, newly measured
+    byte parsing/staging/following, source-path/source-staging-root re-entry,
+    general cycles, broader protected-root closure, loader identity/
+    authenticity/compatibility/invocation, dependency/shared-library/runtime/
+    toolchain closure, freshness, authority, persistence, proposal/worktree
+    integration, routing, billing, subprocess, harness, model, and execution
+    remain deferred);
   - controller-measured direct absolute shebang targets (separate schema-v1
     Class 0 receipt implemented; exact requirements/runtime/staging/active-
     lease anchoring, canonical ASCII absolute targets, an exactly expected
