@@ -778,6 +778,32 @@ subprocess, harness, model, or execution capability. Loader identity,
 runtime/toolchain completeness, containment, and future-action semantics
 remain deferred. The current Class 0/1 ceiling is unchanged.
 
+The twenty-third bounded Phase 3 slice adds another separate Class 0 PIP, not
+a PDP or PEP:
+`ordomata.repository_executable_native_loader_target_resolution`. Its
+inspector requires the exact loader-requirements/runtime/staging evidence and
+active same-PID lease plus an exact ordered unique canonical path expectation.
+Each expected path must cryptographically reproduce its precise upstream
+`PT_INTERP`/`LC_LOAD_DYLINKER` digest reference before the path is read.
+Requirements with absent, unsupported/fat, or non-native outcomes cannot bind
+a target path.
+
+The PIP measures each unique matched file twice through exact-spelling no-
+follow traversal, rejects aliases and drift, then emits only digest-bound path,
+filesystem identity, metadata, content, requirement, and command attributes.
+Raw target paths and bytes are absent, while deterministic digests remain
+correlatable and potentially guessable. Those attributes describe one
+historical point in time; a future PDP must still evaluate freshness,
+sensitivity, authority, containment, and intended use for a concrete action.
+
+Neither a matched path nor a clean receipt authorizes a loader or verifies its
+authenticity. The boundary is not an action receipt and performs no shared-
+library/dependency closure, architecture selection, staging, write, cleanup,
+persistence, proposal/worktree, dispatch, routing, billing, network, worker,
+subprocess, harness, model, loader invocation, or execution. Runtime/toolchain
+completeness and future-action semantics remain deferred. The current Class
+0/1 ceiling is unchanged.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -1059,6 +1085,11 @@ The twenty-second slice adds the matching Class 0 direct native-loader
 declaration PIP. Digest-only `PT_INTERP`/`LC_LOAD_DYLINKER` syntax is
 descriptive evidence, not a PDP decision or PEP receipt, and grants no loader,
 dependency, shared-library, or execution authority.
+
+The twenty-third slice adds the matching Class 0 declaration-bound loader-
+target measurement PIP. Its exact no-follow file facts remain descriptive
+evidence, not a PDP decision or PEP receipt, and grant no loader, dependency,
+shared-library, or execution authority.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and

@@ -765,6 +765,36 @@ runtime/toolchain completeness, freshness, authenticity, provenance,
 invocability, containment, and future-execution semantics remain deferred.
 Only Class 0/1 effects remain enabled.
 
+The twenty-third bounded Phase 3 slice adds the separate library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_loader_target_resolution` PIP.
+`inspect_staged_executable_native_loader_targets(expected_requirements, *,
+expected_runtime, expected_staging, lease, expected_loader_paths)` requires the
+exact loader-requirements/runtime/staging chain and active same-PID lease. Its
+explicit expected path tuple must be exact, ordered, unique, canonical ASCII,
+and absolute. Each path must reproduce the precise digest-only
+`PT_INTERP`/`LC_LOAD_DYLINKER` reference for its upstream runtime file,
+format, and declaration kind before target I/O; absent, unsupported/fat, and
+non-native requirements admit no target path.
+
+Each unique declaration-bound target is measured twice through exact-spelling
+component-by-component no-follow traversal. Only bounded non-sparse regular
+executable files are accepted. Symlink, case-alias, duplicate-identity,
+content/metadata, ancestor/leaf namespace, and closing-state drift fail closed.
+The immutable receipt exposes only digest references for the path, filesystem
+identity, metadata, content, upstream requirement and command lineage, plus
+bounded counts and byte totals. Raw target paths and content are absent;
+deterministic digests remain correlatable and potentially guessable.
+
+This Class 0 point-in-time measurement is neither authority, authorization,
+loader authenticity, shared-library/dependency closure, nor an action receipt.
+It performs no architecture selection, staging, write, cleanup, persistence,
+proposal/worktree, dispatch, route, billing, live, network, worker,
+subprocess, harness, model, loader invocation, or execution. Freshness,
+provenance, invocability, runtime/toolchain completeness, containment, and
+future-execution semantics remain deferred. Only Class 0/1 effects remain
+enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -1536,6 +1566,17 @@ Only Class 0/1 effects remain enabled.
     dependency/runtime/toolchain closure, freshness, authority, persistence,
     proposal/worktree integration, routing, billing, subprocess, harness,
     model, and execution remain deferred);
+  - controller-measured direct native-loader targets (separate schema-v1 Class
+    0 receipt implemented; exact loader-requirements/runtime/staging/active-
+    lease anchoring, exact ordered unique canonical-absolute path expectations,
+    digest reproduction before target reads, two exact-spelling no-follow
+    measurements, unique identities, and closing namespace validation are
+    implemented; records contain only digest-bound path/identity/metadata/
+    content and exact requirement/command lineage, while raw paths/bytes,
+    loader authenticity/invocation, fat-image architecture selection, shared-
+    library/dependency/runtime/toolchain closure, freshness, authority,
+    persistence, proposal/worktree integration, routing, billing, subprocess,
+    harness, model, and execution remain deferred);
   - controller-measured direct absolute shebang targets (separate schema-v1
     Class 0 receipt implemented; exact requirements/runtime/staging/active-
     lease anchoring, canonical ASCII absolute targets, an exactly expected
