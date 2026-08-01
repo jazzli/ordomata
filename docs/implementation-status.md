@@ -507,6 +507,49 @@ receipt, persistence, proposal/worktree lineage, dispatch, routing, billing,
 capacity, circuit, live eligibility, CLI/state/runner path, subprocess,
 harness, model, or execution integration. The Class 0/1 ceiling is unchanged.
 
+Implemented as the seventeenth bounded Phase 3 slice, the separate library-only
+schema-v1 `ordomata.repository_executable_shebang_nested_target_resolution`
+API exposes `inspect_staged_executable_shebang_nested_targets(
+expected_target_requirements, *, expected_target_runtime,
+expected_target_staging, lease, expected_nested_target_paths)`. This Class 0
+call accepts the exact staged-target shebang-requirements/runtime/staging
+receipt chain, the exactly anchored active same-PID target-stage lease, and the
+controller's exact first-use-ordered tuple of canonical ASCII absolute nested-
+target paths. Its controller-measured depth is fixed at 2, exactly one
+additional hop, under `posix_absolute_shebang_nested_target_nofollow_v1`
+measurement and `immediate_target_reentry_v1` controls. Successful rows are
+fixed as `source_native_not_applicable`, `target_native_not_applicable`, or
+`direct_absolute_nested_target_measured`. Every unique selected path is opened
+component by component with exact spelling and no symlink following and must
+produce identical full
+content, filesystem-identity, metadata, and namespace results across two
+measurements and a closing namespace check. Re-entry into any known depth-1
+target by path reference or measured identity is rejected, as is descent
+through the anchored target-stage-root identity. Source-native input has no
+target files and performs no descriptor or path read; a native depth-1 target
+is still freshly reproduced from its staged descriptor but performs no nested-
+path lookup or measurement.
+
+The receipt fixes `requirement_count`, `command_count`,
+`nested_target_requirement_count`, `target_native_not_applicable_count`,
+`source_native_not_applicable_count`, `unique_nested_target_count`, and
+`total_measured_bytes`.
+
+The immutable receipt and aggregate evidence contain only digest/reference
+lineage, fixed outcomes, bounded identifiers, counts, and byte totals. Raw
+paths, content, token/tail bytes, temporary names, and descriptors are absent,
+though deterministic digests and lengths remain potentially guessable. The API
+does not inspect or follow the measured depth-2 target's own shebang, recurse
+beyond depth 2, stage bytes, mutate or clean up a lease, invoke a model or
+harness, create a subprocess, or execute. It proves no semantic interpreter,
+`env`, `PATH`, launcher, or argument resolution; source-chain or generic cycle
+closure; broader protected-root closure; dependency, loader, environment,
+runtime, or toolchain closure; freshness, atomicity, immutability, authenticity,
+provenance, authority, authorization, action receipt, proposal/worktree
+lineage, persistence, dispatch, routing, billing, capacity, circuit, live
+eligibility, CLI/state/runner, or execution capability. Only Class 0/1 effects
+remain enabled.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -735,6 +778,19 @@ upstream row. Native-only input remains zero-file and zero-read. This Class 0
 digest-only result is non-authorizing and has no recursive resolution,
 staging, persistence, proposal/worktree, routing, billing, live, subprocess,
 harness, model, or execution integration.
+
+The seventeenth bounded Phase 3 slice is the separate schema-v1 nested
+shebang-target measurement described above. Exact active target-stage lineage
+and exact ordered canonical absolute depth-2 paths are required; two matching
+no-follow measurements and a closing namespace check must agree. Immediate
+depth-1 path/identity re-entry and target-stage-root descent fail closed.
+Source-native input is zero-file and zero-read; a native depth-1 target still
+validates its staged descriptor but makes no nested-path read. The privacy-
+bounded Class 0 result contains digest/reference lineage, fixed outcomes,
+bounded command identifiers, counts, and byte totals; it stops after one
+additional hop and supplies no generic cycle/protected-root closure, staging,
+persistence, proposal/worktree, routing, billing, live, subprocess, harness,
+model, or execution integration.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and

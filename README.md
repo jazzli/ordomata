@@ -571,6 +571,48 @@ proposal/worktree lineage, persistence, dispatch, routing, billing, capacity,
 circuit, live eligibility, or CLI/state/runner integration. The Class 0/1
 ceiling is unchanged.
 
+The seventeenth bounded Phase 3 slice adds the separate library-only schema-v1
+`ordomata.repository_executable_shebang_nested_target_resolution` Class 0
+boundary. `inspect_staged_executable_shebang_nested_targets(
+expected_target_requirements, *, expected_target_runtime,
+expected_target_staging, lease, expected_nested_target_paths)` accepts the exact
+staged-target shebang-requirements/runtime/staging receipt chain, its
+exactly anchored active same-PID target-stage lease, and the controller's exact
+ordered tuple of canonical ASCII absolute nested-target paths. It terminates at
+the one additional hop, fixed depth 2. Fixed `controller_measured` /
+`posix_absolute_shebang_nested_target_nofollow_v1` measurement and
+`immediate_target_reentry_v1` controls produce only
+`source_native_not_applicable`, `target_native_not_applicable`, or
+`direct_absolute_nested_target_measured`. Every selected path is walked with
+exact spelling and no symlink following and must match across two complete
+controller-measured content, identity, metadata, and namespace passes plus a
+closing namespace check. A path or measured identity that re-enters any known
+depth-1 target fails closed, as does descent through the anchored target-stage
+root. Native-only input preserves its nonempty requirement and binding
+correspondence while source-native input performs zero descriptor or
+filesystem-path reads. A native depth-1 target is still freshly reproduced
+from its staged descriptor but causes no nested-path lookup or measurement.
+
+The receipt fixes `requirement_count`, `command_count`,
+`nested_target_requirement_count`, `target_native_not_applicable_count`,
+`source_native_not_applicable_count`, `unique_nested_target_count`, and
+`total_measured_bytes`.
+
+The immutable receipt and aggregate evidence expose only digest/reference
+lineage, fixed classifications/dispositions, bounded command identifiers,
+counts, and byte totals; no raw path, target byte, token, temporary name, or
+descriptor number is emitted. This is one bounded token-named target
+measurement, not recursive or semantic interpreter resolution. It neither
+resolves nor interprets `env`, `PATH`, launchers, arguments, or a measured
+target's own shebang, and it
+does not recurse beyond depth 2, stage bytes, mutate or clean up a lease, or
+execute anything. Source-chain or generic cycle closure, broader protected-root
+closure, dependency/toolchain/loader closure, current freshness, immutability,
+authority, authorization, action receipts, proposal/worktree lineage,
+persistence, dispatch, routing, billing, capacity, circuit, live eligibility,
+CLI/state/runner integration, subprocesses, harnesses, models, and execution
+remain absent or explicitly unverified. Only Class 0/1 effects remain enabled.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -822,6 +864,19 @@ lineage-distinct requirement and binding per upstream row. Native-only input rem
 a zero-file, zero-read result. This digest-only Class 0 library evidence adds
 no recursive resolution, staging, authority, persistence, routing, billing,
 live, subprocess, harness, model, or execution capability.
+
+The seventeenth bounded Phase 3 slice is the separate schema-v1 nested
+shebang-target measurement described above. It accepts the exact active target-
+stage receipt chain and exact ordered absolute depth-2 paths, reproduces the
+staged-target syntax proof, and requires two matching no-follow measurements.
+Immediate depth-1 path or identity re-entry and target-stage-root descent fail
+closed. Source-native input remains zero-file and zero-read; a native depth-1
+target still validates its staged descriptor but makes no nested-path read. Its
+privacy-bounded Class 0 receipt contains digest/reference lineage, fixed
+outcomes, bounded command identifiers, counts, and byte totals; it stops after
+one additional hop and adds no broader cycle or protected-root closure,
+staging, authority, routing, live, subprocess, harness, model, or execution
+capability.
 
 ## Quick start
 

@@ -544,6 +544,50 @@ persistence, dispatch, routing, billing, capacity, circuit, live eligibility,
 CLI/state/runner, subprocess, harness, model, or execution. The Class 0/1
 ceiling remains unchanged.
 
+The seventeenth bounded Phase 3 slice adds another Class 0 PIP, not a PDP or
+PEP: `ordomata.repository_executable_shebang_nested_target_resolution`
+exposes `inspect_staged_executable_shebang_nested_targets(
+expected_target_requirements, *, expected_target_runtime,
+expected_target_staging, lease, expected_nested_target_paths)`. It requires the
+exact staged-target shebang-requirements/runtime/staging receipt chain, the
+exactly anchored active same-PID target-stage lease, and a controller-supplied
+exact first-use-ordered tuple of canonical ASCII absolute nested-target paths.
+That tuple is a closed measurement expectation, not authority or a search
+root. The boundary permits exactly one additional hop at fixed depth 2 under
+`controller_measured` /
+`posix_absolute_shebang_nested_target_nofollow_v1` and
+`immediate_target_reentry_v1` controls. Its only successful dispositions are
+`source_native_not_applicable`, `target_native_not_applicable`, and
+`direct_absolute_nested_target_measured`. Each
+unique selected path must match across two exact-spelling, descriptor-relative,
+no-follow full measurements and a closing namespace check. A candidate path
+reference or measured identity that re-enters the known depth-1 target set is
+rejected, as is a candidate directory chain that descends through the anchored
+target-stage root. Source-native input has no target files and performs no
+descriptor or filesystem-path read; a native depth-1 target is still freshly
+reproduced from its staged descriptor but performs no nested-path lookup or
+measurement.
+
+Its bounded totals are `requirement_count`, `command_count`,
+`nested_target_requirement_count`, `target_native_not_applicable_count`,
+`source_native_not_applicable_count`, `unique_nested_target_count`, and
+`total_measured_bytes`.
+
+The immutable receipt and aggregate evidence contain only digest/reference
+lineage, fixed outcomes, bounded command identifiers, counts, and byte totals.
+They disclose no raw path, content, token, temporary name, or descriptor number
+and grant no authority. This PIP does not inspect or follow the measured depth-
+2 target's own shebang, recurse beyond depth 2, stage bytes, mutate or clean up
+a lease, or execute. It establishes no semantic interpreter, `env`, `PATH`,
+launcher, or argument resolution; source-chain or generic cycle closure;
+broader protected-root closure; dependency/toolchain/loader closure; current
+freshness, immutability, authenticity, provenance, or invocability;
+authorization, an
+action receipt, proposal/worktree lineage, persistence, dispatch, routing,
+billing, capacity, circuit, live eligibility, CLI/state/runner, subprocess,
+harness, model, or execution capability. The implemented authorization ceiling
+remains Class 0/1.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -776,6 +820,19 @@ parsing each shared target once per pass. Native-only input is zero-file and
 zero-read. The digest-only Class 0 result is not a PDP decision or PEP receipt and
 grants no recursive resolution, staging, proposal, route, billing, live,
 subprocess, harness, model, or execution capability.
+
+The seventeenth bounded Phase 3 slice adds the nested shebang-target resolution
+PIP described above. It requires the exact active target-stage proof chain and
+exact ordered absolute depth-2 paths, then requires two matching no-follow
+measurements and a closing namespace check. Immediate depth-1 path/identity
+re-entry and target-stage-root descent fail closed. Source-native input is
+zero-file and zero-read; a native depth-1 target still validates its staged
+descriptor but performs no nested-path read. The privacy-bounded Class 0 result
+contains digest/reference lineage, fixed outcomes, bounded command
+identifiers, counts, and byte totals; it stops after one additional hop, is
+neither a PDP decision nor PEP receipt, and grants no broader cycle/protected-
+root closure, staging, proposal, route, billing, live, subprocess, harness,
+model, or execution capability.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
