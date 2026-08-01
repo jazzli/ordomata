@@ -936,6 +936,39 @@ loader, and executes nothing. Current freshness, containment, runtime/toolchain
 completeness, and future-execution correspondence remain unproved. Only Class
 0/1 effects remain enabled.
 
+The twenty-sixth bounded Phase 3 slice adds the separate library-only schema-v1
+Class 0
+`ordomata.repository_executable_native_loader_target_loader_requirements`
+PIP. `inspect_staged_executable_native_loader_target_loader_requirements(
+expected_target_runtime, *, expected_target_staging, lease)` accepts only the
+exact target-runtime manifest, exact target-staging receipt, and its active
+same-PID lease. It freshly reproduces the target-runtime manifest before and
+after inspection, requires exact runtime/staging/file/requirement/command
+correspondence, and repeats the complete syntax measurement before closing on
+the same retained tuple.
+
+For each unique detached loader target, two complete descriptor
+remeasurements bracket bounded ELF32/ELF64 `PT_INTERP` or thin Mach-O32/
+Mach-O64 `LC_LOAD_DYLINKER` parsing. Fat Mach-O and deliberately unsupported
+layouts receive fixed unsupported outcomes; non-native targets receive a
+fixed not-applicable outcome. Shared loader targets are parsed once while
+every upstream requirement and command retains exact lineage. A no-target
+chain produces zero target-loader requirements and performs no descriptor
+read. Public records expose only digest-bound loader-path references, bounded
+path byte lengths, fixed syntax attributes, counts, and lineage. Raw paths,
+headers, content, identity numbers, names, and descriptors remain private,
+while deterministic digests remain correlatable and potentially guessable.
+
+This one-hop loader-of-loader syntax evidence neither resolves a newly
+declared loader nor proves compatibility, authenticity, identity,
+invocability, dependency/shared-library closure, authorization, or an action
+receipt. It opens no path, mutates or cleans up no lease, selects no fat-image
+architecture, persists no state, creates no proposal/worktree/route/worker or
+subprocess, calls no network or model, invokes no loader, and executes
+nothing. Recursion beyond this syntax hop, freshness, containment,
+runtime/toolchain completeness, and future-execution correspondence remain
+unproved. Only Class 0/1 effects remain enabled.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -1257,6 +1290,12 @@ The twenty-fifth slice adds matching Class 0 runtime-header inspection of the
 detached loader copies. Two full descriptor remeasurements surround one
 bounded position-independent header read and emit fixed privacy-bounded
 classifications without opening a path, mutating a lease, invoking a loader,
+or executing anything.
+
+The twenty-sixth slice adds matching Class 0 loader-of-loader declaration
+inspection. Fresh runtime reproduction and repeated descriptor measurements
+bind bounded ELF `PT_INTERP` or thin Mach-O `LC_LOAD_DYLINKER` syntax to every
+target and command without resolving a newly declared path, invoking a loader,
 or executing anything.
 
 ## Quick start

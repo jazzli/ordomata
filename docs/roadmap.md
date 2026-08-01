@@ -744,6 +744,31 @@ parallel because it cannot exercise worker authority.
   subprocess, harness, model, loader invocation, or execution. Freshness,
   containment, runtime/toolchain completeness, and future-execution semantics
   remain deferred. Only Class 0/1 effects remain enabled.
+- The twenty-sixth bounded Phase 3 slice implements the separate library-only
+  schema-v1 Class 0
+  `ordomata.repository_executable_native_loader_target_loader_requirements`
+  PIP. It accepts only the exact target-runtime manifest, exact target-staging
+  receipt, and active same-PID lease. It validates their complete digest,
+  object, file, requirement, command, and retained-tuple correspondence,
+  freshly reproduces runtime evidence before and after extraction, repeats
+  the full syntax measurement, and closes on the same active stage.
+  Each unique loader target is fully remeasured around bounded ELF32/ELF64
+  `PT_INTERP` or thin Mach-O32/Mach-O64 `LC_LOAD_DYLINKER` parsing. Fixed
+  declared, absent, unsupported/fat, and non-native outcomes bind through
+  exact upstream requirement and command lineage; shared targets deduplicate
+  and no-target input is zero-read. Public records contain digest-only loader-
+  path references, fixed syntax attributes, bounded byte lengths, counts, and
+  lineage. Raw paths, headers, content, identities, names, and descriptors are
+  excluded, while deterministic digests remain correlatable and potentially
+  guessable.
+  This one-hop historical evidence resolves or follows no newly declared
+  loader and proves no identity, authenticity, compatibility, invocability,
+  authority, dependency/shared-library closure, or action receipt. It adds no
+  path lookup, lease mutation/cleanup, architecture selection, persistence,
+  proposal/worktree, routing, billing, network, worker, subprocess, harness,
+  model, loader invocation, or execution. Recursive closure, freshness,
+  containment, runtime/toolchain completeness, and future-execution semantics
+  remain deferred. Only Class 0/1 effects remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.
