@@ -112,7 +112,7 @@ class MockRunner:
                 if request.run_id in self._cancelled:
                     break
                 emitted.append(event)
-                await emit_event(event_sink, event)
+                emit_event(event_sink, event)
         finally:
             self._active.discard(request.run_id)
 

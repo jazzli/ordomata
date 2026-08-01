@@ -1715,7 +1715,6 @@ class SQLiteStateStore:
         _validate_text(owner_id, "owner_id", maximum=256)
         selected_reservation_id = reservation_id or uuid4().hex
         _validate_text(selected_reservation_id, "reservation_id", maximum=256)
-        timestamp = self._now(now)
         ttl = self._positive_duration(ttl_seconds, "ttl_seconds")
         if not isinstance(assessment_capacity_state, CapacityState):
             raise ValidationError(
@@ -1726,7 +1725,6 @@ class SQLiteStateStore:
             if capacity_observed_at is None
             else _validate_timestamp(capacity_observed_at, "capacity_observed_at")
         )
-        expires_at = timestamp + ttl
         lease_keys = self._billing_dispatch_lease_keys(
             runner_id=runner_id,
             account_identity_fingerprint=account_identity_fingerprint,
@@ -1744,6 +1742,8 @@ class SQLiteStateStore:
         )
 
         with self._transaction() as connection:
+            timestamp = self._now(now)
+            expires_at = timestamp + ttl
             for fingerprint, selected_profile_id in scopes:
                 current = connection.execute(
                     """
@@ -1935,7 +1935,6 @@ class SQLiteStateStore:
         if not isinstance(broad_scope_required, bool):
             raise ValidationError("broad_scope_required must be a boolean")
         self._validate_reason_code(reason_code)
-        timestamp = self._now(now)
         expected_lease_keys = self._billing_dispatch_lease_keys(
             runner_id=reservation.runner_id,
             account_identity_fingerprint=reservation.account_identity_fingerprint,
@@ -1946,6 +1945,10 @@ class SQLiteStateStore:
 
         reservation_lost = False
         with self._transaction() as connection:
+            # Anchor expiry and all durable completion evidence after the write
+            # lock is acquired. A reservation may expire while BEGIN IMMEDIATE
+            # waits on another writer and must not be finalized from stale time.
+            timestamp = self._now(now)
             for lease_key in reservation.lease_keys:
                 lease = connection.execute(
                     "SELECT owner_id, expires_at FROM leases WHERE lease_key = ?",

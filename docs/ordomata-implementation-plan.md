@@ -1455,6 +1455,16 @@ Only Class 0/1 effects remain enabled.
   observational boundary only: neither its Class 0/1 projection nor an exact
   permit may be reused as authority or enable a worktree, command, route,
   worker, or external effect.
+- Treat the implemented POSIX original-process-group lifecycle control for
+  diagnostics and existing first-party harnesses as interim hardening only.
+  Its bounded launch and streams, sealed count-only event capture with deferred
+  controller persistence, pinned controller file operations, cancellation,
+  cleanup, and billing-stage budgets
+  do not prevent a descendant from escaping with `setsid()`/`setpgid()`.
+  Child-facing path arguments also remain governed by adapter sandboxing, not
+  made immutable by the controller descriptor. These controls therefore do not
+  satisfy the repository-worker containment or post-run tree-reconciliation
+  requirements in this phase.
 - Create one disposable detached Git worktree per Class 1 job. Never modify the operator's primary checkout or create a branch.
 - Keep the base repository read-only from the worker's perspective and expose only the job worktree plus bounded temporary storage.
 - Keep the repository's shared Git directory, refs, config, hooks, indexes, and credentials controller-only. Hide the worktree's `.git` pointer and do not mount the common Git directory into the worker cell. A worker edits only materialized source files without Git authority; the controller owns worktree lifecycle and computes the resulting patch.

@@ -111,7 +111,7 @@ from .models import (
     UsageObservation,
 )
 from .paths import resolve_state_root
-from .runners.base import AgentRunner, EventSink
+from .runners.base import AgentRunner, ControllerEventSink, EventSink
 from .runners.mock import MockRunner
 from .redaction import contains_credential_material
 from .routing import (
@@ -1611,17 +1611,27 @@ async def run_chief_of_staff(
                 legacy_executable=legacy_executable,
             ),
         )
+        event_sink = ControllerEventSink()
         event_count = 0
+        persisted_event_count = 0
 
-        async def event_sink(_: AgentEvent) -> None:
-            nonlocal event_count
-            event_count += 1
-            # Model-controlled event content is deliberately not persisted.
-            state.append_event(
-                selected_run_id,
-                "runner_event_observed",
-                {"ordinal": event_count},
-            )
+        def persist_runner_event_observations() -> None:
+            nonlocal persisted_event_count
+            while persisted_event_count < event_sink.count:
+                ordinal = persisted_event_count + 1
+                payload = {"ordinal": ordinal}
+                _append_required_event(
+                    state,
+                    selected_run_id,
+                    "runner_event_observed",
+                    payload,
+                    event_id=_controller_event_id(
+                        selected_run_id,
+                        "runner_event_observed",
+                        payload,
+                    ),
+                )
+                persisted_event_count = ordinal
 
         if mock_dispatch_authorization is not None:
             try:
@@ -1654,13 +1664,32 @@ async def run_chief_of_staff(
                 )
                 raise
 
+        result: Any = None
+        runner_returned = False
+        event_persistence_failed = False
         try:
             result = await _execute_runner(
                 active_runner,
                 request,
                 event_sink,
             )
+            runner_returned = True
+            event_count = event_sink.count
+            # The runner callback is deliberately memory-only. Persist only
+            # ordinal observations after execute returns, so live subprocess
+            # cleanup and billing finalization never wait on SQLite.
+            persist_runner_event_observations()
         except BaseException as execution_error:
+            # Once execute returned, the only operation remaining in the try
+            # block was required ordinal-event persistence.  Its failure is a
+            # post-execution audit fault, never a preflight block.
+            event_persistence_failed = runner_returned
+            event_count = event_sink.count
+            try:
+                persist_runner_event_observations()
+            except BaseException as event_persistence_error:
+                event_persistence_failed = True
+                execution_error = event_persistence_error
             if (
                 mock_dispatch_authorization is not None
                 and mock_dispatch_action_started_at is not None
@@ -1687,14 +1716,17 @@ async def run_chief_of_staff(
                         phase="mock_dispatch_action_receipt",
                     )
                     raise receipt_error from execution_error
-            if isinstance(execution_error, OrdomataError):
+            if (
+                isinstance(execution_error, OrdomataError)
+                and not event_persistence_failed
+            ):
                 _append_terminal_event(
                     state,
                     selected_run_id,
                     {"phase": "preflight_or_execution"},
                     status=RunStatus.BLOCKED,
                 )
-                raise
+                raise execution_error
             billing_failure = (
                 preflight_assessment.route is BillingRoute.SUBSCRIPTION_INCLUDED
             )
@@ -1706,23 +1738,33 @@ async def run_chief_of_staff(
                     preflight_assessment=preflight_assessment,
                     postflight_assessment=None,
                     disposition=_unknown_billing_disposition(
-                        "harness_execution_outcome_unknown"
+                        (
+                            "post_run_billing_evidence_unknown"
+                            if event_persistence_failed
+                            else "harness_execution_outcome_unknown"
+                        )
                     ),
                     billing_matches=False,
                 )
             _append_terminal_event(
                 state,
                 selected_run_id,
-                {"phase": "execution"},
+                {
+                    "phase": (
+                        "runner_event_persistence"
+                        if event_persistence_failed
+                        else "execution"
+                    )
+                },
                 status=(
                     RunStatus.QUARANTINED
-                    if billing_failure
+                    if billing_failure or event_persistence_failed
                     else RunStatus.CANCELLED
                     if not isinstance(execution_error, Exception)
                     else RunStatus.FAILED
                 ),
             )
-            raise
+            raise execution_error
 
         if (
             mock_dispatch_authorization is not None

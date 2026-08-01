@@ -636,6 +636,16 @@ review-only branch/PR policy. Those declarations are configuration inputs, not
 authority to execute. A future worker run must prove no outside-worktree writes
 and no false green.
 
+Current diagnostics and first-party harness subprocesses now have bounded
+POSIX original-process-group lifecycle control, including cancellation-safe
+launch, stream limits, cleanup verification, pinned controller file operations,
+sealed count-only event capture with deferred ordinal persistence, and
+fail-closed budgeted billing disposition. Timed-out or containment-unverified
+diagnostic receipts are ineligible even when cleanup produces a zero exit. This
+is useful hardening but is not the repository-containment
+milestone: `setsid()`/`setpgid()` descendants can escape it, and it supplies no
+filesystem, network, credential, Git-metadata, or worker-cell boundary.
+
 Worker cells use a pluggable isolation contract and observed pre/post
 attestation. Once containment is proven, an implementer may use a general
 in-cell shell, exact task-specific proxy egress, locked dependencies and

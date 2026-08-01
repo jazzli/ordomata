@@ -3,14 +3,22 @@ from __future__ import annotations
 import json
 import asyncio
 from dataclasses import replace
+import os
+import signal
 import sys
 import tempfile
 import time
 import unittest
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from unittest import mock
 
-from ordomata.errors import BillingRouteBlocked, LiveRunDisabled, ValidationError
+from ordomata.errors import (
+    BillingRouteBlocked,
+    LiveRunDisabled,
+    RunnerUnavailable,
+    ValidationError,
+)
 from ordomata.billing import BillingDispatchReservation
 from ordomata.models import (
     AgentEvent,
@@ -29,15 +37,34 @@ from ordomata.models import (
     UsageObservation,
 )
 from ordomata.redaction import REDACTED, Redactor
-from ordomata.runners import AgentRunner, ClaudeRunner, CodexRunner, MockRunner
+from ordomata.runners import (
+    AgentRunner,
+    ClaudeRunner,
+    CodexRunner,
+    CONTROLLER_EVENT_SINK_LIMIT,
+    ControllerEventSink,
+    MockRunner,
+)
 from ordomata.runners.base import ProbeResult
-from ordomata.runners._harness import FirstPartyHarnessRunner
+from ordomata.runners._harness import (
+    FirstPartyHarnessRunner,
+    HarnessCancellationError,
+    HarnessProcessLimits,
+)
 from ordomata.runners.codex import (
     CodexAppServerBillingProbe,
     CodexBillingEvidence,
     sanitize_codex_billing_snapshot,
 )
-from ordomata.runners.process import AsyncCommandProbe
+from ordomata.runners.containment import (
+    CleanupDisposition,
+    CleanupResult,
+    posix_containment_available,
+)
+from ordomata.runners import _harness as harness_module
+from ordomata.runners import codex as codex_module
+from ordomata.runners import containment as containment_module
+from ordomata.runners.process import AsyncCommandProbe, ProbeContainmentError
 
 
 class FakeProbe:
@@ -159,7 +186,12 @@ class RecordingBillingCircuitGuard(ClosedBillingCircuitGuard):
 
 
 def probe_result(command: tuple[str, ...], stdout: str) -> ProbeResult:
-    return ProbeResult(command=command, exit_code=0, stdout=stdout)
+    return ProbeResult(
+        command=command,
+        exit_code=0,
+        stdout=stdout,
+        containment_cleanup_verified=True,
+    )
 
 
 def request(
@@ -195,6 +227,7 @@ class LocalScriptHarness(FirstPartyHarnessRunner):
         parent_environment: Mapping[str, str],
         executable_resolver=None,
         billing_circuit_guard=None,
+        process_limits: HarnessProcessLimits | None = None,
     ) -> None:
         super().__init__(
             binary=sys.executable,
@@ -207,6 +240,7 @@ class LocalScriptHarness(FirstPartyHarnessRunner):
                 if billing_circuit_guard is None
                 else billing_circuit_guard
             ),
+            process_limits=process_limits,
         )
         self.script = script
         self.script_arguments = script_arguments
@@ -302,6 +336,130 @@ class LocalScriptHarness(FirstPartyHarnessRunner):
 
 
 class RunnerDiagnosticTests(unittest.IsolatedAsyncioTestCase):
+    async def test_optional_probe_containment_failure_is_fatal(self) -> None:
+        executable = "/tools/codex"
+        responses = {
+            (executable, "--version"): probe_result(
+                (executable, "--version"), "codex-cli 1.2.3\n"
+            ),
+            (executable, "exec", "--help"): probe_result(
+                (executable, "exec", "--help"),
+                "Usage: codex exec --json --output-schema",
+            ),
+        }
+
+        async def run_probe(command, **_kwargs):
+            normalized = tuple(command)
+            if normalized == (executable, "--help"):
+                raise ProbeContainmentError
+            return responses[normalized]
+
+        probe = mock.Mock()
+        probe.run = mock.AsyncMock(side_effect=run_probe)
+        runner = CodexRunner(
+            probe=probe,
+            executable_resolver=lambda _: executable,
+            parent_environment={"PATH": "/tools", "HOME": "/home/test"},
+        )
+
+        with self.assertRaises(RunnerUnavailable) as raised:
+            await runner.detect_capabilities()
+
+        self.assertEqual(
+            str(raised.exception),
+            "Runner diagnostic process containment could not be verified.",
+        )
+
+    async def test_timed_out_probe_result_is_rejected_even_after_clean_exit(
+        self,
+    ) -> None:
+        executable = "/tools/codex"
+        command = (executable, "--version")
+        probe = FakeProbe(
+            {
+                command: ProbeResult(
+                    command,
+                    0,
+                    stdout="codex 1",
+                    timed_out=True,
+                    containment_cleanup_verified=True,
+                )
+            }
+        )
+        runner = CodexRunner(
+            probe=probe,
+            executable_resolver=lambda _: executable,
+            parent_environment={"PATH": "/tools", "HOME": "/home/test"},
+        )
+
+        self.assertIsNone(await runner._run_probe(command))
+
+    async def test_custom_probe_without_cleanup_evidence_is_fatal(self) -> None:
+        executable = "/tools/codex"
+        probe = FakeProbe(
+            {
+                (executable, "--version"): ProbeResult(
+                    (executable, "--version"), 0, stdout="codex 1"
+                ),
+                (executable, "exec", "--help"): ProbeResult(
+                    (executable, "exec", "--help"),
+                    0,
+                    stdout="Usage: codex exec --json --output-schema",
+                ),
+                (executable, "--help"): ProbeResult(
+                    (executable, "--help"),
+                    0,
+                    stdout="Usage: codex --ask-for-approval --sandbox",
+                ),
+            }
+        )
+        runner = CodexRunner(
+            probe=probe,
+            executable_resolver=lambda _: executable,
+            parent_environment={"PATH": "/tools", "HOME": "/home/test"},
+        )
+
+        with self.assertRaises(RunnerUnavailable) as raised:
+            await runner.detect_capabilities()
+
+        self.assertEqual(
+            str(raised.exception),
+            "Runner diagnostic process containment could not be verified.",
+        )
+
+    async def test_optional_unverified_probe_receipt_is_fatal(self) -> None:
+        executable = "/tools/codex"
+        probe = FakeProbe(
+            {
+                (executable, "--version"): probe_result(
+                    (executable, "--version"), "codex-cli 1.2.3\n"
+                ),
+                (executable, "exec", "--help"): probe_result(
+                    (executable, "exec", "--help"),
+                    "Usage: codex exec --json --output-schema",
+                ),
+                (executable, "--help"): ProbeResult(
+                    (executable, "--help"),
+                    0,
+                    stdout="Usage: codex --ask-for-approval --sandbox",
+                    containment_cleanup_verified=False,
+                ),
+            }
+        )
+        runner = CodexRunner(
+            probe=probe,
+            executable_resolver=lambda _: executable,
+            parent_environment={"PATH": "/tools", "HOME": "/home/test"},
+        )
+
+        with self.assertRaises(RunnerUnavailable) as raised:
+            await runner.detect_capabilities()
+
+        self.assertEqual(
+            str(raised.exception),
+            "Runner diagnostic process containment could not be verified.",
+        )
+
     async def test_codex_capabilities_and_chatgpt_route(self) -> None:
         executable = "/tools/codex"
         observed_at = time.time()
@@ -646,6 +804,8 @@ class CommandProbeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.exit_code, 0)
         self.assertEqual(result.stdout, "abcde")
+        self.assertTrue(result.output_limit_exceeded)
+        self.assertTrue(result.containment_cleanup_verified)
 
     async def test_probe_timeout_covers_process_lifecycle(self) -> None:
         probe = AsyncCommandProbe()
@@ -660,6 +820,14 @@ class CommandProbeTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CodexBillingProbeTests(unittest.IsolatedAsyncioTestCase):
+    def test_app_server_probe_rejects_invalid_resource_limits(self) -> None:
+        for timeout in (True, 0, -1, float("inf"), 61):
+            with self.subTest(timeout=timeout), self.assertRaises(ValueError):
+                CodexAppServerBillingProbe(timeout_seconds=timeout)
+        for maximum in (True, 0, -1, 1024 * 1024 + 1):
+            with self.subTest(maximum=maximum), self.assertRaises(ValueError):
+                CodexAppServerBillingProbe(max_output_bytes=maximum)
+
     def test_snapshot_sanitizer_separates_paid_balance_and_capacity(self) -> None:
         account = {
             "account": {
@@ -740,6 +908,286 @@ for line in sys.stdin:
         self.assertEqual(evidence.paid_credit_balance, PaidCreditBalance.ZERO)
         self.assertNotIn("private@example.invalid", repr(evidence))
         self.assertNotIn("never-return-this", repr(evidence))
+
+    @unittest.skipUnless(
+        posix_containment_available(),
+        "POSIX process-group containment is unavailable",
+    )
+    async def test_app_server_probe_stderr_overflow_fails_promptly(self) -> None:
+        server_source = f"""#!{sys.executable}
+import os
+import time
+os.write(2, b'x' * 200000)
+time.sleep(30)
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = Path(temporary) / "fake-codex"
+            executable.write_text(server_source, encoding="utf-8")
+            executable.chmod(0o700)
+            probe = CodexAppServerBillingProbe(
+                timeout_seconds=5,
+                max_output_bytes=1024,
+            )
+            started = time.monotonic()
+            evidence = await probe.inspect(
+                str(executable), environment={"PATH": "/usr/bin:/bin"}
+            )
+        self.assertIsNone(evidence)
+        self.assertLess(time.monotonic() - started, 2.0)
+
+    @unittest.skipUnless(
+        posix_containment_available(),
+        "POSIX process-group containment is unavailable",
+    )
+    async def test_app_server_probe_rejects_stderr_overflow_after_valid_reply(
+        self,
+    ) -> None:
+        server_source = f"""#!{sys.executable}
+import json
+import os
+import sys
+import time
+for line in sys.stdin:
+    request = json.loads(line)
+    request_id = request["id"]
+    if request_id == 1:
+        result = {{}}
+    elif request_id == 2:
+        result = {{"account": {{"type": "chatgpt", "planType": "pro"}}}}
+    else:
+        result = {{"rateLimits": {{"credits": {{"hasCredits": False, "unlimited": False, "balance": "0"}}, "primary": {{"usedPercent": 1}}, "rateLimitReachedType": None}}}}
+    print(json.dumps({{"id": request_id, "result": result}}), flush=True)
+    if request_id == 3:
+        os.write(2, b'x' * 200000)
+        time.sleep(30)
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = Path(temporary) / "fake-codex"
+            executable.write_text(server_source, encoding="utf-8")
+            executable.chmod(0o700)
+            probe = CodexAppServerBillingProbe(
+                timeout_seconds=5,
+                max_output_bytes=1024,
+            )
+            evidence = await probe.inspect(
+                str(executable), environment={"PATH": "/usr/bin:/bin"}
+            )
+
+        self.assertIsNone(evidence)
+
+    @unittest.skipUnless(
+        posix_containment_available(),
+        "POSIX process-group containment is unavailable",
+    )
+    async def test_app_server_probe_rejects_stdout_overflow_after_valid_reply(
+        self,
+    ) -> None:
+        server_source = f"""#!{sys.executable}
+import json
+import os
+import sys
+import time
+for line in sys.stdin:
+    request = json.loads(line)
+    request_id = request["id"]
+    if request_id == 1:
+        result = {{}}
+    elif request_id == 2:
+        result = {{"account": {{"type": "chatgpt", "planType": "pro"}}}}
+    else:
+        result = {{"rateLimits": {{"credits": {{"hasCredits": False, "unlimited": False, "balance": "0"}}, "primary": {{"usedPercent": 1}}, "rateLimitReachedType": None}}}}
+    print(json.dumps({{"id": request_id, "result": result}}), flush=True)
+    if request_id == 3:
+        os.write(1, b'x' * 200000)
+        time.sleep(30)
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = Path(temporary) / "fake-codex"
+            executable.write_text(server_source, encoding="utf-8")
+            executable.chmod(0o700)
+            probe = CodexAppServerBillingProbe(
+                timeout_seconds=5,
+                max_output_bytes=1024,
+            )
+            evidence = await probe.inspect(
+                str(executable), environment={"PATH": "/usr/bin:/bin"}
+            )
+
+        self.assertIsNone(evidence)
+
+    @unittest.skipUnless(
+        posix_containment_available(),
+        "POSIX process-group containment is unavailable",
+    )
+    async def test_app_server_probe_counts_messages_after_valid_reply(
+        self,
+    ) -> None:
+        server_source = f"""#!{sys.executable}
+import json
+import sys
+import time
+for line in sys.stdin:
+    request = json.loads(line)
+    request_id = request["id"]
+    if request_id == 1:
+        result = {{}}
+    elif request_id == 2:
+        result = {{"account": {{"type": "chatgpt", "planType": "pro"}}}}
+    else:
+        result = {{"rateLimits": {{"credits": {{"hasCredits": False, "unlimited": False, "balance": "0"}}, "primary": {{"usedPercent": 1}}, "rateLimitReachedType": None}}}}
+    print(json.dumps({{"id": request_id, "result": result}}), flush=True)
+    if request_id == 3:
+        for sequence in range(300):
+            print(json.dumps({{"method": "notice", "params": sequence}}))
+        sys.stdout.flush()
+        time.sleep(30)
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = Path(temporary) / "fake-codex"
+            executable.write_text(server_source, encoding="utf-8")
+            executable.chmod(0o700)
+            probe = CodexAppServerBillingProbe(timeout_seconds=5)
+            evidence = await probe.inspect(
+                str(executable), environment={"PATH": "/usr/bin:/bin"}
+            )
+
+        self.assertIsNone(evidence)
+
+    async def test_app_server_task_settling_defers_fresh_cancellation(
+        self,
+    ) -> None:
+        protocol_task = asyncio.create_task(asyncio.sleep(60))
+        stderr_task = asyncio.create_task(asyncio.sleep(60))
+        wait_task = asyncio.create_task(asyncio.sleep(60))
+        overflow_task = asyncio.create_task(asyncio.sleep(60))
+        settle_task = asyncio.create_task(
+            codex_module._settle_codex_billing_tasks(
+                protocol_task,
+                stderr_task,
+                wait_task,
+                overflow_task,
+            )
+        )
+        await asyncio.sleep(0.01)
+
+        settle_task.cancel()
+        settle_task.cancel()
+        cancellation_deferred, tasks_settled = await asyncio.wait_for(
+            settle_task, timeout=2.0
+        )
+
+        self.assertTrue(cancellation_deferred)
+        self.assertTrue(tasks_settled)
+        self.assertEqual(settle_task.cancelling(), 2)
+        self.assertTrue(protocol_task.done())
+        self.assertTrue(stderr_task.done())
+        self.assertTrue(wait_task.done())
+        self.assertTrue(overflow_task.done())
+
+    @unittest.skipUnless(
+        posix_containment_available(),
+        "POSIX process-group containment is unavailable",
+    )
+    async def test_app_server_cancellation_requires_verified_cleanup(self) -> None:
+        real_terminate = codex_module.terminate_contained_process
+
+        async def uncertain_after_cleanup(*args, **kwargs) -> CleanupResult:
+            cleanup = await real_terminate(*args, **kwargs)
+            return replace(
+                cleanup,
+                disposition=CleanupDisposition.UNCERTAIN,
+                reason_code="fixture_cleanup_unknown",
+                process_group_absent=False,
+            )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = Path(temporary)
+            active_path = temporary_path / "active.txt"
+            server_source = f"""#!{sys.executable}
+import pathlib
+import time
+pathlib.Path({str(active_path)!r}).write_text('active')
+time.sleep(60)
+"""
+            executable = temporary_path / "fake-codex"
+            executable.write_text(server_source, encoding="utf-8")
+            executable.chmod(0o700)
+            probe = CodexAppServerBillingProbe(timeout_seconds=10)
+            task = asyncio.create_task(
+                probe.inspect(
+                    str(executable), environment={"PATH": "/usr/bin:/bin"}
+                )
+            )
+            for _ in range(200):
+                if active_path.exists():
+                    break
+                await asyncio.sleep(0.01)
+            self.assertTrue(active_path.exists())
+
+            with mock.patch.object(
+                codex_module,
+                "terminate_contained_process",
+                new=uncertain_after_cleanup,
+            ):
+                task.cancel()
+                with self.assertRaises(ProbeContainmentError) as raised:
+                    await asyncio.wait_for(task, timeout=3.0)
+
+        self.assertEqual(
+            str(raised.exception),
+            "diagnostic process-group cleanup could not be verified",
+        )
+
+    @unittest.skipUnless(
+        posix_containment_available(),
+        "POSIX process-group containment is unavailable",
+    )
+    async def test_app_server_probe_cancellation_removes_descendants(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = Path(temporary)
+            identity_path = temporary_path / "process-group.txt"
+            child_source = "import time; time.sleep(60)"
+            server_source = f"""#!{sys.executable}
+import os
+import pathlib
+import subprocess
+import sys
+import time
+subprocess.Popen([sys.executable, "-c", {child_source!r}])
+pathlib.Path({str(identity_path)!r}).write_text(str(os.getpgrp()))
+time.sleep(60)
+"""
+            executable = temporary_path / "fake-codex"
+            executable.write_text(server_source, encoding="utf-8")
+            executable.chmod(0o700)
+            probe = CodexAppServerBillingProbe(timeout_seconds=10)
+            task = asyncio.create_task(
+                probe.inspect(
+                    str(executable), environment={"PATH": "/usr/bin:/bin"}
+                )
+            )
+            process_group_id: int | None = None
+            try:
+                for _ in range(200):
+                    if identity_path.exists():
+                        break
+                    await asyncio.sleep(0.01)
+                self.assertTrue(identity_path.exists())
+                process_group_id = int(identity_path.read_text())
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, timeout=3.0)
+                with self.assertRaises(ProcessLookupError):
+                    os.killpg(process_group_id, 0)
+            finally:
+                if not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                if process_group_id is not None:
+                    try:
+                        os.killpg(process_group_id, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
 
 
 class RunnerCommandTests(unittest.TestCase):
@@ -837,6 +1285,20 @@ class RunnerCommandTests(unittest.TestCase):
 
 
 class MockRunnerTests(unittest.IsolatedAsyncioTestCase):
+    def test_controller_event_sink_is_sealed_and_bounded(self) -> None:
+        with self.assertRaisesRegex(TypeError, "cannot be subclassed"):
+
+            class InvalidSink(ControllerEventSink):
+                pass
+
+        sink = ControllerEventSink()
+        event = AgentEvent("result", {})
+        for _ in range(CONTROLLER_EVENT_SINK_LIMIT):
+            sink(event)
+        self.assertEqual(sink.count, CONTROLLER_EVENT_SINK_LIMIT)
+        with self.assertRaisesRegex(ValidationError, "controller limit"):
+            sink(event)
+
     async def test_mock_runner_satisfies_protocol_and_is_deterministic(self) -> None:
         events = (
             AgentEvent("analysis", {"step": 1}),
@@ -873,7 +1335,7 @@ class MockRunnerTests(unittest.IsolatedAsyncioTestCase):
         )
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaises(BillingRouteBlocked):
-                await runner.execute(request(Path(temporary)), lambda _: None)
+                await runner.execute(request(Path(temporary)), ControllerEventSink())
 
 
 class LiveGateTests(unittest.IsolatedAsyncioTestCase):
@@ -935,7 +1397,7 @@ class LiveGateTests(unittest.IsolatedAsyncioTestCase):
         )
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaises(LiveRunDisabled):
-                await runner.execute(request(Path(temporary)), lambda _: None)
+                await runner.execute(request(Path(temporary)), ControllerEventSink())
 
     async def test_codex_chatgpt_auth_and_live_gate_without_attestation_still_blocks(self) -> None:
         executable = "/tools/codex"
@@ -972,10 +1434,188 @@ class LiveGateTests(unittest.IsolatedAsyncioTestCase):
         )
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaises(BillingRouteBlocked):
-                await runner.execute(request(Path(temporary)), lambda _: None)
+                await runner.execute(request(Path(temporary)), ControllerEventSink())
 
 
 class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
+    def test_cleanup_limits_must_fit_the_billing_reservation_budget(self) -> None:
+        with self.assertRaisesRegex(ValueError, "billing-safe cleanup budget"):
+            HarnessProcessLimits(
+                term_grace_seconds=2.0,
+                kill_grace_seconds=2.0,
+                stream_settle_seconds=1.1,
+            )
+
+    async def test_native_async_sink_is_rejected_before_reservation_or_launch(
+        self,
+    ) -> None:
+        guard = RecordingBillingCircuitGuard()
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            marker = workspace / "must-not-launch"
+            runner = LocalScriptHarness(
+                f"import pathlib; pathlib.Path({str(marker)!r}).touch()",
+                billing_circuit_guard=guard,
+                parent_environment={
+                    "PATH": "/bin",
+                    "HOME": "/safe/home",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
+                },
+            )
+
+            async def cancellation_resistant_sink(_: AgentEvent) -> None:
+                while True:
+                    try:
+                        await asyncio.sleep(60)
+                    except asyncio.CancelledError:
+                        continue
+
+            with self.assertRaisesRegex(
+                ValidationError, "event sink must be controller-owned"
+            ):
+                await runner.execute(request(workspace), cancellation_resistant_sink)
+
+            self.assertFalse(marker.exists())
+            self.assertFalse(runner.schema_path(request(workspace)).exists())
+            self.assertFalse(runner._active_processes)
+            self.assertFalse(runner._executing_runs)
+            self.assertFalse(runner._run_directory_descriptors)
+            self.assertEqual(guard.ttls, [])
+
+    async def test_run_directory_must_be_owner_private(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            workspace.chmod(0o755)
+            runner = LocalScriptHarness(
+                "raise AssertionError('must not start')",
+                parent_environment={
+                    "PATH": "/bin",
+                    "HOME": "/safe/home",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
+                },
+            )
+            try:
+                with self.assertRaisesRegex(
+                    ValidationError, "Run directory lease could not be verified"
+                ):
+                    await runner.execute(request(workspace), ControllerEventSink())
+            finally:
+                workspace.chmod(0o700)
+
+        self.assertFalse(runner._active_processes)
+        self.assertFalse(runner._run_directory_descriptors)
+
+    async def test_controller_task_settlement_is_bounded_and_reports_unsettled(
+        self,
+    ) -> None:
+        cancellation_seen = asyncio.Event()
+        release_cancellation = asyncio.Event()
+
+        async def delayed_cancellation() -> None:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancellation_seen.set()
+                await release_cancellation.wait()
+
+        task = asyncio.create_task(delayed_cancellation())
+        await asyncio.sleep(0)
+        started = time.monotonic()
+        cancellation_deferred, tasks_settled = (
+            await harness_module._settle_harness_tasks(
+                task,
+                timeout_seconds=0.01,
+            )
+        )
+        elapsed = time.monotonic() - started
+
+        self.assertTrue(cancellation_seen.is_set())
+        self.assertFalse(task.done())
+        self.assertFalse(cancellation_deferred)
+        self.assertFalse(tasks_settled)
+        self.assertLess(elapsed, 0.2)
+
+        release_cancellation.set()
+        await asyncio.wait_for(task, timeout=0.5)
+        self.assertTrue(task.done())
+
+    async def test_controller_task_settlement_proof_failure_quarantines(
+        self,
+    ) -> None:
+        guard = RecordingBillingCircuitGuard()
+        real_settle = harness_module._settle_harness_tasks
+
+        async def report_unsettled(*tasks, timeout_seconds: float):
+            cancellation_deferred, tasks_settled = await real_settle(
+                *tasks,
+                timeout_seconds=timeout_seconds,
+            )
+            self.assertTrue(tasks_settled)
+            return cancellation_deferred, False
+
+        with tempfile.TemporaryDirectory() as temporary:
+            runner = LocalScriptHarness(
+                "import sys,time; sys.stdin.read(); time.sleep(30)",
+                billing_circuit_guard=guard,
+                process_limits=HarnessProcessLimits(
+                    term_grace_seconds=0.05,
+                    kill_grace_seconds=0.5,
+                    stream_settle_seconds=0.2,
+                ),
+                parent_environment={
+                    "PATH": "/bin",
+                    "HOME": "/safe/home",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
+                },
+            )
+            run_request = replace(
+                request(Path(temporary)),
+                timeout_seconds=1,
+            )
+            with mock.patch.object(
+                harness_module,
+                "_settle_harness_tasks",
+                new=report_unsettled,
+            ):
+                result = await runner.execute(run_request, ControllerEventSink())
+
+        self.assertEqual(result.status, RunStatus.QUARANTINED)
+        self.assertIsNone(result.output)
+        self.assertEqual(
+            result.paid_capacity_consumed,
+            PaidCapacityConsumed.UNKNOWN,
+        )
+        self.assertEqual(
+            result.incremental_ai_charge,
+            IncrementalAICharge.UNKNOWN,
+        )
+        self.assertIn(
+            "Harness controller task settlement could not be verified.",
+            result.errors,
+        )
+        self.assertIn(
+            "Harness execution outcome could not be verified.",
+            result.errors,
+        )
+        self.assertEqual(
+            result.billing_disposition_reasons,
+            ("harness_execution_outcome_unknown",),
+        )
+        self.assertTrue(result.billing_quarantine_required)
+        self.assertTrue(result.billing_circuit_breaker_required)
+        self.assertEqual(len(guard.completions), 1)
+        self.assertEqual(
+            guard.completions[0]["capacity_state"],
+            CapacityState.UNKNOWN,
+        )
+        self.assertEqual(
+            guard.completions[0]["capacity_reason_code"],
+            "post_run_billing_unknown",
+        )
+        self.assertTrue(guard.completions[0]["broad_scope_required"])
+        self.assertFalse(runner._active_processes)
+        self.assertFalse(runner._run_directory_descriptors)
+
     async def test_live_harness_fails_closed_for_legacy_read_only_guard(self) -> None:
         class LegacyGuard:
             def assert_closed(self, assessment: BillingRouteAssessment) -> None:
@@ -996,7 +1636,7 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(
                 BillingRouteBlocked, "atomic billing dispatch reservation"
             ):
-                await runner.execute(request(workspace), lambda _: None)
+                await runner.execute(request(workspace), ControllerEventSink())
             self.assertFalse(marker.exists())
 
     async def test_reservation_covers_timeout_margin_and_safe_completion(self) -> None:
@@ -1016,9 +1656,9 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                     "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
                 },
             )
-            result = await runner.execute(request(Path(temporary)), lambda _: None)
+            result = await runner.execute(request(Path(temporary)), ControllerEventSink())
         self.assertEqual(result.status, RunStatus.SUCCEEDED)
-        self.assertEqual(guard.ttls, [60.0])
+        self.assertEqual(guard.ttls, [95.0])
         self.assertEqual(len(guard.completions), 1)
         completion = guard.completions[0]
         self.assertEqual(completion["capacity_state"], CapacityState.AVAILABLE)
@@ -1026,6 +1666,99 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
             completion["capacity_reason_code"], "post_run_capacity_available"
         )
         self.assertFalse(completion["circuit_breaker_required"])
+
+    async def test_postflight_timeout_quarantines_inside_reservation_budget(
+        self,
+    ) -> None:
+        guard = RecordingBillingCircuitGuard()
+        script = (
+            "import json,pathlib,sys; sys.stdin.read(); "
+            "pathlib.Path(sys.argv[1]).write_text('{}'); "
+            "print(json.dumps({'type':'turn.completed'}))"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            runner = LocalScriptHarness(
+                script,
+                billing_circuit_guard=guard,
+                parent_environment={
+                    "PATH": "/bin",
+                    "HOME": "/safe/home",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
+                },
+            )
+            inspect_billing_route = runner.inspect_billing_route
+
+            async def delayed_postflight() -> BillingRouteAssessment:
+                assessment = await inspect_billing_route()
+                if runner.billing_inspections > 1:
+                    await asyncio.sleep(1)
+                return assessment
+
+            runner.inspect_billing_route = delayed_postflight  # type: ignore[method-assign]
+            started = time.monotonic()
+            with mock.patch(
+                "ordomata.runners._harness._BILLING_POSTFLIGHT_BUDGET_SECONDS",
+                0.05,
+            ):
+                result = await runner.execute(
+                    request(Path(temporary)), ControllerEventSink()
+                )
+
+        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertEqual(guard.ttls, [95.0])
+        self.assertEqual(result.status, RunStatus.QUARANTINED)
+        self.assertIsNone(result.postflight_billing_assessment)
+        self.assertTrue(result.billing_quarantine_required)
+        self.assertTrue(result.billing_circuit_breaker_required)
+        self.assertTrue(guard.completions[0]["broad_scope_required"])
+
+    async def test_short_reservation_is_rejected_and_directory_fd_is_closed(
+        self,
+    ) -> None:
+        class ShortReservationGuard(RecordingBillingCircuitGuard):
+            def reserve_dispatch(self, *args, **kwargs):
+                reservation = super().reserve_dispatch(*args, **kwargs)
+                return replace(
+                    reservation,
+                    expires_at=reservation.acquired_at + 1.0,
+                )
+
+        guard = ShortReservationGuard()
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            marker = workspace / "must-not-launch"
+            runner = LocalScriptHarness(
+                f"import pathlib; pathlib.Path({str(marker)!r}).touch()",
+                billing_circuit_guard=guard,
+                parent_environment={
+                    "PATH": "/bin",
+                    "HOME": "/safe/home",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
+                },
+            )
+            captured_descriptors: list[int] = []
+            prepare_run_files = runner._prepare_run_files
+
+            def capturing_prepare(run_request: RunRequest) -> None:
+                prepare_run_files(run_request)
+                captured_descriptors.append(
+                    runner._run_directory_descriptors[run_request.run_id]
+                )
+
+            runner._prepare_run_files = capturing_prepare  # type: ignore[method-assign]
+            with self.assertRaisesRegex(
+                BillingRouteBlocked, "does not cover the governed run"
+            ):
+                await runner.execute(request(workspace), ControllerEventSink())
+
+            self.assertEqual(guard.ttls, [95.0])
+            self.assertEqual(len(captured_descriptors), 1)
+            with self.assertRaises(OSError):
+                os.fstat(captured_descriptors[0])
+            self.assertFalse(marker.exists())
+            self.assertFalse(runner._run_directory_descriptors)
+            self.assertEqual(len(guard.completions), 1)
+            self.assertTrue(guard.completions[0]["broad_scope_required"])
 
     async def test_task_cancellation_opens_broad_breaker_before_release(self) -> None:
         guard = RecordingBillingCircuitGuard()
@@ -1041,7 +1774,7 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                 },
             )
             task = asyncio.create_task(
-                runner.execute(request(workspace), lambda _: None)
+                runner.execute(request(workspace), ControllerEventSink())
             )
             for _ in range(100):
                 if runner._active_processes:
@@ -1062,6 +1795,540 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(completion["broad_scope_required"])
         self.assertEqual(completion["reason_code"], "billing_dispatch_interrupted")
         self.assertFalse(runner._active_processes)
+
+    @unittest.skipUnless(
+        posix_containment_available(),
+        "POSIX process-group containment is unavailable",
+    )
+    async def test_cancel_during_launch_collects_cleanup_before_returning(self) -> None:
+        guard = RecordingBillingCircuitGuard()
+        real_create_subprocess_exec = asyncio.create_subprocess_exec
+        process_created = asyncio.Event()
+        release_creation = asyncio.Event()
+        created_process_group: list[int] = []
+
+        async def delayed_creation(*args, **kwargs):
+            process = await real_create_subprocess_exec(*args, **kwargs)
+            created_process_group.append(process.pid)
+            process_created.set()
+            await release_creation.wait()
+            return process
+
+        with tempfile.TemporaryDirectory() as temporary:
+            runner = LocalScriptHarness(
+                "import time; time.sleep(30)",
+                billing_circuit_guard=guard,
+                parent_environment={
+                    "PATH": "/bin",
+                    "HOME": "/safe/home",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
+                },
+            )
+            with mock.patch.object(
+                containment_module.asyncio,
+                "create_subprocess_exec",
+                new=delayed_creation,
+            ):
+                execute_task = asyncio.create_task(
+                    runner.execute(request(Path(temporary)), ControllerEventSink())
+                )
+                await asyncio.wait_for(process_created.wait(), timeout=2.0)
+                cancel_task = asyncio.create_task(runner.cancel("run-1"))
+                await asyncio.sleep(0)
+                self.assertFalse(cancel_task.done())
+                release_creation.set()
+                await asyncio.wait_for(cancel_task, timeout=3.0)
+                with self.assertRaises(asyncio.CancelledError):
+                    await execute_task
+
+        self.assertEqual(len(created_process_group), 1)
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(created_process_group[0], 0)
+        self.assertFalse(runner._active_processes)
+        self.assertFalse(runner._executing_runs)
+        self.assertEqual(len(guard.completions), 1)
+        self.assertTrue(guard.completions[0]["broad_scope_required"])
+        self.assertEqual(
+            guard.completions[0]["reason_code"],
+            "billing_dispatch_interrupted",
+        )
+
+    @unittest.skipUnless(
+        posix_containment_available(),
+        "POSIX process-group containment is unavailable",
+    )
+    async def test_cancelling_cancel_waits_for_launch_cleanup(self) -> None:
+        guard = RecordingBillingCircuitGuard()
+        real_create_subprocess_exec = asyncio.create_subprocess_exec
+        process_created = asyncio.Event()
+        release_creation = asyncio.Event()
+        created_process_group: list[int] = []
+
+        async def delayed_creation(*args, **kwargs):
+            process = await real_create_subprocess_exec(*args, **kwargs)
+            created_process_group.append(process.pid)
+            process_created.set()
+            await release_creation.wait()
+            return process
+
+        with tempfile.TemporaryDirectory() as temporary:
+            runner = LocalScriptHarness(
+                "import time; time.sleep(30)",
+                billing_circuit_guard=guard,
+                parent_environment={
+                    "PATH": "/bin",
+                    "HOME": "/safe/home",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
+                },
+            )
+            with mock.patch.object(
+                containment_module.asyncio,
+                "create_subprocess_exec",
+                new=delayed_creation,
+            ):
+                execute_task = asyncio.create_task(
+                    runner.execute(request(Path(temporary)), ControllerEventSink())
+                )
+                await asyncio.wait_for(process_created.wait(), timeout=2.0)
+                cancel_task = asyncio.create_task(runner.cancel("run-1"))
+                await asyncio.sleep(0)
+                cancel_task.cancel()
+                await asyncio.sleep(0)
+                self.assertFalse(cancel_task.done())
+                release_creation.set()
+                with self.assertRaises(asyncio.CancelledError):
+                    await asyncio.wait_for(cancel_task, timeout=3.0)
+                with self.assertRaises(asyncio.CancelledError):
+                    await execute_task
+
+        self.assertEqual(len(created_process_group), 1)
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(created_process_group[0], 0)
+        self.assertFalse(runner._active_processes)
+        self.assertFalse(runner._executing_runs)
+        self.assertFalse(runner._run_directory_descriptors)
+        self.assertEqual(len(guard.completions), 1)
+        self.assertTrue(guard.completions[0]["broad_scope_required"])
+
+    @unittest.skipUnless(
+        posix_containment_available(),
+        "POSIX process-group containment is unavailable",
+    )
+    async def test_cancel_reports_unverified_cleanup(self) -> None:
+        guard = RecordingBillingCircuitGuard()
+
+        async def uncertain_cleanup(*_args, **_kwargs) -> CleanupResult:
+            return CleanupResult(
+                disposition=CleanupDisposition.UNCERTAIN,
+                reason_code="fixture_cleanup_unknown",
+                term_sent=False,
+                kill_sent=False,
+                direct_child_reaped=False,
+                process_group_absent=False,
+                returncode=None,
+            )
+
+        script = (
+            "import json,sys,time; sys.stdin.read(); time.sleep(0.2); "
+            "print(json.dumps({'type':'turn.completed'}), flush=True)"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            runner = LocalScriptHarness(
+                script,
+                billing_circuit_guard=guard,
+                parent_environment={
+                    "PATH": "/bin",
+                    "HOME": "/safe/home",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
+                },
+            )
+            execute_task = asyncio.create_task(
+                runner.execute(request(Path(temporary)), ControllerEventSink())
+            )
+            for _ in range(100):
+                if runner._active_processes:
+                    break
+                await asyncio.sleep(0.01)
+            self.assertTrue(runner._active_processes)
+            with mock.patch(
+                "ordomata.runners._harness.terminate_contained_process",
+                new=uncertain_cleanup,
+            ):
+                with self.assertRaises(HarnessCancellationError) as raised:
+                    await runner.cancel("run-1")
+                result = await asyncio.wait_for(execute_task, timeout=2.0)
+
+        self.assertEqual(
+            str(raised.exception),
+            "Harness process-group cancellation could not be verified.",
+        )
+        self.assertEqual(result.status, RunStatus.QUARANTINED)
+        self.assertTrue(result.billing_circuit_breaker_required)
+        self.assertTrue(guard.completions[0]["broad_scope_required"])
+        self.assertFalse(runner._active_processes)
+        self.assertFalse(runner._run_directory_descriptors)
+
+    @unittest.skipUnless(
+        posix_containment_available(),
+        "POSIX process-group containment is unavailable",
+    )
+    async def test_direct_exit_with_pipe_holding_descendant_is_quarantined(
+        self,
+    ) -> None:
+        guard = RecordingBillingCircuitGuard()
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            identity_path = workspace / "process-group.txt"
+            child_source = "import time; time.sleep(30)"
+            script = (
+                "import json,os,pathlib,subprocess,sys; "
+                "sys.stdin.read(); "
+                f"subprocess.Popen([sys.executable, '-c', {child_source!r}]); "
+                f"pathlib.Path({str(identity_path)!r}).write_text(str(os.getpgrp())); "
+                "print(json.dumps({'type':'turn.completed'}), flush=True)"
+            )
+            runner = LocalScriptHarness(
+                script,
+                billing_circuit_guard=guard,
+                process_limits=HarnessProcessLimits(
+                    term_grace_seconds=0.1,
+                    kill_grace_seconds=0.5,
+                    stream_settle_seconds=0.2,
+                ),
+                parent_environment={
+                    "PATH": "/bin",
+                    "HOME": "/safe/home",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
+                },
+            )
+            process_group_id: int | None = None
+            started = time.monotonic()
+            try:
+                result = await asyncio.wait_for(
+                    runner.execute(request(workspace), ControllerEventSink()),
+                    timeout=4.0,
+                )
+                elapsed = time.monotonic() - started
+                process_group_id = int(identity_path.read_text())
+                self.assertLess(elapsed, 2.0)
+                self.assertEqual(result.status, RunStatus.QUARANTINED)
+                self.assertIsNone(result.output)
+                self.assertEqual(
+                    result.billing_disposition_reasons,
+                    ("harness_execution_outcome_unknown",),
+                )
+                self.assertTrue(result.billing_circuit_breaker_required)
+                with self.assertRaises(ProcessLookupError):
+                    os.killpg(process_group_id, 0)
+            finally:
+                if process_group_id is not None:
+                    try:
+                        os.killpg(process_group_id, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+        self.assertTrue(guard.completions[0]["broad_scope_required"])
+
+    @unittest.skipUnless(
+        posix_containment_available(),
+        "POSIX process-group containment is unavailable",
+    )
+    async def test_harness_stream_limit_is_bounded_and_opens_broad_circuit(
+        self,
+    ) -> None:
+        guard = RecordingBillingCircuitGuard()
+        script = (
+            "import json,sys,time; sys.stdin.read(); "
+            "line=json.dumps({'type':'progress','payload':'x'*80}); "
+            "[(print(line, flush=True)) for _ in range(100)]; time.sleep(30)"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            runner = LocalScriptHarness(
+                script,
+                billing_circuit_guard=guard,
+                process_limits=HarnessProcessLimits(
+                    stdout_bytes=2048,
+                    stderr_bytes=256,
+                    event_line_bytes=256,
+                    physical_line_count=16,
+                    event_count=3,
+                    parse_error_count=2,
+                    output_file_bytes=256,
+                    term_grace_seconds=0.1,
+                    kill_grace_seconds=0.5,
+                    stream_settle_seconds=0.2,
+                ),
+                parent_environment={
+                    "PATH": "/bin",
+                    "HOME": "/safe/home",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
+                },
+            )
+            started = time.monotonic()
+            result = await runner.execute(request(Path(temporary)), ControllerEventSink())
+        self.assertLess(time.monotonic() - started, 2.0)
+        self.assertEqual(result.status, RunStatus.QUARANTINED)
+        self.assertLessEqual(len(result.events), 3)
+        self.assertIsNone(result.output)
+        self.assertIn("Harness output exceeded a controller limit.", result.errors)
+        self.assertNotIn("x" * 40, repr(result.errors))
+        self.assertEqual(
+            result.billing_disposition_reasons,
+            ("harness_execution_outcome_unknown",),
+        )
+        self.assertTrue(guard.completions[0]["broad_scope_required"])
+
+    @unittest.skipUnless(
+        hasattr(os, "O_NOFOLLOW") and posix_containment_available(),
+        "safe no-follow output inspection is unavailable",
+    )
+    async def test_harness_output_symlink_is_not_followed(self) -> None:
+        guard = RecordingBillingCircuitGuard()
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            target = workspace / "private-target.json"
+            target.write_text('{"private":"must-not-return"}', encoding="utf-8")
+            script = (
+                "import json,os,pathlib,sys; sys.stdin.read(); "
+                f"os.symlink({str(target)!r}, sys.argv[1]); "
+                "print(json.dumps({'type':'turn.completed'}), flush=True)"
+            )
+            runner = LocalScriptHarness(
+                script,
+                billing_circuit_guard=guard,
+                parent_environment={
+                    "PATH": "/bin",
+                    "HOME": "/safe/home",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
+                },
+            )
+            run_request = request(workspace)
+            result = await runner.execute(run_request, ControllerEventSink())
+
+            self.assertEqual(result.status, RunStatus.QUARANTINED)
+            self.assertIsNone(result.output)
+            self.assertNotIn("must-not-return", repr(result))
+            self.assertTrue(target.is_file())
+            self.assertFalse(runner.output_path(run_request).exists())
+        self.assertEqual(
+            result.billing_disposition_reasons,
+            ("harness_execution_outcome_unknown",),
+        )
+        self.assertTrue(guard.completions[0]["broad_scope_required"])
+
+    @unittest.skipUnless(
+        hasattr(os, "O_NOFOLLOW")
+        and hasattr(os, "O_DIRECTORY")
+        and posix_containment_available(),
+        "safe descriptor-relative output inspection is unavailable",
+    )
+    async def test_harness_output_ancestor_swap_is_not_followed_or_unlinked(
+        self,
+    ) -> None:
+        guard = RecordingBillingCircuitGuard()
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            workspace = parent / "run"
+            renamed = parent / "renamed-run"
+            external = parent / "external"
+            workspace.mkdir(mode=0o700)
+            external.mkdir()
+            script = (
+                "import json,os,pathlib,sys; sys.stdin.read(); "
+                "run=pathlib.Path(sys.argv[2]); "
+                "renamed=pathlib.Path(sys.argv[3]); "
+                "external=pathlib.Path(sys.argv[4]); "
+                "os.rename(run, renamed); os.symlink(external, run); "
+                "(run / pathlib.Path(sys.argv[1]).name).write_text("
+                "json.dumps({'private':'must-not-return'})); "
+                "print(json.dumps({'type':'turn.completed'}), flush=True)"
+            )
+            runner = LocalScriptHarness(
+                script,
+                script_arguments=(str(workspace), str(renamed), str(external)),
+                billing_circuit_guard=guard,
+                parent_environment={
+                    "PATH": "/bin",
+                    "HOME": "/safe/home",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
+                },
+            )
+            run_request = request(workspace)
+            try:
+                result = await runner.execute(run_request, ControllerEventSink())
+                external_output = external / "local-script-output.json"
+                self.assertEqual(result.status, RunStatus.QUARANTINED)
+                self.assertIsNone(result.output)
+                self.assertNotIn("must-not-return", repr(result))
+                self.assertTrue(external_output.is_file())
+                self.assertEqual(
+                    external_output.read_text(encoding="utf-8"),
+                    '{"private": "must-not-return"}',
+                )
+                self.assertFalse(runner._run_directory_descriptors)
+            finally:
+                if workspace.is_symlink():
+                    workspace.unlink()
+                if renamed.exists() and not workspace.exists():
+                    renamed.rename(workspace)
+        self.assertEqual(
+            result.billing_disposition_reasons,
+            ("harness_execution_outcome_unknown",),
+        )
+        self.assertTrue(guard.completions[0]["broad_scope_required"])
+
+    @unittest.skipUnless(
+        hasattr(os, "O_NOFOLLOW")
+        and hasattr(os, "O_DIRECTORY")
+        and posix_containment_available(),
+        "safe descriptor-relative output inspection is unavailable",
+    )
+    async def test_harness_output_name_swap_after_open_fails_closed(self) -> None:
+        guard = RecordingBillingCircuitGuard()
+        script = (
+            "import json,pathlib,sys; sys.stdin.read(); "
+            "pathlib.Path(sys.argv[1]).write_text("
+            "json.dumps({'private':'must-not-return'})); "
+            "print(json.dumps({'type':'turn.completed'}), flush=True)"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            output_path = workspace / "local-script-output.json"
+            moved_output = workspace / "moved-output.json"
+            external_target = workspace / "external-target.json"
+            external_target.write_text('{"safe":true}', encoding="utf-8")
+            runner = LocalScriptHarness(
+                script,
+                billing_circuit_guard=guard,
+                parent_environment={
+                    "PATH": "/bin",
+                    "HOME": "/safe/home",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
+                },
+            )
+            real_unlink = os.unlink
+            swapped = False
+
+            def swapping_unlink(path, *args, **kwargs):
+                nonlocal swapped
+                if (
+                    not swapped
+                    and path == "local-script-output.json"
+                    and kwargs.get("dir_fd") is not None
+                ):
+                    swapped = True
+                    output_path.rename(moved_output)
+                    output_path.symlink_to(external_target)
+                return real_unlink(path, *args, **kwargs)
+
+            with mock.patch(
+                "ordomata.runners._harness.os.unlink",
+                new=swapping_unlink,
+            ):
+                result = await runner.execute(request(workspace), ControllerEventSink())
+
+            self.assertTrue(swapped)
+            self.assertEqual(result.status, RunStatus.QUARANTINED)
+            self.assertIsNone(result.output)
+            self.assertNotIn("must-not-return", repr(result))
+            self.assertTrue(external_target.is_file())
+            self.assertTrue(moved_output.is_file())
+            self.assertTrue(result.billing_circuit_breaker_required)
+            self.assertFalse(runner._run_directory_descriptors)
+        self.assertTrue(guard.completions[0]["broad_scope_required"])
+
+    @unittest.skipUnless(
+        posix_containment_available(),
+        "POSIX process-group containment is unavailable",
+    )
+    async def test_blocking_sink_is_rejected_without_invocation_before_launch(
+        self,
+    ) -> None:
+        sink_called = False
+        guard = RecordingBillingCircuitGuard()
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            marker = workspace / "must-not-launch"
+            runner = LocalScriptHarness(
+                f"import pathlib; pathlib.Path({str(marker)!r}).touch()",
+                billing_circuit_guard=guard,
+                parent_environment={
+                    "PATH": "/bin",
+                    "HOME": "/safe/home",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
+                },
+            )
+
+            def blocking_sink(_: AgentEvent) -> None:
+                nonlocal sink_called
+                sink_called = True
+                time.sleep(30)
+
+            started = time.monotonic()
+            with self.assertRaisesRegex(
+                ValidationError, "event sink must be controller-owned"
+            ):
+                await runner.execute(request(workspace), blocking_sink)
+
+            self.assertLess(time.monotonic() - started, 1.0)
+            self.assertFalse(sink_called)
+            self.assertFalse(marker.exists())
+            self.assertEqual(guard.ttls, [])
+        self.assertFalse(runner._active_processes)
+        self.assertFalse(runner._run_directory_descriptors)
+
+    @unittest.skipUnless(
+        posix_containment_available(),
+        "POSIX process-group containment is unavailable",
+    )
+    async def test_verified_timeout_kills_term_ignoring_process_group(self) -> None:
+        guard = RecordingBillingCircuitGuard()
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            identity_path = workspace / "process-group.txt"
+            child_source = (
+                "import signal,time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"
+            )
+            script = (
+                "import os,pathlib,signal,subprocess,sys,time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                f"subprocess.Popen([sys.executable, '-c', {child_source!r}]); "
+                f"pathlib.Path({str(identity_path)!r}).write_text(str(os.getpgrp())); "
+                "sys.stdin.read(); time.sleep(30)"
+            )
+            runner = LocalScriptHarness(
+                script,
+                billing_circuit_guard=guard,
+                process_limits=HarnessProcessLimits(
+                    term_grace_seconds=0.05,
+                    kill_grace_seconds=0.5,
+                    stream_settle_seconds=0.2,
+                ),
+                parent_environment={
+                    "PATH": "/bin",
+                    "HOME": "/safe/home",
+                    "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
+                },
+            )
+            run_request = replace(request(workspace), timeout_seconds=1)
+            process_group_id: int | None = None
+            started = time.monotonic()
+            try:
+                result = await runner.execute(run_request, ControllerEventSink())
+                process_group_id = int(identity_path.read_text())
+                self.assertLess(time.monotonic() - started, 3.0)
+                self.assertEqual(result.status, RunStatus.FAILED)
+                self.assertIn("Harness execution timed out.", result.errors)
+                self.assertFalse(result.billing_circuit_breaker_required)
+                with self.assertRaises(ProcessLookupError):
+                    os.killpg(process_group_id, 0)
+            finally:
+                if process_group_id is not None:
+                    try:
+                        os.killpg(process_group_id, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+        self.assertFalse(guard.completions[0]["broad_scope_required"])
 
     async def test_dispatch_pins_one_verified_executable(self) -> None:
         resolutions: list[str] = []
@@ -1085,20 +2352,18 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                     "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
                 },
             )
-            result = await runner.execute(request(Path(temporary)), lambda _: None)
+            result = await runner.execute(request(Path(temporary)), ControllerEventSink())
         self.assertEqual(result.status, RunStatus.SUCCEEDED)
         self.assertEqual(resolutions, ["resolved"])
 
-    async def test_post_launch_event_sink_failure_runs_billing_postflight(self) -> None:
+    async def test_controller_event_sink_count_matches_returned_events(self) -> None:
         script = (
-            "import json,sys; sys.stdin.read(); "
+            "import json,pathlib,sys; sys.stdin.read(); "
+            "pathlib.Path(sys.argv[1]).write_text('{}'); "
             "print(json.dumps({'type':'turn.completed'}))"
         )
-
-        def failing_sink(_: AgentEvent) -> None:
-            raise RuntimeError("sensitive event sink detail")
-
         with tempfile.TemporaryDirectory() as temporary:
+            sink = ControllerEventSink()
             runner = LocalScriptHarness(
                 script,
                 parent_environment={
@@ -1107,16 +2372,11 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                     "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
                 },
             )
-            result = await runner.execute(request(Path(temporary)), failing_sink)
-        self.assertEqual(result.status, RunStatus.QUARANTINED)
+            result = await runner.execute(request(Path(temporary)), sink)
+        self.assertEqual(result.status, RunStatus.SUCCEEDED)
         self.assertEqual(runner.billing_inspections, 2)
-        self.assertEqual(result.incremental_ai_charge, IncrementalAICharge.UNKNOWN)
-        self.assertTrue(result.billing_circuit_breaker_required)
-        self.assertEqual(
-            result.billing_disposition_reasons,
-            ("harness_execution_outcome_unknown",),
-        )
-        self.assertNotIn("sensitive event sink detail", repr(result))
+        self.assertEqual(sink.count, 1)
+        self.assertEqual(sink.count, len(result.events))
 
     async def test_post_launch_output_failure_runs_billing_postflight(self) -> None:
         script = (
@@ -1137,7 +2397,7 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                 raise RuntimeError("sensitive output detail")
 
             runner._read_output = failing_output
-            result = await runner.execute(request(Path(temporary)), lambda _: None)
+            result = await runner.execute(request(Path(temporary)), ControllerEventSink())
         self.assertEqual(result.status, RunStatus.QUARANTINED)
         self.assertEqual(runner.billing_inspections, 2)
         self.assertEqual(result.incremental_ai_charge, IncrementalAICharge.UNKNOWN)
@@ -1180,7 +2440,7 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                     "additionalProperties": False,
                 },
             )
-            result = await runner.execute(run_request, lambda _: None)
+            result = await runner.execute(run_request, ControllerEventSink())
             self.assertEqual(result.status, RunStatus.SUCCEEDED)
             self.assertEqual(result.output, {"summary": REDACTED})
             self.assertTrue(result.credential_material_detected)
@@ -1204,7 +2464,7 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                 },
             )
             with self.assertRaises(BillingRouteBlocked):
-                await runner.execute(request(workspace), lambda _: None)
+                await runner.execute(request(workspace), ControllerEventSink())
             self.assertFalse(runner.schema_path(request(workspace)).exists())
 
     async def test_paid_postflight_quarantines_and_requests_circuit_breaker(self) -> None:
@@ -1224,7 +2484,7 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                     "ORDOMATA_ALLOW_SUBSCRIPTION_RUNS": "1",
                 },
             )
-            result = await runner.execute(request(workspace), lambda _: None)
+            result = await runner.execute(request(workspace), ControllerEventSink())
         self.assertEqual(result.status, RunStatus.QUARANTINED)
         self.assertTrue(result.billing_quarantine_required)
         self.assertTrue(result.billing_circuit_breaker_required)
@@ -1259,7 +2519,7 @@ class LiveHarnessSafetyTests(unittest.IsolatedAsyncioTestCase):
                 timeout_seconds=1,
             )
             started = time.monotonic()
-            result = await runner.execute(run_request, lambda _: None)
+            result = await runner.execute(run_request, ControllerEventSink())
             elapsed = time.monotonic() - started
             self.assertEqual(result.status, RunStatus.FAILED)
             self.assertLess(elapsed, 3.0)

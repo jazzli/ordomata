@@ -84,8 +84,16 @@ records.
   `verify_repository_proposal_admission_shadow_mapping` API validates a bounded
   detached exact-dict snapshot with fixed value-free findings; internal
   consistency is not authenticity, freshness, durable truth, or authority;
-- isolated per-run workspaces, wall timeouts, terminal-event checks, and output validation;
-- append-only SQLite runs, events, artifacts, capacity observations, billing circuits, scheduler claims, and expiring leases, with capacity checked inside the atomic dispatch reservation; baseline creation and exact legacy adoption are transactional, and every ordinary open verifies the frozen, contiguous v1-v4 migration prefix before use;
+- isolated per-run workspaces, terminal-event checks, and output validation;
+- controller-owned POSIX process-group lifecycle for diagnostics and current
+  first-party harness subprocesses, with separate-session launch, wall
+  timeouts, bounded
+  stdout/stderr and JSONL retention, bounded cancellation/TERM/KILL cleanup,
+  fail-closed cleanup evidence, sealed fixed-ceiling count-only event capture,
+  post-execution ordinal event persistence, and
+  descriptor-relative bounded output reads that unlink raw output before
+  decoding;
+- append-only SQLite runs, events, artifacts, capacity observations, billing circuits, scheduler claims, and expiring leases, with capacity checked inside the atomic dispatch reservation and reservation/completion time sampled only after the SQLite write lock is acquired; baseline creation and exact legacy adoption are transactional, and every ordinary open verifies the frozen, contiguous v1-v4 migration prefix before use;
 - a versioned additive SQLite migration for a durable supervisor control-plane
   tracer: immutable mock-only flow admission, append-only optimistic control/
   flow/attempt revisions, sticky cancellation, fenced multi-resource claim

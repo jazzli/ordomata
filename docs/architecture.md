@@ -335,7 +335,7 @@ Missing telemetry is `unavailable`, never zero.
 
 Each completed attempt also records the adapter-authored harness version and execution mode, whether a harness process started, whether live model execution was observed, observed-or-unavailable subscription-capacity consumption, `paid_capacity_consumed`, `incremental_ai_charge`, the narrower `incremental_api_charge`, postflight disposition, and wall time. `incremental_api_charge: none` does not imply `incremental_ai_charge: none`; only a verified safe, matching postflight supports the latter. No per-run subscription dollar cost is invented.
 
-Included-capacity exhaustion becomes an append-only `blocked_until_reset` observation and stops automatic retry. The atomic reservation checks account-global, account/profile, provider/profile, and provider-global capacity scopes as well as circuits. A blocking capacity observation survives restart and can be superseded only by a strictly newer verified `available` observation after any recorded reset. Completion persists postflight capacity before releasing the dispatch leases. Paid, changed-account, or unknown post-run evidence quarantines the attempt and any output before promotion and opens the account/profile billing circuit. Later live dispatches fail while that circuit is open.
+Included-capacity exhaustion becomes an append-only `blocked_until_reset` observation and stops automatic retry. The atomic reservation checks account-global, account/profile, provider/profile, and provider-global capacity scopes as well as circuits. Reservation acquisition and completion sample controller time only after acquiring the SQLite write lock, so lock contention cannot admit an expired lease or finalize one from a stale pre-lock timestamp. A blocking capacity observation survives restart and can be superseded only by a strictly newer verified `available` observation after any recorded reset. Completion persists postflight capacity before releasing the dispatch leases. Paid, changed-account, or unknown post-run evidence quarantines the attempt and any output before promotion and opens the account/profile billing circuit. Later live dispatches fail while that circuit is open.
 
 Only hard-stop events—billing risk, credential exposure, containment failure,
 revoked authorization, cancellation, or a safety circuit—preempt an active
@@ -387,12 +387,68 @@ Credential-shaped source content or metadata is rejected before indexing. Accept
 
 ## Live process isolation
 
-Live workspaces must be non-symlinked children of a unique run directory. For Chief of Staff Lite they start empty, so source material is available only through the bounded stdin prompt.
+Live workspaces must be non-symlinked children of a unique, effective-user-owned
+mode-`0700` run directory. For Chief of Staff Lite they start empty, so source
+material is available only through the bounded stdin prompt.
 
 - Codex uses a read-only sandbox, `never` approval mode, strict/ignored user configuration, ignored exec-policy rules, ephemeral sessions, and structured JSONL. Class 1 currently means the controller may write a validated local draft; it does not grant the harness filesystem writes. The adapter extracts the final structured answer from the bounded, redacted in-memory event stream and does not ask Codex to persist a raw last-message file.
 - Claude Code uses safe mode, an explicitly empty settings-source list, strict empty MCP configuration, no Chrome, no session persistence, disabled skills, and an empty built-in tool list. It returns structured output; the controller performs the only artifact write.
 
-The entire process lifecycle—including process creation and stdin delivery—is covered by the wall timeout.
+Current diagnostic and first-party harness children are launched without a
+shell as leaders of new POSIX sessions. The controller immediately verifies
+the leader's session/process-group identity, drains stdout and stderr under
+fixed byte and line ceilings, bounds retained JSONL events and parse failures,
+and reaps the direct child only after bounded original-group TERM/KILL cleanup.
+Normal direct exit is also reconciled: a descendant that remains in the
+original group makes the execution outcome unknown even if cleanup removes it.
+Cancellation during process creation is deferred until any returned child has
+been reconciled, and unsupported process-group hosts fail before diagnostics or
+billing reservation. Diagnostic probe results without affirmative cleanup
+evidence, or with a timeout even if the child exits cleanly during cleanup, are
+unusable. A containment-specific diagnostic failure aborts capability
+discovery rather than being treated as an optional missing result.
+
+Before command construction, the controller pins the run-directory inode with
+a no-follow directory descriptor. Controller schema creation and output
+open/unlink operations use validated leaf names relative to that descriptor;
+raw output is unlinked while its verified regular-file descriptor is still
+open, before decoding or validation. A renamed or replaced pathname therefore
+causes fail-closed output withholding and cannot redirect the controller's read
+or deletion. Live harnesses accept only the exact sealed controller event sink:
+a fixed-ceiling, count-only in-memory callback with no I/O, locks, or extension
+hooks. Arbitrary synchronous or asynchronous callbacks are rejected before
+reservation or launch. Production orchestration persists only ordinal event
+observations after runner execution finishes, so SQLite contention cannot delay
+the live process timeout, cleanup, postflight, or reservation finalization.
+
+The operation wall timeout covers process creation and stdin delivery once the
+host spawn operation resolves; stream and process-group cleanup then use a
+small controller-owned allowance inside the billing-reservation margin. That
+margin separately budgets cleanup, bounded postflight inspection, durable
+finalization including its retry, and scheduling slack. Evidence validity is
+rechecked after reservation acquisition through the execution-and-cleanup
+horizon; a postflight budget overrun becomes unknown evidence, quarantine, and
+a broad circuit. A wedged operating-system spawn cannot be abandoned safely
+because it might
+later return an untracked child, so cancellation waits for spawn resolution
+before cleanup. This is an explicit hard-wall limitation, not a success case.
+Stream, event capture or deferred event-persistence, output-file, cleanup, or
+launch uncertainty causes sanitized failure; after a possible live launch it
+also causes output withholding, UNKNOWN charge accounting, quarantine, and a
+broad billing circuit.
+
+This mechanism is only POSIX **process-group lifecycle control**. A descendant
+can escape the original group with `setsid()` or `setpgid()`, so positive group
+cleanup evidence is not process-tree containment, a sandbox, or the planned
+repository-worker isolation boundary. It grants no authority and does not
+satisfy the worker-dispatch gate below. A non-escapable container/cgroup or
+equivalent platform backend with post-run reconciliation remains required for
+unattended repository work.
+
+The current child-facing output-schema argument remains a pathname governed by
+the adapter sandbox. Pinning controller file operations does not make that
+pathname immutable against an adversarial worker; a future worker-cell handoff
+must close that separate boundary.
 
 For repository work, the target worker-cell interface is backend-pluggable and
 declares minimum filesystem, process, network, credential, and resource

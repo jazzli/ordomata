@@ -36,6 +36,7 @@ from ordomata.comparison import (
 )
 from ordomata.errors import BillingRouteBlocked, ConfigurationError, ValidationError
 from ordomata.models import (
+    AgentEvent,
     AssessmentConfidence,
     BillingRoute,
     BillingRouteAssessment,
@@ -78,7 +79,13 @@ class RecordingMockRunner(MockRunner):
 
 class ExplodingMockRunner(MockRunner):
     async def execute(self, request, event_sink):
-        del request, event_sink
+        del request
+        event_sink(
+            AgentEvent(
+                event_type="model.output",
+                payload={"private_source_text": "secret diagnostic"},
+            )
+        )
         raise RuntimeError("secret diagnostic must not be recorded")
 
 
@@ -3697,10 +3704,17 @@ class ControlledComparisonExecutionTests(unittest.IsolatedAsyncioTestCase):
                         "billing_assessment",
                         "status",
                         "authorization_shadow_decision",
+                        "runner_event_observed",
                         "execution_accounting",
                         "status",
                     ],
                 )
+                runner_observation = next(
+                    event
+                    for event in events
+                    if event.event_type == "runner_event_observed"
+                )
+                self.assertEqual(runner_observation.payload, {"ordinal": 1})
                 self.assertEqual(
                     events[-2].payload["failure_code"],
                     "runner_execution_error",

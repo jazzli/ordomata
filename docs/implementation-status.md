@@ -1073,4 +1073,51 @@ maintenance executor has been enabled.
 
 Implemented controls do not make an account eligible by themselves. A live attempt remains blocked unless `doctor` can establish, for the exact runner/account/profile and requested duration, first-party subscription identity, available included capacity, the provider-specific paid-continuation protection, a valid matching attestation, a sanitized environment, safe capabilities/isolation, a closed billing circuit, and the explicit live gate. Subscription login alone is not sufficient.
 
+The current subprocess-lifecycle hardening is implemented for non-model
+diagnostics, the read-only Codex app-server billing probe, and existing
+first-party harness execution. It provides cancellation-safe new-session
+launch, immediate leader identity checks, bounded output/JSONL/error retention,
+direct-child exit observation independent of inherited-pipe EOF, shared
+idempotent original-group TERM/KILL cleanup, fail-closed probe receipts, and
+bounded descriptor-relative output-file inspection. Run-directory descriptors
+are pinned only after verifying an effective-user-owned mode-`0700` directory;
+raw output is unlinked from that anchored namespace before decoding. Event
+capture accepts only the exact sealed, fixed-ceiling, count-only controller
+sink; arbitrary callbacks fail before reservation or launch, and production
+SQLite receives only ordinal observations after runner execution finishes.
+Unverified explicit cancellation is reported as a fixed failure. Timeouts,
+explicit cancellation, cleanup uncertainty, stream limits, event-limit and
+deferred event-persistence faults, output-name and ancestor swaps, direct-parent
+exit with lingering original-group descendants, and cancellation during launch
+have deterministic tests.
+After a possible live launch, uncertainty is converted to sanitized UNKNOWN
+billing evidence, output withholding, quarantine, and a broad circuit before
+reservation release. Diagnostic timeout receipts remain unusable even when
+TERM produces a clean exit, and containment-specific probe failures abort
+capability discovery. The Codex billing probe applies separate aggregate,
+per-line, message-count, and stderr ceilings, keeps stdout and stderr draining
+through cleanup so late output can invalidate a completed reply, and returns
+only sanitized evidence after original-group cleanup and task settlement are
+proven.
+
+Live evidence is rechecked after atomic reservation acquisition. Reservation
+and completion clocks are sampled after the SQLite write lock is acquired. The
+lease margin is composed from bounded cleanup, a hard postflight-inspection budget,
+durable finalization including one retry, and scheduling slack. A postflight
+overrun fails closed as missing evidence and cannot release a safe result.
+
+This is explicitly not completed process-tree or repository containment.
+`CleanupResult.verified` means only that the originally verified POSIX process
+group is absent and its direct child was reaped; a descendant can escape with
+`setsid()` or `setpgid()`. Deterministic coverage records that limitation rather
+than masking it. Cancellation also waits for an in-progress operating-system
+spawn to resolve so a later-returned child cannot be orphaned, which means a
+wedged spawn remains an acknowledged hard-wall limitation. A non-escapable
+worker-cell backend and post-run tree reconciliation are still prerequisites
+for supervisor repository-worker dispatch. No authority, permission class,
+route, connector, recurring schedule, model fallback, or live eligibility was
+added by this slice. The current child-facing output-schema argument remains a
+pathname protected by the adapter sandbox, not an immutable adversarial-worker
+handoff.
+
 The controlled comparison machinery has been implemented and tested with deterministic fixtures. No claim is made that the planned three-runs-per-profile live experiment has run, passed automated checks, received human scores, or produced a winner.
