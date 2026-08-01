@@ -562,6 +562,59 @@ persistence, dispatch, routing, billing, capacity, circuit, live eligibility,
 CLI/state/runner, or execution capability. Only Class 0/1 effects remain
 enabled.
 
+The eighteenth slice adds the separate library-only schema-v1 Class 0
+`ordomata.repository_executable_shebang_nested_target_chain_guard` boundary.
+`inspect_staged_executable_shebang_nested_target_chain_guard(
+expected_nested_resolution, *, expected_target_requirements,
+expected_target_runtime, expected_target_staging, target_lease,
+expected_source_staging, source_lease, expected_nested_target_paths)` takes the
+exact expected nested-resolution receipt and path expectation, the exact
+staged-target requirements/runtime/staging chain and active same-PID target
+lease, and the exact source-staging receipt and active same-PID source lease.
+Frozen source-staging validation and active target-stage snapshots bind exact
+receipt objects, digests, retained descriptors, root metadata, lifecycle, and
+same-process lineage. Under `controller_inspected` /
+`known_source_chain_identity_and_staging_root_identity_v1` semantics, the
+boundary freshly reproduces the expected depth-2 resolution while a stronger
+private guard remains active inside its measurement and namespace checks.
+
+The known-source and known-target sets each include original filesystem and
+namespace-detached staged identities. The protected staging-root set includes
+the source root and the target root when used. Before candidate content is
+read, the guarded no-follow walk rejects `/` or any directory component that
+matches any protected root identity and rejects a leaf matching any original or
+staged source/target identity. The exclusions remain active during both
+complete measurements, descriptor reopen checks, and closing namespace
+validation. The guarded action receipt must exactly reproduce the expected
+nested resolution. Source and target snapshots are checked before and after
+receipt construction; the final guarded reproduction checks target descriptor
+anchors, re-anchors the source lease, and then performs its final guarded
+namespace validation. Fixed
+dispositions are `source_native_not_applicable`,
+`target_native_not_applicable`, and `known_chain_guard_verified`. Native-only
+input preserves exact rows and bindings with no guarded measurement and no
+nested-target or staging-root path lookup.
+
+The immutable
+`RepositoryExecutableShebangNestedTargetChainGuardReceipt` and its
+`RepositoryExecutableShebangNestedTargetChainGuardedMeasurement`,
+`RepositoryExecutableShebangNestedTargetChainGuardRequirement`, and
+`RepositoryExecutableShebangNestedTargetChainGuardBinding` records contain
+only digest/reference lineage, fixed outcomes, bounded identifiers, identity-
+set digests, counts, and byte totals. Raw paths, content, device/inode numbers,
+temporary names, and descriptors are absent. The deterministic unkeyed
+`guard_summary_ref` binds the identity-set digests, counts, nested receipt
+digest, and byte total for internal consistency only; authenticity remains
+explicitly unverified. This is exact known-identity and
+staging-root-identity exclusion only: it makes no source-path or staging-root-
+path claim, generic-cycle claim, or broader-protected-root claim; performs no
+staging, write, cleanup, lease mutation, subprocess, harness, model, or
+execution; and grants no authority, authorization, action receipt, proposal/
+worktree lineage, persistence, dispatch, routing, billing, capacity, circuit,
+live eligibility, or CLI/state/runner capability. The seventeenth resolver
+keeps its narrower contract. Separate Class 1 nested-target staging remains
+next, and only Class 0/1 effects remain enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -1283,8 +1336,9 @@ staged runtime-header manifest, privacy-bounded shebang-requirements receipt,
 privacy-bounded direct-shebang-target measurement receipt, temporary direct-
 target staging lease, bounded staged-target runtime-header manifest, and
 privacy-bounded staged-target shebang-requirements receipt, plus the fixed-
-depth privacy-bounded nested-target measurement receipt are implemented but
-are not proposal evidence or execution authority. Complete
+depth privacy-bounded nested-target measurement receipt and its separate
+privacy-bounded known-chain identity guard are implemented but are not
+proposal evidence or execution authority. Complete
 interpreter/dependency/runtime/toolchain closure, future `shell=False` action-
 boundary execution, and every worker-cell deliverable below remain deferred.
 Only Class 0/1 effects remain enabled.
@@ -1374,6 +1428,20 @@ Only Class 0/1 effects remain enabled.
     closure, freshness, immutability, authority, authorization, persistence,
     proposal/worktree integration, routing, billing, subprocess, harness,
     model, and execution remain deferred);
+  - controller-inspected nested-target known-chain guard (separate schema-v1
+    Class 0 receipt implemented; the exact expected nested resolution, exact
+    source- and target-stage receipts, active same-PID leases, and exact path
+    expectation are mandatory; original and detached staged source/target
+    identities plus the one or two staging-root identities present are excluded
+    inside both measurements and closing namespace checks before candidate reads;
+    native-only input performs no guarded measurement or nested/root-path
+    lookup; privacy-bounded records preserve exact requirement/binding lineage,
+    identity-set digests, fixed outcomes, bounded identifiers, counts, and byte
+    totals, while source-path/root-path exclusion, generic cycle closure,
+    broader protected-root closure, staging, writes, authority, authorization,
+    persistence, proposal/worktree integration, routing, billing, subprocess,
+    harness, model, and execution remain deferred; separate Class 1 nested-
+    target staging remains next);
   - protected and allowed paths;
   - generated/vendor exclusions (schema v2 validation implemented; operational
     consumption remains deferred);

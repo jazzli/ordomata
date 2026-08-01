@@ -550,6 +550,69 @@ lineage, persistence, dispatch, routing, billing, capacity, circuit, live
 eligibility, CLI/state/runner, or execution capability. Only Class 0/1 effects
 remain enabled.
 
+Implemented as the eighteenth bounded Phase 3 slice, the separate library-only
+schema-v1
+`ordomata.repository_executable_shebang_nested_target_chain_guard` API exposes
+`inspect_staged_executable_shebang_nested_target_chain_guard(
+expected_nested_resolution, *, expected_target_requirements,
+expected_target_runtime, expected_target_staging, target_lease,
+expected_source_staging, source_lease, expected_nested_target_paths)`. This
+Class 0 call requires the exact expected nested-resolution receipt and exact
+path expectation, the exact staged-target requirements/runtime/staging chain
+and active same-PID target lease, and the exact source-staging receipt and
+active same-PID source lease. Frozen source-staging mirrors and active target-
+stage snapshots validate the complete receipt, object-anchor, retained-file,
+root-metadata, lifecycle, identity-set, and same-process lineage before and
+around receipt construction.
+
+Under fixed `controller_inspected` /
+`known_source_chain_identity_and_staging_root_identity_v1` semantics, the call
+freshly reproduces the expected fixed-depth nested resolution with a private
+guard active inside the exact-spelling no-follow measurement engine. Its known
+identity sets include both the original and namespace-detached staged identity
+of every source executable and every direct shebang target. Its protected-root
+identity set contains the source staging root and the target staging root when
+the latter exists. A candidate walk fails before reading leaf bytes when `/`
+or any directory component matches any protected staging-root identity or
+when the leaf matches any known original or staged source/target identity.
+Those checks remain active across both complete measurements, descriptor reopen checks,
+and closing namespace validation. The freshly reproduced receipt must exactly
+equal the expected nested-resolution receipt. Source and target snapshots are
+checked before and after receipt construction; the final guarded reproduction
+checks target descriptor anchors, re-anchors the source lease, and then
+performs its final guarded namespace validation.
+
+Fixed dispositions are `source_native_not_applicable`,
+`target_native_not_applicable`, and `known_chain_guard_verified`. Source-native
+and target-native input preserves exact requirement/binding correspondence
+with no guarded measurement and no nested-target or staging-root path lookup;
+a native depth-1 target still receives the upstream descriptor validation
+needed to reproduce the nested resolution. The receipt contains
+`RepositoryExecutableShebangNestedTargetChainGuardedMeasurement`,
+`RepositoryExecutableShebangNestedTargetChainGuardRequirement`, and
+`RepositoryExecutableShebangNestedTargetChainGuardBinding` rows and fixes
+`requirement_count`, `command_count`, `known_chain_guard_verified_count`,
+`target_native_not_applicable_count`, `source_native_not_applicable_count`,
+`guarded_measurement_count`, `known_source_identity_count`,
+`known_target_identity_count`, `protected_staging_root_identity_count`, and
+`total_guarded_bytes`. The deterministic unkeyed `guard_summary_ref` binds the
+identity-set digests, counts, nested receipt digest, and byte total for internal
+consistency only; authenticity remains explicitly unverified.
+
+The immutable
+`RepositoryExecutableShebangNestedTargetChainGuardReceipt` and aggregate
+evidence expose only digest/reference lineage, fixed outcomes, bounded
+identifiers, identity-set digests, counts, and byte totals; raw paths, content,
+device/inode numbers, temporary names, and descriptors are absent. This API
+makes no source-path or staging-root-path exclusion claim, generic-cycle claim,
+or broader-protected-root claim. It stages or writes nothing, mutates or cleans
+up no lease, invokes no subprocess, harness, or model, and executes nothing. It
+grants no authority, authorization, action receipt, proposal/worktree lineage,
+persistence, dispatch, routing, billing, capacity, circuit, live eligibility,
+or CLI/state/runner integration. The seventeenth resolver's narrower schema-v1
+contract is unchanged. Separate Class 1 nested-target staging remains next,
+and only Class 0/1 effects remain enabled.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -791,6 +854,19 @@ bounded command identifiers, counts, and byte totals; it stops after one
 additional hop and supplies no generic cycle/protected-root closure, staging,
 persistence, proposal/worktree, routing, billing, live, subprocess, harness,
 model, or execution integration.
+
+The eighteenth bounded Phase 3 slice is the separate schema-v1 nested-target
+known-chain guard described above. It requires exact active source- and target-
+stage lineages and freshly reproduces the expected depth-2 resolution while
+excluding original and staged source/target identities and the one or two
+staging-root identities present before candidate reads and throughout closing
+checks.
+Native-only input performs no nested-target or staging-root path lookup. The
+privacy-bounded Class 0 result has no source-path/root-path, generic-cycle,
+broader-protected-root, staging, write, persistence, proposal/worktree,
+routing, billing, live, subprocess, harness, model, or execution integration.
+The seventeenth resolver remains unchanged; Class 1 nested-target staging is
+next.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and
