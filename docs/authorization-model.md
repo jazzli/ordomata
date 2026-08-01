@@ -635,9 +635,72 @@ perform staging, a write, cleanup, or lease mutation; or grant authority,
 authorization, an action receipt, proposal/worktree lineage, persistence,
 dispatch, routing, billing, capacity, circuit, live eligibility, CLI/state/
 runner, subprocess, harness, model, or execution capability. The seventeenth
-resolver remains a separate narrower PIP. A future Class 1 nested-target
-staging primitive must freshly consume this evidence at its own effect
-boundary; the current Class 0/1 ceiling is unchanged.
+resolver remains a separate narrower PIP. The nineteenth slice freshly
+consumes this evidence at its own separate Class 1 effect boundary; neither
+the guard nor its exact result becomes authority.
+
+The nineteenth bounded Phase 3 slice adds a separate Class 1 local staging
+primitive, not a PDP or PEP:
+`ordomata.repository_executable_shebang_nested_target_staging` exposes
+`stage_repository_executable_shebang_nested_target_bytes(
+registration, *, search_directories, expected_chain_guard,
+expected_nested_resolution, expected_target_requirements,
+expected_target_runtime, expected_target_staging, target_lease,
+expected_source_staging, source_lease, expected_nested_target_paths, lease)`.
+It requires the exact nested-resolution and known-chain-guard receipts, exact
+active same-PID source- and target-stage receipt/lease lineages, the exact
+nested-target path expectation, a freshly revalidated schema-v4 registration
+and search context,
+and a new caller-owned nested-target stage lease. Fixed `controller_copied` /
+`posix_shebang_nested_target_unlinked_readonly_v1` semantics replay the private
+guard at the action boundary and capture every unique depth-2 target through
+the same still-pinned guarded descriptor used for measurement. The action
+guard must exactly reproduce the expected guard; a complete post-stage guard
+replay must reproduce both. These are PIP evidence checks around a local
+effect, not an authorization decision or reusable permit.
+Only the first guarded action measurement invokes the capture sink; its later
+measurement, closing reproduction, and the post-stage replay are consumer-free.
+Capture is capped at 80 unique targets, 64 MiB per target, and 256 MiB total;
+the receipt admits at most 80 requirements and 80 command bindings.
+
+The caller-owned staging root must be exact, concrete, absolute,
+effective-user-owned, mode `0700`, empty, and path- and identity-disjoint from
+the freshly pinned repository/search roots, active source/target stage roots,
+and expected nested targets and their ancestors. Each unique nested target is
+copied once through an exclusive no-follow temporary regular file. Its name is
+unlinked and its directory synchronized before captured bytes are written;
+mode `0400`, synchronization, independent complete readback, writer closure,
+and retention only by a non-inheritable `O_RDONLY` descriptor follow. Exact
+ordered requirement and command lineage is preserved for shared targets.
+Source-native and target-native inputs create an active zero-file lease without
+inspecting or mutating the nested staging root.
+
+`RepositoryExecutableShebangNestedTargetStagingReceipt` carries exact staged-
+file, stage-requirement, and stage-binding records and binds expected, action,
+and post-stage guard digests, upstream receipt and identity-set lineage, the
+staging context, and bounded counts and byte totals. Canonical records and
+aggregate evidence disclose no raw path, content, identity number, temporary
+name, or descriptor. Digest equality and bounded sizes remain visible and can
+be guessable, so secrecy and unlinkability are not claimed. The process-local
+`RepositoryExecutableShebangNestedTargetStageLease` is same-PID, one-shot,
+noncopyable, nonserializable, and not canonical evidence.
+Explicit `cleanup_repository_executable_shebang_nested_target_stage` is
+idempotent, emits bounded `removed`, `already_absent_verified`, or
+`unverifiable` cleanup evidence, and fails closed on uncertainty; it never
+claims staging-root metadata restoration or secure erasure.
+
+The receipt records a temporary Class 1 local byte copy, not authority,
+authorization, or a PEP action receipt. No persistence, proposal/worktree
+lineage, dispatch, routing, billing, capacity, circuit, live eligibility,
+worker, CLI/state/runner, subprocess, harness, model, or execution capability
+is added. Copied bytes are not parsed or followed and no recursion beyond depth 2,
+interpreter/`env`/`PATH`/launcher/argument semantics, dependency/loader/
+runtime/toolchain closure, generic original-source-path or staging-root-path-
+domain exclusion beyond the explicit disjointness above, generic cycle or
+broader protected-root closure, freshness, immutability, authenticity,
+atomicity, provenance, invocability, same-UID/external-writer/fork/hardlink/
+mount-alias exclusion, crash cleanup, or secure erasure is established. The current Class
+0/1 ceiling is unchanged.
 
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
@@ -895,8 +958,16 @@ validation. Native-only input performs no nested-target or root-path lookup.
 The privacy-bounded Class 0 result is neither a PDP decision nor PEP receipt
 and grants no source-path/root-path, generic-cycle, broader-protected-root,
 staging, write, route, live, subprocess, harness, model, or execution
-capability. The seventeenth PIP is unchanged; separate Class 1 nested-target
-staging remains next.
+capability. The seventeenth PIP and public guard are unchanged.
+
+The nineteenth bounded Phase 3 slice adds the nested-target Class 1 staging
+primitive described above. It requires exact guarded same-descriptor capture,
+active source/target lease lineage, a protected owner-private root, unlinked
+mode-`0400` read-only descriptors, and matching action/post-stage guard
+replays. Native-only input is a zero-file, no-root-touch no-op. Its privacy-
+bounded receipt and fail-closed cleanup evidence are neither a PDP decision nor
+a PEP receipt and grant no proposal, route, billing, live, subprocess, harness,
+model, or execution capability.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and

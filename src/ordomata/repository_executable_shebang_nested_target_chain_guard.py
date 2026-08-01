@@ -34,6 +34,7 @@ from .repository_executable_shebang_nested_target_resolution import (
     RepositoryExecutableShebangNestedTargetRequirement,
     RepositoryExecutableShebangNestedTargetResolutionReceipt,
     _NestedTargetGuardContext,
+    _UniqueNestedTargetConsumer,
     _inspect_staged_executable_shebang_nested_targets,
     _receipt_projection as _nested_resolution_projection_v1,
 )
@@ -1728,7 +1729,7 @@ _BUILTIN_BUILD_GUARD_REQUIREMENTS = _build_guard_requirements
 _BUILTIN_BUILD_GUARD_BINDINGS = _build_guard_bindings
 
 
-def inspect_staged_executable_shebang_nested_target_chain_guard(
+def _inspect_staged_executable_shebang_nested_target_chain_guard(
     expected_nested_resolution: (
         RepositoryExecutableShebangNestedTargetResolutionReceipt
     ),
@@ -1744,6 +1745,9 @@ def inspect_staged_executable_shebang_nested_target_chain_guard(
     expected_source_staging: RepositoryExecutableStagingReceipt,
     source_lease: RepositoryExecutableStageLease,
     expected_nested_target_paths: tuple[Path, ...],
+    unique_nested_target_consumer: (
+        _UniqueNestedTargetConsumer | None
+    ) = None,
 ) -> RepositoryExecutableShebangNestedTargetChainGuardReceipt:
     """Verify exact known source-chain identities before any candidate read."""
 
@@ -1812,6 +1816,7 @@ def inspect_staged_executable_shebang_nested_target_chain_guard(
             lease=target_lease,
             expected_nested_target_paths=expected_nested_target_paths,
             guard_context=guard_context,
+            unique_nested_target_consumer=unique_nested_target_consumer,
         )
         action_canonical = _BUILTIN_NESTED_RESOLUTION_PROJECTION(action)
         if action_canonical != nested_canonical:
@@ -2053,6 +2058,42 @@ def inspect_staged_executable_shebang_nested_target_chain_guard(
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise
         raise _FIXED_VALIDATION_ERROR(_INVALID_MESSAGE) from None
+
+
+_BUILTIN_INSPECT_NESTED_TARGET_CHAIN_GUARD = (
+    _inspect_staged_executable_shebang_nested_target_chain_guard
+)
+
+
+def inspect_staged_executable_shebang_nested_target_chain_guard(
+    expected_nested_resolution: (
+        RepositoryExecutableShebangNestedTargetResolutionReceipt
+    ),
+    *,
+    expected_target_requirements: (
+        RepositoryExecutableShebangTargetRequirementsReceipt
+    ),
+    expected_target_runtime: (
+        RepositoryExecutableShebangTargetRuntimeManifestReceipt
+    ),
+    expected_target_staging: RepositoryExecutableShebangTargetStagingReceipt,
+    target_lease: RepositoryExecutableShebangTargetStageLease,
+    expected_source_staging: RepositoryExecutableStagingReceipt,
+    source_lease: RepositoryExecutableStageLease,
+    expected_nested_target_paths: tuple[Path, ...],
+) -> RepositoryExecutableShebangNestedTargetChainGuardReceipt:
+    """Verify exact known source-chain identities before candidate reads."""
+
+    return _BUILTIN_INSPECT_NESTED_TARGET_CHAIN_GUARD(
+        expected_nested_resolution,
+        expected_target_requirements=expected_target_requirements,
+        expected_target_runtime=expected_target_runtime,
+        expected_target_staging=expected_target_staging,
+        target_lease=target_lease,
+        expected_source_staging=expected_source_staging,
+        source_lease=source_lease,
+        expected_nested_target_paths=expected_nested_target_paths,
+    )
 
 
 __all__ = [
