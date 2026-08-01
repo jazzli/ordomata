@@ -860,6 +860,36 @@ subprocess, harness, model, loader invocation, or execution integration.
 Freshness, containment, runtime/toolchain completeness, and future execution
 remain deferred. Only Class 0/1 effects remain enabled.
 
+Implemented as the twenty-sixth bounded Phase 3 slice, the library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_loader_target_loader_requirements` API
+accepts only the exact target-runtime manifest, target-staging receipt, and
+active same-PID lease. It validates complete runtime/staging/file/requirement/
+command and retained-tuple correspondence, reproduces the runtime manifest
+before and after extraction, repeats the syntax measurement, and closes on
+the same active stage.
+
+Each unique detached loader target is fully remeasured before and after
+bounded ELF32/ELF64 `PT_INTERP` or thin Mach-O32/Mach-O64
+`LC_LOAD_DYLINKER` parsing. Fixed declared, absent, unsupported/fat, and
+non-native outcomes are implemented. Shared targets are parsed once but retain
+every exact upstream requirement and command binding; no-target input performs
+no descriptor read. Canonical evidence includes only fixed format, byte-order,
+image-kind, disposition, digest-only loader-path, bounded byte-count, count,
+and lineage facts. Raw paths, headers, content, identity numbers, names, and
+descriptors remain private, while deterministic digests remain correlatable
+and potentially guessable.
+
+This one-hop loader-of-loader syntax receipt resolves and follows no newly
+declared loader and provides no identity, authenticity, compatibility,
+invocability, authorization, action receipt, dependency/shared-library
+closure, freshness, or future-execution correspondence. It adds no path
+lookup, lease mutation/cleanup, fat-image selection, persistence, proposal/
+worktree, routing, billing, network, worker, subprocess, harness, model,
+loader invocation, or execution integration. Recursive closure, containment,
+and runtime/toolchain completeness remain deferred. Only Class 0/1 effects
+remain enabled.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -1153,6 +1183,12 @@ The twenty-fifth slice adds matching Class 0 runtime-header inspection of the
 detached loader copies. Two descriptor remeasurements around one bounded
 position-independent header read emit fixed digest-only classifications with
 no path, lease, subprocess, model, loader, or execution integration.
+
+The twenty-sixth slice adds matching Class 0 loader-of-loader declaration
+inspection. Fresh target-runtime reproduction and repeated descriptor
+measurements bind bounded ELF `PT_INTERP` or thin Mach-O
+`LC_LOAD_DYLINKER` syntax to exact target and command lineage without path,
+lease, subprocess, model, loader, or execution integration.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and

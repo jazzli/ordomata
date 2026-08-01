@@ -856,6 +856,34 @@ selection, persistence, proposal/worktree integration, routing, billing,
 network, worker, subprocess, model, loader invocation, or execution. The
 current Class 0/1 ceiling is unchanged.
 
+The twenty-sixth bounded Phase 3 slice adds another separate Class 0 PIP, not
+a PDP or PEP:
+`ordomata.repository_executable_native_loader_target_loader_requirements`.
+It requires the exact target-runtime manifest, target-staging receipt, and
+active same-PID lease. Exact runtime/staging/file/requirement/command and
+retained-tuple correspondence is mandatory; the target runtime is freshly
+reproduced before and after extraction, and the complete syntax result is
+remeasured twice before a closing lease snapshot.
+
+Each unique target has two full descriptor measurements around bounded
+ELF32/ELF64 `PT_INTERP` or thin Mach-O32/Mach-O64
+`LC_LOAD_DYLINKER` parsing. Fixed declared, absent, unsupported, and
+non-native outcomes are bound through every exact upstream requirement and
+command; shared targets deduplicate, and no-target input performs no descriptor
+read. Only digest-bound path references, bounded byte lengths, fixed syntax
+attributes, counts, and lineage leave the PIP. Raw paths, headers, content,
+identity numbers, names, and descriptors remain private, though deterministic
+digests remain correlatable and potentially guessable.
+
+The result is one-hop descriptive syntax evidence only. It does not resolve or
+follow a newly declared loader, grant authority, produce an authorization
+decision or action receipt, or prove loader identity, authenticity,
+compatibility, invocability, dependency/shared-library closure, freshness, or
+future correspondence. It performs no path lookup, lease mutation/cleanup,
+fat-image selection, persistence, proposal/worktree integration, routing,
+billing, network, worker, subprocess, harness, model, loader invocation, or
+execution. The current Class 0/1 ceiling is unchanged.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -1151,6 +1179,11 @@ dependency, shared-library, or execution authority.
 The twenty-fifth slice adds matching Class 0 runtime-header inspection of the
 detached loader copies. Its fixed digest-only classification remains
 descriptive PIP evidence, not a PDP decision or PEP receipt, and grants no
+loader, dependency, shared-library, or execution authority.
+
+The twenty-sixth slice adds matching Class 0 loader-of-loader declaration
+inspection. Its bounded digest-only ELF/Mach-O syntax and exact lineage remain
+descriptive PIP evidence, not a PDP decision or PEP receipt, and grant no path,
 loader, dependency, shared-library, or execution authority.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping

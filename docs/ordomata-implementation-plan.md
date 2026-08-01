@@ -853,6 +853,34 @@ invocation, or execution. Freshness, containment, runtime/toolchain
 completeness, and future-execution semantics remain deferred. Only Class 0/1
 effects remain enabled.
 
+The twenty-sixth bounded Phase 3 slice adds the separate library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_loader_target_loader_requirements`
+PIP. It accepts only the exact target-runtime manifest, target-staging receipt,
+and active same-PID lease. Complete runtime/staging/file/requirement/command
+and retained-tuple correspondence is validated; runtime evidence is freshly
+reproduced before and after extraction, the complete syntax result is
+remeasured twice, and the same active stage must close the operation.
+
+Each unique target is fully measured around bounded ELF32/ELF64 `PT_INTERP`
+or thin Mach-O32/Mach-O64 `LC_LOAD_DYLINKER` parsing. Shared targets
+deduplicate while every exact upstream requirement and command remains bound;
+no-target input performs no descriptor read. Fixed declared, absent,
+unsupported/fat, and non-native outcomes expose only digest-bound loader-path
+references, bounded byte lengths, syntax attributes, counts, and lineage. Raw
+paths, headers, content, identity numbers, names, and descriptors remain
+private, while deterministic digests remain correlatable and potentially
+guessable.
+
+This is one-hop historical loader-of-loader syntax, not resolution or recursive
+closure. It does not establish loader identity, authenticity, compatibility,
+invocability, authority, authorization, dependency/shared-library closure, or
+an action receipt. It adds no path lookup, lease mutation/cleanup, fat-image
+selection, persistence, proposal/worktree, routing, billing, network, worker,
+subprocess, harness, model, loader invocation, or execution. Freshness,
+containment, runtime/toolchain completeness, and future-execution semantics
+remain deferred. Only Class 0/1 effects remain enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -1656,6 +1684,20 @@ Only Class 0/1 effects remain enabled.
     shared-library/runtime/toolchain closure, freshness, authority,
     persistence, proposal/worktree integration, routing, billing, subprocess,
     harness, model, and execution remain deferred);
+  - controller-inspected staged native-loader target loader declarations
+    (separate schema-v1 Class 0 receipt implemented; exact target-runtime/
+    target-staging/active-lease anchoring, fresh runtime reproduction before
+    and after extraction, repeated complete descriptor remeasurement, bounded
+    ELF32/ELF64 `PT_INTERP` and thin Mach-O32/Mach-O64
+    `LC_LOAD_DYLINKER` parsing, fixed declared/absent/unsupported/non-native
+    outcomes, shared-target deduplication, exact requirement/command lineage,
+    and no-target zero-read behavior are implemented; raw loader paths,
+    headers, content, identities, names, and descriptors remain private, while
+    newly declared loader resolution/following, recursive closure, loader
+    identity/authenticity/compatibility/invocation, dependency/shared-library/
+    runtime/toolchain closure, freshness, authority, persistence, proposal/
+    worktree integration, routing, billing, subprocess, harness, model, and
+    execution remain deferred);
   - controller-measured direct absolute shebang targets (separate schema-v1
     Class 0 receipt implemented; exact requirements/runtime/staging/active-
     lease anchoring, canonical ASCII absolute targets, an exactly expected

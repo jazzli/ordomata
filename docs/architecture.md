@@ -1318,6 +1318,38 @@ harness/model/network/loader, and executes nothing. Freshness, containment,
 runtime/toolchain completeness, and future-action correspondence remain
 deferred. The Class 0/1 ceiling is unchanged.
 
+The twenty-sixth bounded Phase 3 slice is the separate library-only schema-v1
+Class 0
+`ordomata.repository_executable_native_loader_target_loader_requirements`
+PIP. It accepts the exact target-runtime manifest, exact target-staging
+receipt, and active same-PID lease. The controller validates their complete
+digest, object, file, requirement, command, and retained-tuple
+correspondence, freshly reproduces the runtime manifest before and after
+extraction, and repeats the complete syntax measurement before a closing
+active-stage snapshot.
+
+Each unique detached loader target is fully remeasured before and after
+bounded ELF32/ELF64 `PT_INTERP` or thin Mach-O32/Mach-O64
+`LC_LOAD_DYLINKER` parsing. Fat Mach-O and bounded unsupported layouts receive
+fixed unsupported outcomes; non-native targets receive a fixed not-applicable
+outcome. Shared target syntax is inspected once and bound to every exact
+upstream requirement and command. A no-target chain performs no descriptor
+read. Canonical records retain fixed format, byte-order, image-kind,
+disposition, digest-only loader-path, bounded byte-count, and exact lineage
+facts. Raw paths, headers, content, identity numbers, temporary names, and
+descriptors remain private, while deterministic digests remain correlatable
+and potentially guessable.
+
+This is one-hop historical loader-of-loader syntax evidence. A newly declared
+loader is not resolved or followed, and no compatibility, identity,
+authenticity, invocability, shared-library/dependency closure, authority,
+authorization, or action receipt is established. The PIP opens no path,
+mutates or cleans up no lease, selects no fat-image architecture, persists no
+state, integrates no proposal/worktree/route/worker, invokes no network,
+subprocess, harness, model, or loader, and executes nothing. Recursive closure,
+freshness, containment, runtime/toolchain completeness, and future-action
+correspondence remain deferred. The Class 0/1 ceiling is unchanged.
+
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
 It freshly revalidates a `RepositoryRegistration`, requires an existing
@@ -1613,6 +1645,12 @@ The twenty-fifth slice adds matching Class 0 runtime-header inspection of the
 detached loader copies. Two full descriptor remeasurements bracket one bounded
 position-independent header read; the fixed privacy-bounded classification
 adds no loader, dependency, subprocess, model, or execution capability.
+
+The twenty-sixth slice adds matching Class 0 loader-of-loader declaration
+inspection. Fresh runtime reproduction and repeated descriptor remeasurement
+bind bounded ELF `PT_INTERP` or thin Mach-O `LC_LOAD_DYLINKER` syntax to exact
+target and command lineage without path resolution, loader invocation,
+subprocess, model, or execution capability.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor
