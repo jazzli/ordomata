@@ -65,7 +65,7 @@ from .orchestrator import (
 from .paths import resolve_state_root
 from .redaction import DEFAULT_REDACTOR, contains_credential_material
 from .routing import ExecutionProfile, runner_overrides_for_profile
-from .runners.base import AgentRunner
+from .runners.base import AgentRunner, ControllerEventSink
 from .shadow_authorization import (
     build_comparison_review_artifact_publication_shadow_event,
     build_comparison_trial_admission_shadow_event,
@@ -1965,16 +1965,26 @@ async def run_controlled_comparison(
                 )
                 raise
             events_seen = 0
+            event_sink = ControllerEventSink()
+            persisted_events_seen = 0
 
-            async def event_sink(_event: AgentEvent) -> None:
-                nonlocal events_seen
-                events_seen += 1
-                # Model-controlled event type and payload are never persisted.
-                state.append_event(
-                    run_id,
-                    "runner_event_observed",
-                    {"ordinal": events_seen},
-                )
+            def persist_runner_event_observations() -> None:
+                nonlocal persisted_events_seen
+                while persisted_events_seen < event_sink.count:
+                    ordinal = persisted_events_seen + 1
+                    payload = {"ordinal": ordinal}
+                    _append_required_comparison_event(
+                        state,
+                        run_id,
+                        "runner_event_observed",
+                        payload,
+                        event_id=_comparison_controller_event_id(
+                            run_id,
+                            "runner_event_observed",
+                            payload,
+                        ),
+                    )
+                    persisted_events_seen = ordinal
 
             started_at = time.monotonic()
             result: RunnerExecutionResult | None = None
@@ -2010,6 +2020,11 @@ async def run_controlled_comparison(
                 if not isinstance(observed_result, RunnerExecutionResult):
                     raise ValidationError("runner returned an invalid result type")
                 result = observed_result
+                events_seen = event_sink.count
+                # Keep the callback memory-only until runner execution,
+                # subprocess cleanup, and live billing finalization finish.
+                # Model-controlled event content is never persisted.
+                persist_runner_event_observations()
                 identity_matches = (
                     result.run_id == run_id and result.runner_id == runner.runner_id
                 )
@@ -2236,6 +2251,12 @@ async def run_controlled_comparison(
                 outcomes.append(outcome)
                 del result, evaluation, redacted_output
             except Exception as exc:
+                events_seen = event_sink.count
+                try:
+                    persist_runner_event_observations()
+                except Exception as event_persistence_error:
+                    core_audit_persistence_error = True
+                    exc = event_persistence_error
                 failure_type = _exception_failure_type(exc)
                 publication_state_unknown = isinstance(
                     exc, _ComparisonArtifactPublicationUncertain
@@ -2361,6 +2382,12 @@ async def run_controlled_comparison(
                 # retain only the fixed code and fail closed on later trials.
                 stop_remaining = True
             except BaseException as _interrupted:
+                events_seen = event_sink.count
+                event_observation_cleanup_error: BaseException | None = None
+                try:
+                    persist_runner_event_observations()
+                except BaseException as event_persistence_error:
+                    event_observation_cleanup_error = event_persistence_error
                 subscription_interrupted = (
                     assessment.route is BillingRoute.SUBSCRIPTION_INCLUDED
                 )
@@ -2443,7 +2470,8 @@ async def run_controlled_comparison(
                 except BaseException as terminal_exc:
                     terminal_cleanup_error = terminal_exc
                 cleanup_error = (
-                    billing_cleanup_error
+                    event_observation_cleanup_error
+                    or billing_cleanup_error
                     or accounting_cleanup_error
                     or terminal_cleanup_error
                 )

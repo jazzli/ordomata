@@ -45,7 +45,12 @@ class FakeProbe:
 
 
 def result(command: tuple[str, ...], stdout: str) -> ProbeResult:
-    return ProbeResult(command=command, exit_code=0, stdout=stdout)
+    return ProbeResult(
+        command=command,
+        exit_code=0,
+        stdout=stdout,
+        containment_cleanup_verified=True,
+    )
 
 
 def verified_runners(environment: Mapping[str, str]):

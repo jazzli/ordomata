@@ -1,6 +1,13 @@
 """Portable subscription-harness runner adapters."""
 
-from .base import AgentRunner, CommandProbe, EventSink, ProbeResult
+from .base import (
+    AgentRunner,
+    CommandProbe,
+    CONTROLLER_EVENT_SINK_LIMIT,
+    ControllerEventSink,
+    EventSink,
+    ProbeResult,
+)
 from .claude import ClaudeRunner
 from .codex import CodexRunner
 from .mock import DeterministicMockRunner, MockRunner
@@ -15,6 +22,8 @@ __all__ = [
     "CodexCliRunner",
     "CodexRunner",
     "CommandProbe",
+    "CONTROLLER_EVENT_SINK_LIMIT",
+    "ControllerEventSink",
     "DeterministicMockRunner",
     "EventSink",
     "MockRunner",

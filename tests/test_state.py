@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import closing
+from contextlib import closing, contextmanager
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -24,6 +24,7 @@ from ordomata.state import (
     SQLiteStateStore,
     SQLiteBillingCircuitGuard,
     SecretPersistenceError,
+    StateStoreError,
 )
 
 
@@ -749,6 +750,74 @@ class SQLiteStateStoreTests(unittest.TestCase):
             circuit_breaker_required=False,
             broad_scope_required=False,
             reason_code="post_run_billing_evidence_unknown",
+        )
+        for lease_key in reservation.lease_keys:
+            self.assertIsNone(self.store.get_lease(lease_key))
+
+    def test_completion_rechecks_expiry_after_acquiring_write_lock(self) -> None:
+        clock = [100.0]
+        self.store.close()
+        self.store = SQLiteStateStore(self.database, clock=lambda: clock[0])
+        fingerprint = "e" * 64
+        reservation = self.store.try_reserve_billing_dispatch(
+            runner_id="codex",
+            account_identity_fingerprint=fingerprint,
+            profile_id="codex-review",
+            owner_id="billing/lock-delay-fixture",
+            ttl_seconds=5,
+            reservation_id="reservation-lock-delay-fixture",
+        )
+        self.assertIsNotNone(reservation)
+        assert reservation is not None
+        real_transaction = self.store._transaction
+
+        @contextmanager
+        def delayed_transaction():
+            with real_transaction() as connection:
+                clock[0] = 106.0
+                yield connection
+
+        with (
+            patch.object(self.store, "_transaction", delayed_transaction),
+            self.assertRaisesRegex(
+                StateStoreError,
+                "billing dispatch reservation was lost",
+            ),
+        ):
+            self.store.complete_billing_dispatch(
+                reservation,
+                run_id="run-lock-delay",
+                capacity_state=CapacityState.AVAILABLE,
+                capacity_reason_code="post_run_capacity_available",
+                circuit_breaker_required=False,
+                broad_scope_required=False,
+                reason_code="post_run_billing_evidence_unknown",
+            )
+
+        broad_capacity = self.store.latest_billing_capacity_event(
+            runner_id="codex",
+            account_identity_fingerprint=None,
+            profile_id=None,
+        )
+        self.assertIsNotNone(broad_capacity)
+        assert broad_capacity is not None
+        self.assertEqual(broad_capacity.capacity_state, CapacityState.UNKNOWN)
+        self.assertEqual(
+            broad_capacity.reason_code,
+            "billing_dispatch_reservation_lost",
+        )
+        self.assertEqual(broad_capacity.occurred_at, 106.0)
+        broad_circuit = self.store.current_billing_circuit(
+            runner_id="codex",
+            account_identity_fingerprint=None,
+            profile_id=None,
+        )
+        self.assertIsNotNone(broad_circuit)
+        assert broad_circuit is not None
+        self.assertEqual(broad_circuit.state, CircuitBreakerState.OPEN)
+        self.assertEqual(
+            broad_circuit.reason_code,
+            "billing_dispatch_reservation_lost",
         )
         for lease_key in reservation.lease_keys:
             self.assertIsNone(self.store.get_lease(lease_key))

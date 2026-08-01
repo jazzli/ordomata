@@ -73,6 +73,29 @@ class StaticSubscriptionRunner:
         return self.result_factory(request)
 
 
+class EventStaticSubscriptionRunner(StaticSubscriptionRunner):
+    async def execute(self, request, event_sink):
+        event_sink(
+            AgentEvent(
+                event_type="model.output",
+                payload={"private_source_text": "do not persist this"},
+            )
+        )
+        return self.result_factory(request)
+
+
+class EventThenExplodingMockRunner(MockRunner):
+    async def execute(self, request, event_sink):
+        del request
+        event_sink(
+            AgentEvent(
+                event_type="model.output",
+                payload={"private_source_text": "do not persist this"},
+            )
+        )
+        raise RuntimeError("private runner failure")
+
+
 class OrchestratorTests(unittest.TestCase):
     def _project(self, temporary: str) -> Path:
         root = Path(temporary)
@@ -974,6 +997,35 @@ class OrchestratorTests(unittest.TestCase):
                 json.dumps(inspection.to_mapping(), sort_keys=True),
             )
 
+    def test_runner_events_are_persisted_after_execution_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            with self.assertRaisesRegex(RuntimeError, "private runner failure"):
+                asyncio.run(
+                    run_chief_of_staff(
+                        root,
+                        runner=EventThenExplodingMockRunner(output={}),
+                        run_id="event-before-failure",
+                    )
+                )
+
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
+                events = state.list_events("event-before-failure")
+                observations = tuple(
+                    event
+                    for event in events
+                    if event.event_type == "runner_event_observed"
+                )
+                self.assertEqual(len(observations), 1)
+                self.assertEqual(observations[0].payload, {"ordinal": 1})
+                self.assertIs(
+                    state.current_status("event-before-failure"),
+                    RunStatus.FAILED,
+                )
+                serialized = "\n".join(event.payload_json for event in events)
+            self.assertNotIn("private_source_text", serialized)
+            self.assertNotIn("do not persist this", serialized)
+
     def test_credential_shaped_accepted_output_is_quarantined(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = self._project(temporary)
@@ -1435,6 +1487,93 @@ class OrchestratorTests(unittest.TestCase):
                         "task_attempt_admission_only",
                         "runner_model_dispatch_only",
                     ],
+                )
+
+    def test_live_event_persistence_failure_quarantines_and_opens_breaker(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._project(temporary)
+            preflight = self._codex_assessment()
+            build = self._subscription_result(root, preflight, preflight)
+            original_append_event = SQLiteStateStore.append_event
+
+            def reject_runner_observation(
+                store,
+                run_id,
+                event_type,
+                payload=None,
+                **kwargs,
+            ):
+                if event_type == "runner_event_observed":
+                    raise ConfigurationError(
+                        "injected runner-event persistence failure"
+                    )
+                return original_append_event(
+                    store,
+                    run_id,
+                    event_type,
+                    payload,
+                    **kwargs,
+                )
+
+            with patch.object(
+                SQLiteStateStore,
+                "append_event",
+                new=reject_runner_observation,
+            ):
+                with self.assertRaisesRegex(
+                    ConfigurationError,
+                    "injected runner-event persistence failure",
+                ):
+                    asyncio.run(
+                        run_chief_of_staff(
+                            root,
+                            runner=EventStaticSubscriptionRunner(
+                                preflight,
+                                build,
+                            ),
+                            run_id="live-event-persistence-failure",
+                            profile_id="codex.subscription.fixture",
+                        )
+                    )
+
+            with SQLiteStateStore(root / ".ordomata" / "state.sqlite3") as state:
+                run_id = "live-event-persistence-failure"
+                self.assertIs(
+                    state.current_status(run_id),
+                    RunStatus.QUARANTINED,
+                )
+                capacity = state.latest_billing_capacity_event(
+                    runner_id="codex",
+                    account_identity_fingerprint="b" * 64,
+                    profile_id="codex.subscription.fixture",
+                )
+                self.assertIsNotNone(capacity)
+                assert capacity is not None
+                self.assertIs(capacity.capacity_state, CapacityState.UNKNOWN)
+                self.assertEqual(
+                    capacity.reason_code,
+                    "post_run_billing_unknown",
+                )
+                broad = state.current_billing_circuit(
+                    runner_id="codex",
+                    account_identity_fingerprint=None,
+                    profile_id=None,
+                )
+                self.assertIsNotNone(broad)
+                assert broad is not None
+                self.assertIs(broad.state, CircuitBreakerState.OPEN)
+                events = state.list_events(run_id)
+                self.assertFalse(
+                    any(
+                        event.event_type == "runner_event_observed"
+                        for event in events
+                    )
+                )
+                self.assertEqual(
+                    events[-1].payload,
+                    {"phase": "runner_event_persistence"},
                 )
 
     def test_included_limit_is_recorded_without_paid_charge_or_breaker(self) -> None:

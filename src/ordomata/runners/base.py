@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -21,7 +21,34 @@ from ..models import (
 from ..redaction import DEFAULT_REDACTOR, Redactor
 
 
-EventSink = Callable[[AgentEvent], Awaitable[None] | None]
+EventSink = Callable[[AgentEvent], None]
+CONTROLLER_EVENT_SINK_LIMIT = 4096
+
+
+class ControllerEventSink:
+    """Sealed, count-only sink safe for timeout-critical live runners."""
+
+    __slots__ = ("_count",)
+
+    def __init__(self) -> None:
+        self._count = 0
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        del cls, kwargs
+        raise TypeError("ControllerEventSink cannot be subclassed")
+
+    @property
+    def count(self) -> int:
+        return self._count
+
+    def __call__(self, event: AgentEvent) -> None:
+        if not isinstance(event, AgentEvent):
+            raise ValidationError("Runner emitted an invalid event type.")
+        if self._count >= CONTROLLER_EVENT_SINK_LIMIT:
+            raise ValidationError(
+                "Runner event count exceeded the controller limit."
+            )
+        self._count += 1
 
 
 @runtime_checkable
@@ -48,13 +75,15 @@ class AgentRunner(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class ProbeResult:
-    """Bounded output from a non-model diagnostic subprocess."""
+    """Bounded output and explicit original-group cleanup evidence."""
 
     command: tuple[str, ...]
     exit_code: int
     stdout: str = ""
     stderr: str = ""
     timed_out: bool = False
+    output_limit_exceeded: bool = False
+    containment_cleanup_verified: bool = False
 
 
 @runtime_checkable
@@ -69,10 +98,15 @@ class CommandProbe(Protocol):
     ) -> ProbeResult: ...
 
 
-async def emit_event(event_sink: EventSink, event: AgentEvent) -> None:
+def emit_event(event_sink: EventSink, event: AgentEvent) -> None:
+    """Deliver one event through a synchronous runner callback."""
+
     result = event_sink(event)
-    if inspect.isawaitable(result):
-        await result
+    if result is None:
+        return
+    if inspect.iscoroutine(result):
+        result.close()
+    raise ValidationError("Runner event sinks must be synchronous and return None.")
 
 
 def parse_jsonl_event(
@@ -106,6 +140,8 @@ def parse_jsonl_event(
 __all__ = [
     "AgentRunner",
     "CommandProbe",
+    "CONTROLLER_EVENT_SINK_LIMIT",
+    "ControllerEventSink",
     "EventSink",
     "ProbeResult",
     "emit_event",

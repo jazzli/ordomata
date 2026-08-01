@@ -115,6 +115,42 @@ Codex execution uses the documented first-party headless CLI/app-server boundary
 
 Claude Code execution uses its documented first-party headless mode. It is eligible only after structured diagnostics jointly prove a paid Claude subscription/OAuth route and matching identity, current capacity is attested, and extra usage is attested disabled. API-key authentication and Bedrock, Vertex, Foundry, third-party, contradictory, free, or unknown routes are blocked. Safe mode and strict MCP isolation prevent project/user customizations from changing the effective workflow.
 
+Non-model command diagnostics, the Codex app-server billing diagnostic, and
+current live harness children use controller-owned POSIX process groups with
+bounded stdout/stderr, line/message/event, timeout, and cleanup handling.
+Custom probe results must affirm original-group cleanup; omission defaults to
+unverified. Timed-out diagnostic receipts are unusable even if TERM cleanup
+produces a zero exit, and containment-specific failures stop capability
+discovery. Live harnesses accept only the sealed, fixed-ceiling, count-only
+controller event sink; arbitrary callbacks fail before reservation or launch.
+SQLite receives only ordinal event observations after runner execution finishes.
+Controller schema/output operations use a pinned effective-user-owned mode-`0700`
+run-directory descriptor, and raw output is unlinked from that anchored
+namespace before it is decoded. The Codex billing diagnostic keeps stdout and
+stderr draining through cleanup, rejects
+late byte, line, or message-limit breaches, and returns only its bounded
+sanitized projection after cleanup and task settlement are proven. Any
+possible live launch with uncertain
+stream, deferred event persistence, output-file, launch, or original-group
+cleanup state withholds output, records UNKNOWN incremental-AI-charge evidence,
+quarantines the attempt, and requests a broad circuit before releasing its
+billing reservation.
+
+The reservation margin separately covers the maximum harness cleanup budget,
+bounded postflight inspection, durable finalization and retry, and scheduling
+slack. Current evidence is rechecked after reservation acquisition through the
+execution-and-cleanup horizon. Missing or over-budget postflight evidence is
+unsafe and therefore quarantines and opens the appropriate circuit.
+Reservation acquisition and completion sample time only after obtaining the
+SQLite write lock, so a lease that expires during lock contention fails closed.
+
+Original-group absence is not process-tree containment. Descendants that call
+`setsid()` or `setpgid()` can escape this lifecycle mechanism, and an operating-
+system spawn that never resolves cannot be both abandoned and safely
+reconciled. These limits are explicit: this control neither establishes the
+planned repository-worker boundary nor enables supervisor dispatch, broader
+permissions, a billing fallback, or any additional live eligibility.
+
 Other harnesses remain blocked until their billing route, account identity, included capacity, paid-continuation protection, safe headless controls, and post-run evidence can all be verified and encoded in a reviewed adapter.
 
 ## Testing and controlled comparisons

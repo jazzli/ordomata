@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 import json
+import math
 import time
 from typing import Any, Protocol
 
@@ -33,6 +34,15 @@ from ._harness import (
     validate_override_text,
 )
 from .base import parse_jsonl_event
+from .containment import (
+    CleanupResult,
+    ContainedProcess,
+    drain_bounded_stream,
+    iter_bounded_lines,
+    launch_contained_process,
+    terminate_contained_process,
+)
+from .process import ProbeContainmentError
 
 
 _ALLOWED_OVERRIDES = frozenset({"model", "reasoning_effort"})
@@ -44,6 +54,17 @@ _SUBSCRIPTION_PLAN_TYPES = frozenset(
 _USAGE_BASED_PLAN_TYPES = frozenset(
     {"self_serve_business_usage_based", "enterprise_cbp_usage_based"}
 )
+_MAX_BILLING_PROBE_TIMEOUT_SECONDS = 60.0
+_MAX_BILLING_PROBE_OUTPUT_BYTES = 1024 * 1024
+_MAX_BILLING_PROBE_LINE_BYTES = 64 * 1024
+_MAX_BILLING_PROBE_MESSAGE_COUNT = 256
+_BILLING_PROBE_TERM_GRACE_SECONDS = 0.5
+_BILLING_PROBE_KILL_GRACE_SECONDS = 0.5
+_BILLING_PROBE_STREAM_SETTLE_SECONDS = 0.5
+
+
+class _CodexBillingProbeLimitExceeded(RuntimeError):
+    """A diagnostic-free internal signal for controller limit breaches."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,7 +103,30 @@ class CodexAppServerBillingProbe:
         max_output_bytes: int = 128 * 1024,
         clock=time.time,
     ) -> None:
-        self._timeout_seconds = timeout_seconds
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds <= 0
+            or timeout_seconds > _MAX_BILLING_PROBE_TIMEOUT_SECONDS
+        ):
+            raise ValueError(
+                "timeout_seconds must be finite, positive, and no greater than "
+                f"{_MAX_BILLING_PROBE_TIMEOUT_SECONDS}"
+            )
+        if (
+            isinstance(max_output_bytes, bool)
+            or not isinstance(max_output_bytes, int)
+            or max_output_bytes < 1
+            or max_output_bytes > _MAX_BILLING_PROBE_OUTPUT_BYTES
+        ):
+            raise ValueError(
+                "max_output_bytes must be a positive integer no greater than "
+                f"{_MAX_BILLING_PROBE_OUTPUT_BYTES}"
+            )
+        if not callable(clock):
+            raise ValueError("clock must be callable")
+        self._timeout_seconds = float(timeout_seconds)
         self._max_output_bytes = max_output_bytes
         self._clock = clock
 
@@ -92,92 +136,148 @@ class CodexAppServerBillingProbe:
         *,
         environment: Mapping[str, str],
     ) -> CodexBillingEvidence | None:
-        process: asyncio.subprocess.Process | None = None
-        stderr_task: asyncio.Task[None] | None = None
+        contained: ContainedProcess | None = None
+        protocol_task: asyncio.Task[CodexBillingEvidence] | None = None
+        candidate_future: asyncio.Future[CodexBillingEvidence | None] | None = None
+        stderr_task: asyncio.Task[Any] | None = None
+        wait_task: asyncio.Task[int] | None = None
+        overflow_task: asyncio.Task[bool] | None = None
+        candidate: CodexBillingEvidence | None = None
+        failed = False
+        pending_interruption: BaseException | None = None
+        cleanup: CleanupResult | None = None
+        cleanup_cancellation_deferred = False
+        overflow_event = asyncio.Event()
         try:
             async with asyncio.timeout(self._timeout_seconds):
-                process = await asyncio.create_subprocess_exec(
-                    executable,
-                    "app-server",
-                    "--stdio",
-                    env=dict(environment),
+                contained = await launch_contained_process(
+                    (executable, "app-server", "--stdio"),
+                    environment=environment,
                     stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
                 )
+                process = contained.process
                 assert process.stdin is not None
                 assert process.stdout is not None
                 assert process.stderr is not None
                 stderr_task = asyncio.create_task(
-                    _discard_bounded(process.stderr, self._max_output_bytes)
+                    drain_bounded_stream(
+                        process.stderr,
+                        max_bytes=self._max_output_bytes,
+                        overflow_event=overflow_event,
+                    )
                 )
-                observed_bytes = [0]
-                await _write_rpc_request(
-                    process.stdin,
-                    {
-                        "id": 1,
-                        "method": "initialize",
-                        "params": {
-                            "clientInfo": {
-                                "name": "agentops-billing-probe",
-                                "version": "0",
-                            },
-                            "capabilities": {"experimentalApi": True},
-                        },
-                    },
+                candidate_future = asyncio.get_running_loop().create_future()
+                protocol_task = asyncio.create_task(
+                    _run_codex_billing_protocol(
+                        process.stdin,
+                        process.stdout,
+                        maximum_bytes=self._max_output_bytes,
+                        overflow_event=overflow_event,
+                        candidate_future=candidate_future,
+                        clock=self._clock,
+                    )
                 )
-                await _read_rpc_result(
-                    process.stdout,
-                    request_id=1,
-                    observed_bytes=observed_bytes,
-                    maximum_bytes=self._max_output_bytes,
-                )
-                await _write_rpc_request(
-                    process.stdin,
-                    {
-                        "id": 2,
-                        "method": "account/read",
-                        "params": {"refreshToken": False},
-                    },
-                )
-                account = await _read_rpc_result(
-                    process.stdout,
-                    request_id=2,
-                    observed_bytes=observed_bytes,
-                    maximum_bytes=self._max_output_bytes,
-                )
-                await _write_rpc_request(
-                    process.stdin,
-                    {"id": 3, "method": "account/rateLimits/read", "params": None},
-                )
-                rate_limits = await _read_rpc_result(
-                    process.stdout,
-                    request_id=3,
-                    observed_bytes=observed_bytes,
-                    maximum_bytes=self._max_output_bytes,
-                )
-                return sanitize_codex_billing_snapshot(
-                    account,
-                    rate_limits,
-                    observed_at=self._clock(),
-                )
-        except (OSError, TimeoutError, ValueError, json.JSONDecodeError):
+                wait_task = asyncio.create_task(process.wait())
+                overflow_task = asyncio.create_task(overflow_event.wait())
+                watched: set[asyncio.Future[Any]] = {
+                    candidate_future,
+                    protocol_task,
+                    stderr_task,
+                    wait_task,
+                    overflow_task,
+                }
+                while candidate is None:
+                    done, _ = await asyncio.wait(
+                        watched,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if overflow_event.is_set():
+                        raise _CodexBillingProbeLimitExceeded
+                    if stderr_task in done:
+                        stderr_result = stderr_task.result()
+                        if stderr_result.truncated:
+                            raise _CodexBillingProbeLimitExceeded
+                        watched.remove(stderr_task)
+                    if candidate_future in done:
+                        candidate = candidate_future.result()
+                        if candidate is None:
+                            raise ValueError(
+                                "Codex app-server billing protocol failed"
+                            )
+                        break
+                    if protocol_task in done:
+                        # Protocol completion before the candidate future is a
+                        # failure; a raised task result stays sanitized here.
+                        protocol_task.result()
+                        raise ValueError(
+                            "Codex app-server closed before billing evidence was ready"
+                        )
+                    if wait_task in done:
+                        # A clean response can already be buffered when the
+                        # direct process exits.  Keep consuming the bounded
+                        # protocol stream; EOF will otherwise fail it closed.
+                        wait_task.result()
+                        watched.remove(wait_task)
+        except asyncio.CancelledError as exc:
+            pending_interruption = exc
+        except Exception:
+            failed = True
+        except BaseException as exc:
+            pending_interruption = exc
+
+        if contained is not None:
+            cleanup, cleanup_cancellation_deferred = (
+                await _cleanup_codex_billing_process(contained)
+            )
+        if candidate_future is not None and not candidate_future.done():
+            candidate_future.cancel()
+        settle_cancellation_deferred, tasks_settled = (
+            await _settle_codex_billing_tasks(
+                protocol_task,
+                stderr_task,
+                wait_task,
+                overflow_task,
+            )
+        )
+
+        if contained is not None and (
+            cleanup is None or not cleanup.verified or not tasks_settled
+        ):
+            raise ProbeContainmentError from None
+        if pending_interruption is not None:
+            raise pending_interruption
+        if cleanup_cancellation_deferred or settle_cancellation_deferred:
+            raise asyncio.CancelledError
+        stderr_verified = False
+        if (
+            stderr_task is not None
+            and stderr_task.done()
+            and not stderr_task.cancelled()
+        ):
+            try:
+                stderr_verified = not stderr_task.result().truncated
+            except BaseException:
+                stderr_verified = False
+        protocol_verified = False
+        if (
+            protocol_task is not None
+            and protocol_task.done()
+            and not protocol_task.cancelled()
+        ):
+            try:
+                protocol_verified = protocol_task.result() == candidate
+            except BaseException:
+                protocol_verified = False
+        if (
+            failed
+            or candidate is None
+            or cleanup is None
+            or not protocol_verified
+            or not stderr_verified
+            or overflow_event.is_set()
+        ):
             return None
-        finally:
-            if process is not None:
-                if process.stdin is not None:
-                    process.stdin.close()
-                if process.returncode is None:
-                    process.terminate()
-                    try:
-                        await asyncio.wait_for(process.wait(), timeout=1.0)
-                    except TimeoutError:
-                        process.kill()
-                        await process.wait()
-                if stderr_task is not None:
-                    if not stderr_task.done():
-                        stderr_task.cancel()
-                    await asyncio.gather(stderr_task, return_exceptions=True)
+        return candidate
 
 
 class CodexRunner(FirstPartyHarnessRunner):
@@ -454,41 +554,236 @@ async def _write_rpc_request(
     await stdin.drain()
 
 
-async def _read_rpc_result(
+async def _run_codex_billing_protocol(
+    stdin: asyncio.StreamWriter,
     stdout: asyncio.StreamReader,
     *,
-    request_id: int,
-    observed_bytes: list[int],
     maximum_bytes: int,
+    overflow_event: asyncio.Event,
+    candidate_future: asyncio.Future[CodexBillingEvidence | None],
+    clock: Callable[[], float],
+) -> CodexBillingEvidence:
+    lines = iter_bounded_lines(
+        stdout,
+        max_total_bytes=maximum_bytes,
+        max_line_bytes=min(maximum_bytes, _MAX_BILLING_PROBE_LINE_BYTES),
+        overflow_event=overflow_event,
+    )
+    observed_messages = [0]
+    try:
+        await _write_rpc_request(
+            stdin,
+            {
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {
+                        "name": "agentops-billing-probe",
+                        "version": "0",
+                    },
+                    "capabilities": {"experimentalApi": True},
+                },
+            },
+        )
+        await _read_rpc_result(
+            lines,
+            request_id=1,
+            observed_messages=observed_messages,
+        )
+        await _write_rpc_request(
+            stdin,
+            {
+                "id": 2,
+                "method": "account/read",
+                "params": {"refreshToken": False},
+            },
+        )
+        account = await _read_rpc_result(
+            lines,
+            request_id=2,
+            observed_messages=observed_messages,
+        )
+        await _write_rpc_request(
+            stdin,
+            {"id": 3, "method": "account/rateLimits/read", "params": None},
+        )
+        rate_limits = await _read_rpc_result(
+            lines,
+            request_id=3,
+            observed_messages=observed_messages,
+        )
+        candidate = sanitize_codex_billing_snapshot(
+            account,
+            rate_limits,
+            observed_at=clock(),
+        )
+        if not candidate_future.done():
+            candidate_future.set_result(candidate)
+
+        # Keep the one stdout consumer alive until cleanup closes the pipe.
+        # This preserves aggregate-byte, per-line, and message-count
+        # enforcement for output buffered or emitted after the final reply.
+        async for line in lines:
+            _decode_rpc_message(line, observed_messages=observed_messages)
+        return candidate
+    except BaseException:
+        if not candidate_future.done():
+            candidate_future.set_result(None)
+        await _drain_failed_codex_protocol(lines, stdout)
+        raise
+
+
+async def _drain_failed_codex_protocol(
+    lines: AsyncIterator[bytes],
+    stdout: asyncio.StreamReader,
+) -> None:
+    """Release parser buffers and drain stdout without retaining diagnostics."""
+
+    close_lines = getattr(lines, "aclose", None)
+    if callable(close_lines):
+        try:
+            await close_lines()
+        except BaseException:
+            pass
+    try:
+        await drain_bounded_stream(stdout, max_bytes=0)
+    except BaseException:
+        pass
+
+
+async def _read_rpc_result(
+    lines: AsyncIterator[bytes],
+    *,
+    request_id: int,
+    observed_messages: list[int],
 ) -> Mapping[str, Any]:
-    while True:
-        line = await stdout.readline()
-        if not line:
-            raise ValueError("Codex app-server closed before a diagnostic response")
-        observed_bytes[0] += len(line)
-        if observed_bytes[0] > maximum_bytes:
-            raise ValueError("Codex app-server diagnostic output exceeded its bound")
-        message = json.loads(line)
-        if not isinstance(message, Mapping) or message.get("id") != request_id:
+    async for line in lines:
+        message = _decode_rpc_message(
+            line,
+            observed_messages=observed_messages,
+        )
+        if not isinstance(message, Mapping):
+            continue
+        response_id = message.get("id")
+        if (
+            isinstance(response_id, bool)
+            or not isinstance(response_id, int)
+            or response_id != request_id
+        ):
             continue
         result = message.get("result")
         if not isinstance(result, Mapping) or "error" in message:
             raise ValueError("Codex app-server diagnostic request failed")
         return result
+    raise ValueError("Codex app-server closed before a diagnostic response")
 
 
-async def _discard_bounded(
-    stream: asyncio.StreamReader,
-    maximum_bytes: int,
-) -> None:
-    observed = 0
+def _decode_rpc_message(
+    line: bytes,
+    *,
+    observed_messages: list[int],
+) -> Any:
+    observed_messages[0] += 1
+    if observed_messages[0] > _MAX_BILLING_PROBE_MESSAGE_COUNT:
+        raise _CodexBillingProbeLimitExceeded
+    try:
+        return json.loads(line)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise ValueError(
+            "Codex app-server returned an invalid diagnostic response"
+        ) from None
+
+
+async def _cleanup_codex_billing_process(
+    contained: ContainedProcess,
+) -> tuple[CleanupResult | None, bool]:
+    async def cleanup() -> CleanupResult:
+        stdin = contained.process.stdin
+        if stdin is not None:
+            try:
+                stdin.close()
+            except (OSError, RuntimeError):
+                pass
+        return await terminate_contained_process(
+            contained,
+            term_grace_seconds=_BILLING_PROBE_TERM_GRACE_SECONDS,
+            kill_grace_seconds=_BILLING_PROBE_KILL_GRACE_SECONDS,
+        )
+
+    cleanup_task = asyncio.create_task(cleanup())
+    cancellation_deferred = False
     while True:
-        chunk = await stream.read(min(8_192, maximum_bytes + 1 - observed))
-        if not chunk:
-            return
-        observed += len(chunk)
-        if observed > maximum_bytes:
-            return
+        try:
+            return await asyncio.shield(cleanup_task), cancellation_deferred
+        except asyncio.CancelledError:
+            if cleanup_task.cancelled():
+                return None, True
+            cancellation_deferred = True
+        except BaseException:
+            return None, cancellation_deferred
+
+
+async def _settle_codex_billing_tasks(
+    protocol_task: asyncio.Task[Any] | None,
+    stderr_task: asyncio.Task[Any] | None,
+    wait_task: asyncio.Task[Any] | None,
+    overflow_task: asyncio.Task[Any] | None,
+) -> tuple[bool, bool]:
+    """Drain post-cleanup tasks, then cancel them within a fixed budget."""
+
+    drained = tuple(
+        task
+        for task in (protocol_task, stderr_task, wait_task)
+        if task is not None
+    )
+    present = drained + (() if overflow_task is None else (overflow_task,))
+    if not present:
+        return False, True
+
+    # The overflow watcher has no EOF condition.  The remaining tasks must be
+    # allowed to observe the pipe closures caused by verified process cleanup;
+    # otherwise a limit crossed just after the final RPC response could be
+    # hidden by eagerly cancelling the stderr drainer.
+    if overflow_task is not None and not overflow_task.done():
+        overflow_task.cancel()
+    graceful = tuple(task for task in drained if not task.done())
+    cancellation_deferred = False
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _BILLING_PROBE_STREAM_SETTLE_SECONDS
+    while graceful and not all(task.done() for task in graceful):
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            break
+        try:
+            await asyncio.wait(
+                graceful,
+                timeout=remaining,
+                return_when=asyncio.ALL_COMPLETED,
+            )
+        except asyncio.CancelledError:
+            cancellation_deferred = True
+
+    for task in present:
+        if not task.done():
+            task.cancel()
+    settlement = asyncio.gather(*present, return_exceptions=True)
+    deadline = loop.time() + _BILLING_PROBE_STREAM_SETTLE_SECONDS
+    while not settlement.done():
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            for task in present:
+                if not task.done():
+                    task.cancel()
+            return cancellation_deferred, False
+        try:
+            await asyncio.wait(
+                (settlement,),
+                timeout=remaining,
+                return_when=asyncio.ALL_COMPLETED,
+            )
+        except asyncio.CancelledError:
+            cancellation_deferred = True
+    return cancellation_deferred, True
 
 
 def sanitize_codex_billing_snapshot(
