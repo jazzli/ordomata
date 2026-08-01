@@ -683,6 +683,38 @@ invocability, same-UID/external-writer/fork/hardlink/
 mount-alias exclusion, crash cleanup, or secure erasure. Only Class 0/1 effects
 remain enabled.
 
+Implemented as the twentieth bounded Phase 3 slice, the library-only schema-v1
+Class 0
+`ordomata.repository_executable_shebang_nested_target_runtime_manifest` API
+exposes `inspect_staged_executable_shebang_nested_target_runtime_manifest(
+expected_nested_target_staging, *, lease)`. It accepts only the exact nested-
+target staging receipt held by its active same-PID lease and validates its
+canonical digest and object anchors, the exact retained-file tuple and file
+objects, the stored owner-mode-`0700` root context, and each detached mode-
+`0400`, link-count-zero, non-inheritable `O_RDONLY` descriptor. It opens no
+path, changes no lease state, and performs no cleanup.
+
+Each unique retained descriptor is fully remeasured while at most 4,096 header
+bytes are captured, read again by bounded position-independent `pread`, and
+fully remeasured again before a closing lease snapshot. Fixed classification
+covers ELF, Mach-O, bounded ASCII POSIX shebang, unsupported shebang, and
+unknown bytes. Valid shebang directives leave only digest references. The
+immutable runtime-file, runtime-requirement, runtime-binding, and manifest
+records preserve complete registration, source, target, nested-resolution,
+known-chain-guard, and nested-staging lineage with bounded file, requirement,
+command, classification, and byte totals. Source-native and target-native
+inputs yield zero runtime files and zero descriptor reads.
+
+Canonical records and evidence exclude raw paths, headers, content, device/
+inode values, temporary names, and descriptor numbers. This historical Class
+0 result is non-authorizing and adds no write, cleanup, persistence, proposal/
+worktree, route, billing, capacity, circuit, live, network, worker, subprocess,
+harness, model, or execution integration. It follows no shebang, recurses no
+further than depth 2, and proves no interpreter/argument/dependency/loader/
+toolchain semantics, freshness, immutability, authenticity, provenance,
+invocability, alias exclusion, containment, or future execution
+correspondence. Only Class 0/1 effects remain enabled.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -945,6 +977,12 @@ post-stage guard replays retain the measured depth-2 bytes. Native-only input
 is a zero-file, no-root-touch no-op. Privacy-bounded staging and explicit fail-
 closed cleanup evidence add no authority, persistence, proposal/worktree,
 routing, billing, live, subprocess, harness, model, or execution integration.
+
+The twentieth slice adds the matching Class 0 nested-target runtime-header
+inspection. Two full descriptor remeasurements around a bounded header read,
+fixed privacy-bounded classifications, complete lineage, and native-only zero-
+read behavior are implemented without adding freshness, authority, routing,
+worker, subprocess, harness, model, or execution integration.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and

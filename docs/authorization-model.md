@@ -702,6 +702,33 @@ atomicity, provenance, invocability, same-UID/external-writer/fork/hardlink/
 mount-alias exclusion, crash cleanup, or secure erasure is established. The current Class
 0/1 ceiling is unchanged.
 
+The twentieth bounded Phase 3 slice adds a separate Class 0 PIP, not a PDP or
+PEP: `ordomata.repository_executable_shebang_nested_target_runtime_manifest`.
+Its `inspect_staged_executable_shebang_nested_target_runtime_manifest(
+expected_nested_target_staging, *, lease)` boundary requires the exact nested-
+stage receipt anchored by an active same-PID lease and independently validates
+the immutable receipt/object anchors, retained-file tuple, stored root context,
+and every detached mode-`0400`, link-count-zero, non-inheritable `O_RDONLY`
+descriptor. It opens no path and performs no lease mutation or cleanup.
+
+The PIP fully rehashes each retained descriptor around a separate bounded
+at-most-4,096-byte header read and then requires a closing active-lease
+snapshot. Its fixed ELF, Mach-O, POSIX-shebang, unsupported-shebang, and unknown
+classifications are descriptive attributes only. A valid bounded ASCII
+directive is exposed only as a digest reference. Exact runtime-file,
+requirement, and binding records retain the complete nested-staging and known-
+chain lineage; source-native and target-native cases return zero files without
+reading a descriptor.
+
+Neither a clean receipt nor its Class 0 evidence grants authority, satisfies
+fresh authorization, or becomes an action receipt. Raw paths, headers, content,
+identity numbers, temporary names, and descriptors remain absent from canonical
+evidence. The boundary adds no write, persistence, proposal/worktree, dispatch,
+route, billing, live, network, worker, subprocess, harness, model, or execution
+capability and establishes no recursive interpreter or dependency semantics,
+immutability, authenticity, provenance, invocability, containment, or future-
+action correspondence. The current Class 0/1 ceiling is unchanged.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -968,6 +995,11 @@ replays. Native-only input is a zero-file, no-root-touch no-op. Its privacy-
 bounded receipt and fail-closed cleanup evidence are neither a PDP decision nor
 a PEP receipt and grant no proposal, route, billing, live, subprocess, harness,
 model, or execution capability.
+
+The twentieth slice adds the matching Class 0 nested-target runtime-header PIP.
+Its exact active-lease remeasurement and privacy-bounded classification receipt
+remain descriptive evidence, not a PDP decision or PEP receipt, and grant no
+route, worker, subprocess, harness, model, or execution capability.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and

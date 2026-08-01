@@ -1139,6 +1139,37 @@ authenticity, provenance, invocability, same-UID/external-writer/fork/
 hardlink/mount-alias exclusion, crash cleanup, or secure erasure. The Class
 0/1 ceiling is unchanged.
 
+The twentieth bounded Phase 3 slice is the separate library-only schema-v1
+Class 0
+`ordomata.repository_executable_shebang_nested_target_runtime_manifest` PIP.
+`inspect_staged_executable_shebang_nested_target_runtime_manifest(
+expected_nested_target_staging, *, lease)` accepts only the exact nested-stage
+receipt anchored by an active same-PID lease. The frozen proof graph checks the
+receipt and object anchors, unchanged retained-file tuple, staging-root context
+from stored metadata, and every detached mode-`0400`, link-count-zero,
+non-inheritable `O_RDONLY` descriptor. It performs no path lookup, lease
+mutation, or cleanup.
+
+For each unique retained file the inspector completes one full hash while
+capturing at most 4,096 header bytes, a separate position-independent bounded
+header read, a second full remeasurement, and a closing lease snapshot. The
+fixed classifications are ELF, Mach-O, valid bounded ASCII POSIX shebang,
+unsupported shebang, and unknown. Only a digest reference to a valid shebang
+directive is retained. Runtime-file, runtime-requirement, and command-binding
+records preserve the complete nested-staging, guard, target, source, and
+registration lineage and fixed source-/target-native no-op outcomes. Native-
+only receipts contain zero files and cause zero descriptor reads.
+
+Canonical records and aggregate evidence contain no raw path, header, content,
+device/inode value, temporary name, or descriptor number. This is a Class 0
+historical inspection, not current freshness, authority, authorization, or an
+action receipt. It adds no write, cleanup, persistence, proposal/worktree,
+dispatch, route, billing, live, network, worker, subprocess, harness, model, or
+execution path and establishes no recursion beyond depth 2 or interpreter,
+argument, dependency, loader, runtime, toolchain, immutability, authenticity,
+provenance, invocability, alias, containment, or future-execution semantics.
+The Class 0/1 ceiling is unchanged.
+
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
 It freshly revalidates a `RepositoryRegistration`, requires an existing
@@ -1401,6 +1432,12 @@ replays preserve the depth-2 bytes for later controller inspection. Native-
 only input is a zero-file, no-root-touch no-op. Privacy-bounded staging and
 cleanup receipts grant no authority, proposal/worktree, persistence, route,
 billing, live, subprocess, harness, model, or execution capability.
+
+The twentieth slice adds the matching Class 0 nested-target runtime-header PIP.
+It twice remeasures only the active detached descriptors around a bounded
+header read, emits fixed privacy-bounded classification and lineage evidence,
+and preserves native-only zero-read behavior. It adds no authority, route,
+worker, subprocess, harness, model, or execution capability.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor
