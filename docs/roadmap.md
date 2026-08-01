@@ -695,6 +695,32 @@ parallel because it cannot exercise worker authority.
   harness, model, loader invocation, or execution capability. Freshness,
   runtime/toolchain completeness, containment, and future-execution semantics
   remain deferred. Only Class 0/1 effects remain enabled.
+- The twenty-fourth bounded Phase 3 slice implements the separate library-only
+  schema-v1 Class 1
+  `ordomata.repository_executable_native_loader_target_staging` primitive.
+  Its staging API requires the exact loader-target resolution/requirements/
+  runtime/source-stage chain, active same-PID source lease, exact loader paths,
+  freshly revalidated schema-v4 registration and search context, a fresh
+  caller-scoped target lease, and an existing empty owner mode-0700 root
+  outside every protected repository, search, source-stage, and target path.
+  Each unique loader target is copied through the still-pinned action-
+  measurement descriptor. The unpredictable private copy is synchronized,
+  reopened and fully read back, reduced to mode 0400, unlinked, and retained
+  through a non-inheritable read-only descriptor. Shared targets deduplicate;
+  the full target-resolution and protected-root chain is rechecked after
+  staging. No-target input creates an active empty lease without root access.
+  Cleanup is explicit, idempotent, receipt-bound, and fail-closed on uncertain
+  namespace absence or descriptor release.
+  Public records retain digest-only lineage, counts, and byte totals; raw
+  paths, bytes, names, descriptors, and identity numbers stay private, while
+  deterministic digests remain correlatable and potentially guessable. The
+  read-only detached copies are not immutable and do not exclude same-UID
+  writers, external descriptors, hardlink/mount aliases, crash cleanup, or
+  secure-erasure failure. The primitive grants no authority and adds no loader
+  authenticity, parsing/invocation, architecture selection, shared-library/
+  dependency closure, persistence, routing, billing, network, worker,
+  subprocess, harness, model, or execution capability. Only Class 0/1 effects
+  remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

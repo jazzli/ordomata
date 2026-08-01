@@ -803,6 +803,37 @@ loader invocation, or execution integration. Freshness, provenance,
 invocability, runtime/toolchain completeness, containment, and future execution
 remain deferred. Only Class 0/1 effects remain enabled.
 
+Implemented as the twenty-fourth bounded Phase 3 slice, the library-only
+schema-v1 Class 1
+`ordomata.repository_executable_native_loader_target_staging` API stages the
+exact measured native-loader targets into a fresh caller-scoped lease. It
+requires the exact loader-target resolution/requirements/runtime/source-stage
+chain, active same-PID source lease, exact loader paths, freshly revalidated
+schema-v4 registration and search context, and an existing empty owner mode-
+0700 target root outside all pinned repository, search, source-stage, and
+target paths.
+
+Each unique target is copied through the still-pinned action-measurement
+descriptor into an unpredictable private file, synchronized, reopened and
+fully read back, reduced to mode 0400, unlinked, and retained through a non-
+inheritable read-only descriptor. Shared declarations deduplicate. The exact
+target-resolution chain, source lease, protected directories, detached content,
+metadata, and descriptors are rechecked after staging. A no-target chain yields
+an active empty lease without touching the target root. Explicit idempotent
+cleanup is receipt-bound and fails closed when owned-name absence or descriptor
+release cannot be proved.
+
+Canonical records expose only digest-bound lineage, counts, and byte totals;
+raw paths, content, temporary names, descriptors, and identity numbers remain
+private, while deterministic digests remain correlatable and potentially
+guessable. Read-only detached descriptors are not immutable: same-UID writers,
+external descriptors, hardlink/mount aliases, fork/crash cleanup, and secure
+erasure remain unproved. The API adds no loader authenticity, parsing or
+invocation, architecture selection, dependency/shared-library closure,
+persistence, proposal/worktree, routing, billing, network, worker, subprocess,
+harness, model, or execution integration. Only Class 0/1 effects remain
+enabled.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -1086,6 +1117,11 @@ The twenty-third slice adds matching Class 0 declaration-bound loader-target
 measurement. Exact expected paths must reproduce declaration digests before
 two no-follow measurements; digest-only file evidence adds no loader,
 dependency, shared-library, subprocess, model, or execution integration.
+
+The twenty-fourth slice adds matching Class 1 native-loader target staging.
+Same-descriptor capture, unlinked mode-0400 read-only copies, post-stage chain
+replay, and fail-closed cleanup are implemented without loader authenticity,
+dependency closure, persistence, subprocess, model, or execution integration.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and

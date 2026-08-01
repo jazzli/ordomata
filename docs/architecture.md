@@ -1258,6 +1258,38 @@ or execution. Runtime/toolchain completeness, provenance, invocability,
 containment, and future-action correspondence remain deferred. The Class 0/1
 ceiling is unchanged.
 
+The twenty-fourth bounded Phase 3 slice is the separate library-only schema-v1
+Class 1 `ordomata.repository_executable_native_loader_target_staging`
+primitive. Its staging API consumes the exact loader-target resolution,
+loader-requirements, runtime-manifest, and source-staging chain; the active
+same-PID source lease; the exact loader-path tuple; a freshly revalidated
+schema-v4 registration and search context; and a fresh caller-scoped target
+lease. The caller-provided target-staging root must already be an empty,
+owner-controlled mode-0700 directory disjoint from every pinned repository,
+search, source-stage, and loader-target path.
+
+During a fresh action-bound target remeasurement, the still-pinned unique file
+descriptor is passed directly to a bounded copy sink. The sink writes an
+unpredictably named mode-0400 copy, synchronizes it, reopens and fully reads it
+back, unlinks the name, and retains only a non-inheritable read-only descriptor.
+Content, metadata, namespace, protected-root, source-lease, and complete
+target-resolution correspondence are rechecked after staging. Duplicate
+declarations share one retained copy. A zero-target chain establishes an active
+empty lease without touching the candidate root. Cleanup is explicit,
+idempotent, receipt-bound, and fail-closed on any unproved owned-name or
+descriptor release.
+
+The target-stage lease provides a namespace-detached point-in-time byte copy,
+not immutability, authenticity, authority, or future freshness. Same-UID
+writes through other descriptors, external hardlink or mount aliases, fork or
+crash behavior, and secure erasure remain unproved. Public records omit raw
+paths, bytes, temporary names, descriptors, and identity numbers, although
+deterministic digests remain correlatable and potentially guessable. No loader
+is parsed or invoked; no fat-image architecture, shared-library/dependency
+closure, persistence, proposal/worktree integration, dispatch, route, billing,
+network, worker, subprocess, harness, model, or execution is added. The Class
+0/1 ceiling is unchanged.
+
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
 It freshly revalidates a `RepositoryRegistration`, requires an existing
@@ -1542,6 +1574,12 @@ The twenty-third slice adds the matching Class 0 native-loader target-
 measurement PIP. Exact expected paths must reproduce the declaration digests
 before two no-follow measurements; only digest-bound identity/content evidence
 is returned, and no loader, shared library, dependency, or process is invoked.
+
+The twenty-fourth slice adds matching Class 1 native-loader target staging.
+The same pinned action-measurement descriptor supplies each unique unlinked
+mode-0400 read-only copy; post-stage chain replay and explicit cleanup preserve
+correspondence without adding loader, dependency, subprocess, model, or
+execution capability.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor

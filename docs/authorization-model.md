@@ -804,6 +804,35 @@ subprocess, harness, model, loader invocation, or execution. Runtime/toolchain
 completeness and future-action semantics remain deferred. The current Class
 0/1 ceiling is unchanged.
 
+The twenty-fourth bounded Phase 3 slice adds a separate Class 1 local-draft
+primitive, not a PDP or PEP:
+`ordomata.repository_executable_native_loader_target_staging`. A caller that
+already holds suitable Class 1 authority must provide the exact loader-target
+resolution chain and paths, active source lease, revalidated schema-v4
+registration/search context, disjoint empty owner-controlled mode-0700 staging
+root, and fresh caller-scoped target lease. None of those inputs grants or
+derives authority inside the primitive.
+
+The primitive copies each unique target only through the same pinned descriptor
+used by a fresh action-bound measurement. After synchronized write, full
+readback, mode reduction, and unlink, the controller retains a non-inheritable
+read-only descriptor and replays the complete target-resolution and protected-
+root checks. The resulting digest-only receipt binds expected, action, and
+post-stage evidence plus every requirement and command. A no-target outcome
+creates an active empty lease without touching the candidate root. Explicit
+idempotent cleanup issues bounded evidence and treats any unproved namespace or
+descriptor release as cleanup uncertainty.
+
+These are historical Class 1 copy facts, not loader authenticity, authorization
+for another action, a PEP action receipt, immutability, dependency closure, or
+future freshness. Raw paths and bytes remain private, while deterministic
+digests can still be correlated or guessed. Same-UID writers, external
+descriptors, hardlink/mount aliases, fork/crash cleanup, and secure erasure are
+not excluded. No architecture selection, loader parsing or invocation, shared-
+library traversal, persistence, dispatch, routing, billing, network, worker,
+subprocess, model, or execution authority is introduced. The current Class
+0/1 ceiling is unchanged.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -1090,6 +1119,11 @@ The twenty-third slice adds the matching Class 0 declaration-bound loader-
 target measurement PIP. Its exact no-follow file facts remain descriptive
 evidence, not a PDP decision or PEP receipt, and grant no loader, dependency,
 shared-library, or execution authority.
+
+The twenty-fourth slice adds matching Class 1 native-loader target staging.
+Its same-descriptor unlinked read-only copies and cleanup facts remain local-
+draft evidence, not a PDP decision or PEP action receipt, and grant no loader,
+dependency, shared-library, or execution authority.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and

@@ -795,6 +795,37 @@ provenance, invocability, runtime/toolchain completeness, containment, and
 future-execution semantics remain deferred. Only Class 0/1 effects remain
 enabled.
 
+The twenty-fourth bounded Phase 3 slice adds the separate library-only
+schema-v1 Class 1
+`ordomata.repository_executable_native_loader_target_staging` primitive. Its
+API requires the exact loader-target resolution/requirements/runtime/source-
+stage chain, active same-PID source lease, exact loader paths, freshly
+revalidated schema-v4 registration and search context, an existing empty owner
+mode-0700 target root outside every protected path, and a fresh caller-scoped
+target-stage lease. The primitive does not perform authorization; the caller
+must already hold the required Class 1 authority.
+
+The fresh action-bound measurement passes each still-pinned unique target
+descriptor directly to the bounded copier. An unpredictable private copy is
+synchronized, reopened and fully read back, reduced to mode 0400, unlinked,
+and retained through a non-inheritable read-only descriptor. Shared targets are
+copied once. A complete post-stage target-resolution replay plus protected-root,
+source-lease, content, metadata, namespace, and descriptor anchors closes the
+handoff. No-target input produces an active empty lease without root access.
+Explicit idempotent cleanup remains fail-closed when namespace absence or
+descriptor release is uncertain.
+
+The resulting digest-only Class 1 receipt is historical local-draft evidence,
+not authority, action authorization, loader authenticity, immutability,
+dependency closure, or future freshness. Raw paths, bytes, names, descriptors,
+and identity numbers are excluded, but deterministic digests remain
+correlatable and potentially guessable. Same-UID writers, external descriptors,
+hardlink/mount aliases, crash cleanup, and secure erasure remain unproved. No
+fat-image architecture selection, loader parsing or invocation, shared-library
+traversal, persistence, proposal/worktree integration, routing, billing,
+network, worker, subprocess, harness, model, or execution is introduced. Only
+Class 0/1 effects remain enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -1575,6 +1606,16 @@ Only Class 0/1 effects remain enabled.
     content and exact requirement/command lineage, while raw paths/bytes,
     loader authenticity/invocation, fat-image architecture selection, shared-
     library/dependency/runtime/toolchain closure, freshness, authority,
+    persistence, proposal/worktree integration, routing, billing, subprocess,
+    harness, model, and execution remain deferred);
+  - controller-copied direct native-loader target bytes (separate schema-v1
+    Class 1 caller-scoped lease implemented; exact expected/action/post-stage
+    target-resolution and active upstream chain, same-descriptor capture,
+    protected roots, unique unlinked mode-`0400` non-inheritable read-only
+    copies, no-target zero-root behavior, and explicit fail-closed cleanup are
+    implemented; raw paths/bytes/names/descriptors remain private, while
+    loader authenticity/parsing/invocation, immutability, fat-image selection,
+    shared-library/dependency/runtime/toolchain closure, authority,
     persistence, proposal/worktree integration, routing, billing, subprocess,
     harness, model, and execution remain deferred);
   - controller-measured direct absolute shebang targets (separate schema-v1
