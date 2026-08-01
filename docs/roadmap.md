@@ -597,6 +597,32 @@ parallel because it cannot exercise worker authority.
   staging-root path-domain, generic-cycle, broader-protected-root, freshness,
   atomicity, immutability, provenance, invocability, writer/fork/alias, crash-
   cleanup, or secure-erasure gaps. Only Class 0/1 effects remain enabled.
+- The twentieth bounded Phase 3 slice implements the separate library-only
+  schema-v1 Class 0
+  `ordomata.repository_executable_shebang_nested_target_runtime_manifest`
+  PIP. `inspect_staged_executable_shebang_nested_target_runtime_manifest(
+  expected_nested_target_staging, *, lease)` accepts only the exact nested-
+  stage receipt held by an active same-PID lease. It validates receipt and
+  object anchors, the exact retained-file tuple, stored owner-private root
+  context, and each detached mode-`0400`, link-count-zero, non-inheritable
+  `O_RDONLY` descriptor without opening a path or mutating or cleaning the
+  lease.
+  Each unique descriptor is fully remeasured while capturing at most 4,096
+  header bytes, read separately with bounded position-independent `pread`, and
+  fully remeasured again before a closing lease snapshot. Fixed ELF, Mach-O,
+  valid bounded ASCII POSIX-shebang, unsupported-shebang, and unknown
+  classifications plus digest-only directive references preserve exact file,
+  requirement, command, staging, and known-chain lineage. Source-native and
+  target-native input remains zero-file and zero-read.
+  Canonical records expose no raw path, header, content, identity number,
+  temporary name, or descriptor. The receipt is historical Class 0 evidence,
+  not authority, authorization, or an action receipt. It adds no write,
+  cleanup, persistence, proposal/worktree, routing, billing, capacity, circuit,
+  live, network, worker, subprocess, harness, model, or execution capability
+  and establishes no recursion beyond depth 2, interpreter/argument/
+  dependency/toolchain semantics, freshness, immutability, provenance,
+  invocability, containment, or future execution. Only Class 0/1 effects
+  remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

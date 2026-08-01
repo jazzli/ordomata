@@ -677,6 +677,36 @@ fork/hardlink/mount-alias
 exclusion, crash cleanup, or secure erasure. Only Class 0/1 effects remain
 enabled.
 
+The twentieth bounded Phase 3 slice adds the separate library-only schema-v1
+Class 0
+`ordomata.repository_executable_shebang_nested_target_runtime_manifest` PIP.
+`inspect_staged_executable_shebang_nested_target_runtime_manifest(
+expected_nested_target_staging, *, lease)` requires the exact nested-target
+staging receipt held by an active same-PID lease. It verifies canonical receipt
+and object anchors, the exact retained-file tuple and file identities, the
+stored owner-private staging-root context, and every unlinked mode-`0400`, non-
+inheritable `O_RDONLY` descriptor without reopening a path or changing or
+cleaning the lease.
+
+The inspector fully rehashes each descriptor while capturing its first at most
+4,096 bytes, performs a separate bounded position-independent header read,
+fully rehashes again, and requires a closing active-lease snapshot. It reports
+only fixed ELF, Mach-O, POSIX-shebang, unsupported-shebang, or unknown
+classifications; valid bounded ASCII directives become digest references.
+Runtime-file, requirement, binding, and manifest evidence retains the complete
+nested-staging and guarded upstream lineage. Source-native and target-native
+cases remain zero-file and zero-read no-ops.
+
+The privacy-bounded Class 0 receipt contains no raw path, header, content,
+identity number, temporary name, or descriptor. It is not authority,
+authorization, or an action receipt and adds no write, cleanup, persistence,
+proposal/worktree, route, billing, live, network, worker, subprocess, harness,
+model, or execution path. Retained shebangs are not followed, depth does not
+increase, and interpreter/argument/dependency/loader/toolchain semantics,
+freshness, immutability, authenticity, provenance, invocability, alias
+exclusion, containment, and future execution remain deferred. Only Class 0/1
+effects remain enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -1511,13 +1541,25 @@ Only Class 0/1 effects remain enabled.
     read-only descriptors, explicit fail-closed cleanup, and source-/target-
     native zero-file/no-root-touch behavior are implemented; privacy-bounded
     records preserve exact requirement/binding and identity-set lineage,
-    counts, and byte totals, while retained-byte parsing, recursion beyond
+    counts, and byte totals, while retained-shebang following, recursion beyond
     depth 2, interpreter/`env`/`PATH`/launcher/argument semantics, dependency/
     loader/toolchain closure, generic source-path/staging-root-path-domain
     exclusion, generic cycle and broader protected-root closure, freshness,
     immutability, authority, authorization, persistence, proposal/worktree
     integration, routing,
     billing, subprocess, harness, model, and execution remain deferred);
+  - controller-inspected guarded nested-target runtime headers (separate
+    schema-v1 Class 0 receipt implemented; exact active same-PID nested-stage
+    receipt and lease anchoring, stored-root-context validation, two complete
+    descriptor remeasurements around an at-most-4,096-byte ELF/Mach-O/POSIX-
+    shebang/unsupported-shebang/unknown classification, exact runtime-file,
+    requirement, and binding correspondence, and source-/target-native zero-
+    file/zero-read behavior are implemented; canonical records remain digest,
+    classification, identifier, count, and byte-total only, while shebang
+    following, recursion beyond depth 2, interpreter/`env`/`PATH`/argument
+    semantics, dependency/loader/toolchain closure, freshness, immutability,
+    authority, persistence, proposal/worktree integration, routing, billing,
+    subprocess, harness, model, and execution remain deferred);
   - protected and allowed paths;
   - generated/vendor exclusions (schema v2 validation implemented; operational
     consumption remains deferred);
