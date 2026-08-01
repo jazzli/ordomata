@@ -833,6 +833,29 @@ library traversal, persistence, dispatch, routing, billing, network, worker,
 subprocess, model, or execution authority is introduced. The current Class
 0/1 ceiling is unchanged.
 
+The twenty-fifth bounded Phase 3 slice adds another separate Class 0 PIP, not
+a PDP or PEP:
+`ordomata.repository_executable_native_loader_target_runtime_manifest`. It
+requires the exact active same-PID target-stage receipt/lease and validates
+receipt, object, digest, root-context, retained-tuple, requirement, and command
+anchors before reading only the already detached descriptors.
+
+Two full descriptor remeasurements surround one independent bounded 4,096-byte
+position-independent header read. The fixed classification attributes are
+ELF, Mach-O, valid bounded ASCII POSIX shebang, unsupported shebang, or unknown;
+a no-target chain performs no read. Canonical records expose only digest-bound
+header/classification and exact lineage. Raw paths, headers, bytes, identity
+numbers, names, and descriptors remain private, although deterministic digests
+remain correlatable and potentially guessable.
+
+Those attributes describe one historical point in time. They do not authorize
+anything, authenticate a loader, prove compatibility or invocability, close
+shared-library/dependency/runtime/toolchain semantics, or constitute an action
+receipt. The PIP performs no path lookup, lease mutation/cleanup, architecture
+selection, persistence, proposal/worktree integration, routing, billing,
+network, worker, subprocess, model, loader invocation, or execution. The
+current Class 0/1 ceiling is unchanged.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -1124,6 +1147,11 @@ The twenty-fourth slice adds matching Class 1 native-loader target staging.
 Its same-descriptor unlinked read-only copies and cleanup facts remain local-
 draft evidence, not a PDP decision or PEP action receipt, and grant no loader,
 dependency, shared-library, or execution authority.
+
+The twenty-fifth slice adds matching Class 0 runtime-header inspection of the
+detached loader copies. Its fixed digest-only classification remains
+descriptive PIP evidence, not a PDP decision or PEP receipt, and grants no
+loader, dependency, shared-library, or execution authority.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and

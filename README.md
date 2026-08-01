@@ -908,6 +908,34 @@ dependencies; persist controller state; dispatch a worker; call a network or
 model; or execute repository code. It grants no authority and does not raise
 the Class 0/1 ceiling.
 
+The twenty-fifth bounded Phase 3 slice adds the separate library-only schema-v1
+Class 0
+`ordomata.repository_executable_native_loader_target_runtime_manifest` PIP.
+`inspect_staged_executable_native_loader_target_runtime_manifest(
+expected_target_staging, *, lease)` accepts only the exact target-staging
+receipt and its active same-PID lease. It validates the receipt, object and
+digest anchors, stored staging-root context, retained tuple identity, and every
+requirement and command binding before inspecting detached bytes.
+
+Each retained loader descriptor is fully remeasured while capturing at most
+4,096 header bytes, read separately with bounded position-independent
+`pread`, then fully remeasured again before a closing lease snapshot. Fixed
+ELF, Mach-O, valid bounded ASCII POSIX-shebang, unsupported-shebang, and
+unknown classifications preserve exact staged-file, requirement, command,
+resolution, and staging lineage. A no-target stage produces a zero-file,
+zero-read manifest. Canonical records expose no raw path, header, content,
+filesystem identity number, temporary name, or descriptor; deterministic
+digests and byte lengths remain correlatable and potentially guessable.
+
+This point-in-time runtime classification is historical Class 0 evidence, not
+loader identity, authenticity, compatibility, invocability, authorization,
+shared-library/dependency closure, or an action receipt. It opens no path,
+mutates or cleans up no lease, selects no fat-image architecture, persists no
+state, creates no worker or subprocess, calls no network or model, invokes no
+loader, and executes nothing. Current freshness, containment, runtime/toolchain
+completeness, and future-execution correspondence remain unproved. Only Class
+0/1 effects remain enabled.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -1224,6 +1252,12 @@ descriptor into an unlinked mode-`0400` read-only lease, followed by exact
 post-stage correspondence checks and explicit fail-closed cleanup. Raw paths
 and bytes remain private, and no loader, dependency, subprocess, model, or
 executable is invoked.
+
+The twenty-fifth slice adds matching Class 0 runtime-header inspection of the
+detached loader copies. Two full descriptor remeasurements surround one
+bounded position-independent header read and emit fixed privacy-bounded
+classifications without opening a path, mutating a lease, invoking a loader,
+or executing anything.
 
 ## Quick start
 

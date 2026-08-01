@@ -721,6 +721,29 @@ parallel because it cannot exercise worker authority.
   dependency closure, persistence, routing, billing, network, worker,
   subprocess, harness, model, or execution capability. Only Class 0/1 effects
   remain enabled.
+- The twenty-fifth bounded Phase 3 slice implements the separate library-only
+  schema-v1 Class 0
+  `ordomata.repository_executable_native_loader_target_runtime_manifest` PIP.
+  It accepts only the exact native-loader target-stage receipt and active same-
+  PID lease, validating receipt/digest/object anchors, stored root context,
+  retained tuple identity, and exact staged-file/requirement/command
+  correspondence before descriptor inspection.
+  Each unique retained target is fully remeasured while capturing at most
+  4,096 header bytes, reread independently with bounded position-independent
+  `pread`, then fully remeasured again before a closing stage snapshot. Fixed
+  ELF, Mach-O, valid bounded ASCII POSIX-shebang, unsupported-shebang, and
+  unknown outcomes preserve exact lineage; no-target input is zero-file and
+  zero-read. Public evidence contains digest-only header/classification and
+  lineage, excluding raw paths, headers, bytes, identity numbers, names, and
+  descriptors while deterministic digests remain correlatable and potentially
+  guessable.
+  This historical Class 0 receipt is not loader identity/authenticity,
+  compatibility, invocability, authority, dependency/shared-library closure,
+  or an action receipt. It adds no path lookup, lease mutation/cleanup,
+  architecture selection, persistence, routing, billing, network, worker,
+  subprocess, harness, model, loader invocation, or execution. Freshness,
+  containment, runtime/toolchain completeness, and future-execution semantics
+  remain deferred. Only Class 0/1 effects remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

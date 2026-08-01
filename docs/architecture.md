@@ -1290,6 +1290,34 @@ closure, persistence, proposal/worktree integration, dispatch, route, billing,
 network, worker, subprocess, harness, model, or execution is added. The Class
 0/1 ceiling is unchanged.
 
+The twenty-fifth bounded Phase 3 slice is the separate library-only schema-v1
+Class 0
+`ordomata.repository_executable_native_loader_target_runtime_manifest` PIP.
+It accepts only one exact native-loader target-staging receipt and active same-
+PID lease. Receipt/digest/object anchors, the stored staging-root context, the
+retained tuple identity, and complete staged-file/requirement/command
+correspondence are validated before descriptor inspection.
+
+For each retained target, the PIP performs a complete descriptor remeasurement
+while capturing at most 4,096 header bytes, reads that header independently by
+bounded position-independent `pread`, performs a second complete
+remeasurement, and closes on another exact active-stage snapshot. The fixed
+classifier emits ELF, Mach-O, valid bounded ASCII POSIX-shebang, unsupported-
+shebang, or unknown evidence. No-target input performs no descriptor read.
+Public records keep only digest-bound header/classification and exact upstream
+lineage; raw paths, headers, content, identity numbers, temporary names, and
+descriptors are absent, while deterministic digests remain correlatable and
+potentially guessable.
+
+The manifest is a historical Class 0 description of detached bytes, not loader
+identity/authenticity, semantic compatibility, invocability, authorization,
+dependency/shared-library closure, or an action receipt. It opens no path,
+mutates or cleans up no lease, selects no fat-image architecture, persists no
+state, routes or dispatches no worker, creates no subprocess, invokes no
+harness/model/network/loader, and executes nothing. Freshness, containment,
+runtime/toolchain completeness, and future-action correspondence remain
+deferred. The Class 0/1 ceiling is unchanged.
+
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
 It freshly revalidates a `RepositoryRegistration`, requires an existing
@@ -1580,6 +1608,11 @@ The same pinned action-measurement descriptor supplies each unique unlinked
 mode-0400 read-only copy; post-stage chain replay and explicit cleanup preserve
 correspondence without adding loader, dependency, subprocess, model, or
 execution capability.
+
+The twenty-fifth slice adds matching Class 0 runtime-header inspection of the
+detached loader copies. Two full descriptor remeasurements bracket one bounded
+position-independent header read; the fixed privacy-bounded classification
+adds no loader, dependency, subprocess, model, or execution capability.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor
