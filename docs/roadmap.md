@@ -623,6 +623,30 @@ parallel because it cannot exercise worker authority.
   dependency/toolchain semantics, freshness, immutability, provenance,
   invocability, containment, or future execution. Only Class 0/1 effects
   remain enabled.
+- The twenty-first bounded Phase 3 slice implements the separate library-only
+  schema-v1 Class 0
+  `ordomata.repository_executable_shebang_nested_target_requirements` PIP.
+  `inspect_staged_executable_shebang_nested_target_requirements(
+  expected_nested_target_runtime, *, expected_nested_target_staging, lease)`
+  accepts only the exact runtime/staging receipts and their active same-PID
+  lease. It validates full correspondence, reproduces runtime evidence before
+  and after extraction, independently remeasures retained descriptors twice,
+  and requires closing lease and descriptor anchors.
+  Fixed source-/target-native, native-binary, absolute-token, non-absolute-
+  token, unsupported-shebang, and unknown-format dispositions preserve exact
+  upstream and command lineage. Valid POSIX token and opaque argument-tail
+  bytes become only digest references, bounded counts, a separator kind, and
+  an absolute-token boolean. Shared files are parsed once; native-only input
+  is zero-file and zero-read.
+  Canonical records expose no raw path, header, content, token, argument tail,
+  identity number, temporary name, or descriptor. The receipt is historical
+  Class 0 evidence, not authority, authorization, resolution, or an action
+  receipt. It performs no path/environment lookup or shebang following and
+  adds no recursion beyond depth 2, write, cleanup, persistence, proposal/
+  worktree, routing, billing, live, network, worker, subprocess, harness,
+  model, or execution capability. Interpreter/launcher/argument/dependency/
+  toolchain, freshness, immutability, provenance, containment, and future-
+  execution semantics remain deferred. Only Class 0/1 effects remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

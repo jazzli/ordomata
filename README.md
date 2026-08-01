@@ -783,6 +783,36 @@ launcher, argument, dependency, loader, runtime, toolchain, immutability,
 authenticity, provenance, invocability, writer/fork/alias, containment, or
 future-execution semantics. Only Class 0/1 effects remain enabled.
 
+The twenty-first bounded Phase 3 slice adds the separate library-only
+schema-v1 Class 0
+`ordomata.repository_executable_shebang_nested_target_requirements` PIP.
+`inspect_staged_executable_shebang_nested_target_requirements(
+expected_nested_target_runtime, *, expected_nested_target_staging, lease)`
+requires the exact runtime and staging receipts plus their active same-PID
+lease. It validates their complete correspondence, reproduces the runtime
+manifest before and after extraction, independently remeasures each detached
+descriptor twice, and closes with exact lease and descriptor anchors.
+
+Each unique retained nested target is parsed once into only fixed
+source-/target-native, native-binary, absolute-token, non-absolute-token,
+unsupported-shebang, or unknown-format dispositions. POSIX interpreter tokens
+and opaque argument tails are represented only by digest references, byte
+counts, a fixed separator kind, and an absolute-token boolean. Shared targets
+retain distinct upstream requirement and command bindings; native-only input
+performs no descriptor read. Canonical records expose no raw path, header,
+content, token, argument tail, filesystem identity number, temporary name, or
+descriptor.
+
+This syntax receipt is historical descriptive evidence, not authority,
+authorization, a path resolution, or an action receipt. It performs no path or
+environment lookup, shebang following, recursion beyond depth 2, write,
+cleanup, persistence, proposal/worktree, dispatch, route, billing, live,
+network, worker, subprocess, harness, model, or execution. Interpreter,
+`env`/`PATH`/launcher/argument, dependency/loader/toolchain, freshness,
+immutability, authenticity, provenance, invocability, alias, containment, and
+future-execution semantics remain unproved. Only Class 0/1 effects remain
+enabled.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -1075,6 +1105,11 @@ inspection described above. It remeasures only the active detached descriptors,
 returns fixed privacy-bounded classifications and exact lineage, and preserves
 native-only zero-read behavior without adding freshness, authority, routing,
 worker, subprocess, harness, model, or execution capability.
+
+The twenty-first slice adds matching Class 0 nested-target shebang syntax
+requirements. It reproduces the runtime evidence twice, independently
+remeasures detached bytes twice, and emits only digest-bound token/tail syntax
+and exact lineage without resolving or executing anything.
 
 ## Quick start
 

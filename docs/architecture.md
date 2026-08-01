@@ -1170,6 +1170,32 @@ argument, dependency, loader, runtime, toolchain, immutability, authenticity,
 provenance, invocability, alias, containment, or future-execution semantics.
 The Class 0/1 ceiling is unchanged.
 
+The twenty-first bounded Phase 3 slice is the separate library-only schema-v1
+Class 0 `ordomata.repository_executable_shebang_nested_target_requirements`
+PIP. Its inspector consumes only the exact nested-target runtime and staging
+receipts plus the active same-PID staging lease. The frozen proof graph checks
+full runtime/staging correspondence, reproduces the runtime manifest before
+and after extraction, performs two matching independent full descriptor
+remeasurements, and finishes with exact lease and descriptor anchors.
+
+For each unique retained file, fixed syntax handling reports source-native,
+target-native, native-binary, absolute interpreter token, non-absolute token,
+unsupported shebang, or unknown format. A POSIX token and opaque argument tail
+become only digest references, byte counts, a separator kind, and an absolute-
+token boolean. Shared files are parsed once while their complete distinct
+source, target, nested-resolution, guard, staging, runtime-requirement, and
+command-binding lineage remains exact. Native-only evidence causes no
+descriptor read.
+
+Canonical records contain no raw path, header, content, token, argument tail,
+identity number, temporary name, or descriptor. The Class 0 receipt neither
+resolves nor follows a token and adds no path/environment lookup, recursion
+beyond depth 2, write, cleanup, persistence, proposal/worktree, dispatch,
+route, billing, live, network, worker, subprocess, harness, model, or execution
+path. Interpreter, launcher, argument, dependency, loader, toolchain,
+freshness, authenticity, provenance, invocability, alias, containment, and
+future-execution closure remain deferred. The Class 0/1 ceiling is unchanged.
+
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
 It freshly revalidates a `RepositoryRegistration`, requires an existing
@@ -1438,6 +1464,11 @@ It twice remeasures only the active detached descriptors around a bounded
 header read, emits fixed privacy-bounded classification and lineage evidence,
 and preserves native-only zero-read behavior. It adds no authority, route,
 worker, subprocess, harness, model, or execution capability.
+
+The twenty-first slice adds the matching Class 0 nested-target shebang-
+requirements PIP. It reproduces runtime evidence around two independent
+remeasurement passes and emits only digest-bound token/tail syntax and exact
+lineage; it resolves, follows, and executes nothing.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor

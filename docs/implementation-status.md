@@ -715,6 +715,35 @@ toolchain semantics, freshness, immutability, authenticity, provenance,
 invocability, alias exclusion, containment, or future execution
 correspondence. Only Class 0/1 effects remain enabled.
 
+Implemented as the twenty-first bounded Phase 3 slice, the library-only
+schema-v1 Class 0
+`ordomata.repository_executable_shebang_nested_target_requirements` API exposes
+`inspect_staged_executable_shebang_nested_target_requirements(
+expected_nested_target_runtime, *, expected_nested_target_staging, lease)`.
+It requires the exact runtime/staging receipts and active same-PID lease,
+validates their full correspondence, reproduces runtime evidence before and
+after extraction, independently remeasures each retained descriptor twice,
+and requires closing lease and descriptor anchors.
+
+Unique retained files produce fixed source-native, target-native, native-
+binary, absolute-token, non-absolute-token, unsupported-shebang, or unknown-
+format dispositions. Valid POSIX token and opaque argument-tail bytes become
+only digest references, bounded byte counts, a fixed separator kind, and an
+absolute-token boolean. Shared files are extracted once with exact distinct
+requirement and command-binding lineage. Native-only input remains zero-file
+and zero-read.
+
+Canonical records and evidence exclude raw paths, headers, content, tokens,
+argument tails, identity numbers, temporary names, and descriptors. This
+historical Class 0 result adds no authority, authorization, path/environment
+lookup, shebang following, recursion beyond depth 2, write, cleanup,
+persistence, proposal/worktree, routing, billing, capacity, circuit, live,
+network, worker, subprocess, harness, model, or execution integration.
+Interpreter/launcher/argument/dependency/loader/toolchain semantics,
+freshness, immutability, authenticity, provenance, invocability, alias
+exclusion, containment, and future execution remain deferred. Only Class 0/1
+effects remain enabled.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -983,6 +1012,11 @@ inspection. Two full descriptor remeasurements around a bounded header read,
 fixed privacy-bounded classifications, complete lineage, and native-only zero-
 read behavior are implemented without adding freshness, authority, routing,
 worker, subprocess, harness, model, or execution integration.
+
+The twenty-first slice adds matching Class 0 nested-target shebang
+requirements: two runtime reproductions around two independent descriptor
+passes emit digest-only token/tail syntax and exact lineage without resolution
+or execution integration.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and
