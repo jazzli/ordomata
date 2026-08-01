@@ -16,7 +16,8 @@ from pathlib import Path
 import re
 import stat
 import unicodedata
-from typing import Any
+from types import FunctionType
+from typing import Any, Callable
 
 from .authorization import canonical_json
 from .errors import ValidationError
@@ -96,6 +97,7 @@ _INVALID_MESSAGE = (
 _DIRECT_TARGET_RESOLUTION_SCOPE = "posix_absolute_shebang_target_nofollow_v1"
 _DIGEST_PREFIX = "sha256:"
 _DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_BUILTIN_DIGEST_FULLMATCH = _DIGEST_PATTERN.fullmatch
 _IDENTIFIER_PATTERN = re.compile(r"[a-z][a-z0-9_.-]{0,119}\Z")
 _COMMAND_KINDS = ("format", "lint", "type_check", "test", "build")
 _SOURCE_RUNTIME_CLASSIFICATIONS = ("elf", "mach_o", "posix_shebang")
@@ -144,6 +146,7 @@ _BUILTIN_UNICODE_NORMALIZE = unicodedata.normalize
 _BUILTIN_UNICODE_CATEGORY = unicodedata.category
 _FIXED_CONCRETE_PATH_TYPE = type(Path())
 _BUILTIN_CONCRETE_PATH = _FIXED_CONCRETE_PATH_TYPE
+_FIXED_FUNCTION_TYPE = FunctionType
 _FIXED_POSIX_ROOT = "/"
 _FIXED_O_RDONLY = getattr(os, "O_RDONLY", None)
 _FIXED_O_DIRECTORY = getattr(os, "O_DIRECTORY", None)
@@ -1050,8 +1053,26 @@ class _MeasuredNestedTarget:
     content_bytes: int
 
 
+@dataclass(frozen=True, slots=True)
+class _NestedTargetGuardContext:
+    """Private stronger exclusions for a separate proof boundary.
+
+    The public schema-v1 resolver never supplies this context and therefore
+    retains its frozen semantics and evidence.  A later controller inspection
+    may supply exact identity-domain sets and staging-root identities so the
+    same no-follow measurement engine rejects them before reading leaf bytes.
+    """
+
+    protected_root_identities: frozenset[tuple[int, int]] = field(
+        repr=False
+    )
+    known_source_identity_refs: frozenset[str] = field(repr=False)
+    known_target_identity_refs: frozenset[str] = field(repr=False)
+
+
 _FIXED_DERIVED_NESTED_REQUIREMENT_TYPE = _DerivedNestedRequirement
 _FIXED_MEASURED_NESTED_TARGET_TYPE = _MeasuredNestedTarget
+_FIXED_NESTED_TARGET_GUARD_CONTEXT_TYPE = _NestedTargetGuardContext
 
 
 def _derived_nested_requirement_projection(
@@ -1132,6 +1153,50 @@ _BUILTIN_DERIVED_NESTED_REQUIREMENT_PROJECTION = (
 )
 _BUILTIN_MEASURED_NESTED_TARGET_PROJECTION = (
     _measured_nested_target_projection
+)
+
+
+def _nested_target_guard_context_projection(
+    value: _NestedTargetGuardContext,
+) -> tuple[
+    tuple[tuple[int, int], ...],
+    tuple[str, ...],
+    tuple[str, ...],
+]:
+    """Validate and detach every stronger private exclusion input."""
+
+    if (
+        type(value) is not _FIXED_NESTED_TARGET_GUARD_CONTEXT_TYPE
+        or type(value.protected_root_identities) is not frozenset
+        or type(value.known_source_identity_refs) is not frozenset
+        or type(value.known_target_identity_refs) is not frozenset
+        or any(
+            type(identity) is not tuple
+            or len(identity) != 2
+            or any(type(part) is not int or part < 0 for part in identity)
+            for identity in value.protected_root_identities
+        )
+        or any(
+            type(reference) is not str
+            or _BUILTIN_DIGEST_FULLMATCH(reference) is None
+            for reference in value.known_source_identity_refs
+        )
+        or any(
+            type(reference) is not str
+            or _BUILTIN_DIGEST_FULLMATCH(reference) is None
+            for reference in value.known_target_identity_refs
+        )
+    ):
+        raise _InvalidNestedTargetResolution
+    return (
+        tuple(sorted(value.protected_root_identities)),
+        tuple(sorted(value.known_source_identity_refs)),
+        tuple(sorted(value.known_target_identity_refs)),
+    )
+
+
+_BUILTIN_NESTED_TARGET_GUARD_CONTEXT_PROJECTION = (
+    _nested_target_guard_context_projection
 )
 
 
@@ -1669,11 +1734,81 @@ def _root_identity_matches(
     )
 
 
+def _guard_root_identity_matches(
+    metadata: os.stat_result,
+    guard_context: _NestedTargetGuardContext | None,
+) -> bool:
+    if guard_context is None:
+        return False
+    _BUILTIN_NESTED_TARGET_GUARD_CONTEXT_PROJECTION(guard_context)
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+    ) in guard_context.protected_root_identities
+
+
+def _identity_ref_in_domain(
+    metadata: os.stat_result,
+    *,
+    kind: str,
+) -> str:
+    if type(kind) is not str:
+        raise _InvalidNestedTargetResolution
+    return _BUILTIN_CANONICAL_DIGEST(
+        {
+            "device": metadata.st_dev,
+            "inode": metadata.st_ino,
+            "kind": kind,
+            "schema_version": 1,
+        }
+    )
+
+
+def _guard_leaf_identity_is_excluded(
+    metadata: os.stat_result,
+    guard_context: _NestedTargetGuardContext | None,
+) -> bool:
+    if guard_context is None:
+        return False
+    _BUILTIN_NESTED_TARGET_GUARD_CONTEXT_PROJECTION(guard_context)
+    source_references = (
+        _BUILTIN_IDENTITY_REF_IN_DOMAIN(
+            metadata,
+            kind="repository_executable_file_identity",
+        ),
+        _BUILTIN_IDENTITY_REF_IN_DOMAIN(
+            metadata,
+            kind="repository_executable_staged_file_identity",
+        ),
+    )
+    target_references = (
+        _BUILTIN_IDENTITY_REF_IN_DOMAIN(
+            metadata,
+            kind="repository_executable_shebang_target_file_identity",
+        ),
+        _BUILTIN_IDENTITY_REF_IN_DOMAIN(
+            metadata,
+            kind=(
+                "repository_executable_shebang_target_"
+                "staged_file_identity"
+            ),
+        ),
+    )
+    return any(
+        reference in guard_context.known_source_identity_refs
+        for reference in source_references
+    ) or any(
+        reference in guard_context.known_target_identity_refs
+        for reference in target_references
+    )
+
+
 def _open_directory_component(
     parent_descriptor: int,
     component: str,
     *,
     protected_root_identity: tuple[int, int] | None,
+    guard_context: _NestedTargetGuardContext | None = None,
 ) -> tuple[int, tuple[int, ...]]:
     if _BUILTIN_ENTRY_SPELLING_STATE(
         parent_descriptor,
@@ -1703,6 +1838,10 @@ def _open_directory_component(
             or _BUILTIN_ROOT_IDENTITY_MATCHES(
                 metadata,
                 protected_root_identity,
+            )
+            or _BUILTIN_GUARD_ROOT_IDENTITY_MATCHES(
+                metadata,
+                guard_context,
             )
         ):
             raise _InvalidNestedTargetResolution
@@ -1812,6 +1951,7 @@ def _measure_nested_target_path(
     total_measured_bytes: int,
     protected_root_identity: tuple[int, int] | None,
     known_first_hop_identities: frozenset[str],
+    guard_context: _NestedTargetGuardContext | None = None,
 ) -> _MeasuredNestedTarget:
     if type(path) is not str:
         raise _InvalidNestedTargetResolution
@@ -1834,6 +1974,10 @@ def _measure_nested_target_path(
                 root_metadata,
                 protected_root_identity,
             )
+            or _BUILTIN_GUARD_ROOT_IDENTITY_MATCHES(
+                root_metadata,
+                guard_context,
+            )
         ):
             raise _InvalidNestedTargetResolution
         directory_chain.append(_BUILTIN_DIRECTORY_SIGNATURE(root_metadata))
@@ -1842,6 +1986,7 @@ def _measure_nested_target_path(
                 directory_descriptor,
                 component,
                 protected_root_identity=protected_root_identity,
+                guard_context=guard_context,
             )
             try:
                 _BUILTIN_CLOSE(directory_descriptor)
@@ -1880,7 +2025,13 @@ def _measure_nested_target_path(
         ):
             raise _InvalidNestedTargetResolution
         identity_ref = _BUILTIN_TARGET_IDENTITY_REF(before)
-        if identity_ref in known_first_hop_identities:
+        if (
+            identity_ref in known_first_hop_identities
+            or _BUILTIN_GUARD_LEAF_IDENTITY_IS_EXCLUDED(
+                before,
+                guard_context,
+            )
+        ):
             raise _InvalidNestedTargetResolution
 
         digest = _BUILTIN_SHA256()
@@ -1916,6 +2067,10 @@ def _measure_nested_target_path(
             != parent_signature
             or _BUILTIN_TARGET_IDENTITY_REF(after)
             in known_first_hop_identities
+            or _BUILTIN_GUARD_LEAF_IDENTITY_IS_EXCLUDED(
+                after,
+                guard_context,
+            )
         ):
             raise _InvalidNestedTargetResolution
 
@@ -1945,6 +2100,10 @@ def _measure_nested_target_path(
                 != _BUILTIN_METADATA_SIGNATURE(before)
                 or _BUILTIN_TARGET_IDENTITY_REF(reopened)
                 in known_first_hop_identities
+                or _BUILTIN_GUARD_LEAF_IDENTITY_IS_EXCLUDED(
+                    reopened,
+                    guard_context,
+                )
             ):
                 raise _InvalidNestedTargetResolution
         finally:
@@ -1968,6 +2127,10 @@ def _measure_nested_target_path(
             _BUILTIN_METADATA_SIGNATURE(namespace_after)
             != _BUILTIN_METADATA_SIGNATURE(before)
             or parent_after != parent_signature
+            or _BUILTIN_GUARD_LEAF_IDENTITY_IS_EXCLUDED(
+                namespace_after,
+                guard_context,
+            )
         ):
             raise _InvalidNestedTargetResolution
         return measured
@@ -1989,6 +2152,7 @@ def _nested_target_namespace_snapshot(
     *,
     protected_root_identity: tuple[int, int] | None,
     known_first_hop_identities: frozenset[str],
+    guard_context: _NestedTargetGuardContext | None = None,
 ) -> tuple[tuple[tuple[int, ...], ...], tuple[int, ...]]:
     if type(path) is not str:
         raise _InvalidNestedTargetResolution
@@ -2012,6 +2176,10 @@ def _nested_target_namespace_snapshot(
                 root_metadata,
                 protected_root_identity,
             )
+            or _BUILTIN_GUARD_ROOT_IDENTITY_MATCHES(
+                root_metadata,
+                guard_context,
+            )
         ):
             raise _InvalidNestedTargetResolution
         directory_chain.append(_BUILTIN_DIRECTORY_SIGNATURE(root_metadata))
@@ -2020,6 +2188,7 @@ def _nested_target_namespace_snapshot(
                 directory_descriptors[-1],
                 component,
                 protected_root_identity=protected_root_identity,
+                guard_context=guard_context,
             )
             directory_descriptors.append(child)
             directory_chain.append(signature)
@@ -2034,7 +2203,12 @@ def _nested_target_namespace_snapshot(
         target_signature = _BUILTIN_METADATA_SIGNATURE(metadata)
         if _BUILTIN_TARGET_IDENTITY_REF(
             metadata
-        ) in known_first_hop_identities:
+        ) in known_first_hop_identities or (
+            _BUILTIN_GUARD_LEAF_IDENTITY_IS_EXCLUDED(
+                metadata,
+                guard_context,
+            )
+        ):
             raise _InvalidNestedTargetResolution
         try:
             namespace_after = _BUILTIN_STAT(
@@ -2084,6 +2258,10 @@ def _nested_target_namespace_snapshot(
                     descriptor_metadata,
                     protected_root_identity,
                 )
+                or _BUILTIN_GUARD_ROOT_IDENTITY_MATCHES(
+                    descriptor_metadata,
+                    guard_context,
+                )
             ):
                 raise _InvalidNestedTargetResolution
         try:
@@ -2105,6 +2283,10 @@ def _nested_target_namespace_snapshot(
             or _BUILTIN_DIRECTORY_SIGNATURE(final_parent) != parent_before
             or _BUILTIN_TARGET_IDENTITY_REF(final_namespace)
             in known_first_hop_identities
+            or _BUILTIN_GUARD_LEAF_IDENTITY_IS_EXCLUDED(
+                final_namespace,
+                guard_context,
+            )
         ):
             raise _InvalidNestedTargetResolution
         return tuple(directory_chain), target_signature
@@ -2126,6 +2308,7 @@ def _nested_target_namespace_matches(
     *,
     protected_root_identity: tuple[int, int] | None,
     known_first_hop_identities: frozenset[str],
+    guard_context: _NestedTargetGuardContext | None = None,
 ) -> bool:
     try:
         _BUILTIN_MEASURED_NESTED_TARGET_PROJECTION(measured)
@@ -2134,6 +2317,7 @@ def _nested_target_namespace_matches(
             measured.path,
             protected_root_identity=protected_root_identity,
             known_first_hop_identities=known_first_hop_identities,
+            guard_context=guard_context,
             )
         )
         return (
@@ -2169,6 +2353,46 @@ def _measure_target_set(
                 item,
                 protected_root_identity=protected_root_identity,
                 known_first_hop_identities=known_first_hop_identities,
+            )
+        ):
+            raise _InvalidNestedTargetResolution
+        identities.add(item.identity)
+        measured.append(item)
+        total_bytes += item.content_bytes
+    return tuple(measured)
+
+
+def _measure_guarded_target_set(
+    paths: tuple[str, ...],
+    *,
+    protected_root_identity: tuple[int, int] | None,
+    known_first_hop_identities: frozenset[str],
+    guard_context: _NestedTargetGuardContext,
+) -> tuple[_MeasuredNestedTarget, ...]:
+    """Measure with the separate guard's exclusions active before reads."""
+
+    _BUILTIN_NESTED_TARGET_GUARD_CONTEXT_PROJECTION(guard_context)
+    if type(paths) is not tuple or any(type(path) is not str for path in paths):
+        raise _InvalidNestedTargetResolution
+    measured: list[_MeasuredNestedTarget] = []
+    identities: set[tuple[int, int]] = set()
+    total_bytes = 0
+    for path in paths:
+        item = _BUILTIN_MEASURE_NESTED_TARGET_PATH(
+            path,
+            total_measured_bytes=total_bytes,
+            protected_root_identity=protected_root_identity,
+            known_first_hop_identities=known_first_hop_identities,
+            guard_context=guard_context,
+        )
+        _BUILTIN_MEASURED_NESTED_TARGET_PROJECTION(item)
+        if (
+            item.identity in identities
+            or not _BUILTIN_NESTED_TARGET_NAMESPACE_MATCHES(
+                item,
+                protected_root_identity=protected_root_identity,
+                known_first_hop_identities=known_first_hop_identities,
+                guard_context=guard_context,
             )
         ):
             raise _InvalidNestedTargetResolution
@@ -2225,6 +2449,60 @@ def _prevalidate_protected_root_ancestors(
                     pass
 
 
+def _prevalidate_guarded_root_ancestors(
+    paths: tuple[str, ...],
+    *,
+    protected_root_identity: tuple[int, int] | None,
+    guard_context: _NestedTargetGuardContext,
+) -> None:
+    """Reject either staging-root identity before any leaf is opened."""
+
+    _BUILTIN_NESTED_TARGET_GUARD_CONTEXT_PROJECTION(guard_context)
+    if type(paths) is not tuple or any(type(path) is not str for path in paths):
+        raise _InvalidNestedTargetResolution
+    if not paths:
+        return
+    for path in paths:
+        components = tuple(path[1:].split("/"))
+        descriptors: list[int] = []
+        try:
+            try:
+                descriptor = _BUILTIN_OPEN(
+                    _FIXED_POSIX_ROOT,
+                    _BUILTIN_DIRECTORY_OPEN_FLAGS(),
+                )
+                descriptors.append(descriptor)
+                root_metadata = _BUILTIN_FSTAT(descriptor)
+            except OSError:
+                raise _InvalidNestedTargetResolution from None
+            if (
+                not _BUILTIN_S_ISDIR(root_metadata.st_mode)
+                or _BUILTIN_ROOT_IDENTITY_MATCHES(
+                    root_metadata,
+                    protected_root_identity,
+                )
+                or _BUILTIN_GUARD_ROOT_IDENTITY_MATCHES(
+                    root_metadata,
+                    guard_context,
+                )
+            ):
+                raise _InvalidNestedTargetResolution
+            for component in components[:-1]:
+                child, _signature = _BUILTIN_OPEN_DIRECTORY_COMPONENT(
+                    descriptors[-1],
+                    component,
+                    protected_root_identity=protected_root_identity,
+                    guard_context=guard_context,
+                )
+                descriptors.append(child)
+        finally:
+            for descriptor in reversed(descriptors):
+                try:
+                    _BUILTIN_CLOSE(descriptor)
+                except OSError:
+                    pass
+
+
 # Freeze the local no-follow graph after all of its components exist.
 _BUILTIN_REQUIRE_SUPPORTED_PLATFORM = _require_supported_platform
 _BUILTIN_METADATA_SIGNATURE = _metadata_signature
@@ -2233,6 +2511,11 @@ _BUILTIN_VALIDATE_COMPONENT = _validate_component
 _BUILTIN_ENTRY_SPELLING_STATE = _entry_spelling_state
 _BUILTIN_DIRECTORY_OPEN_FLAGS = _directory_open_flags
 _BUILTIN_ROOT_IDENTITY_MATCHES = _root_identity_matches
+_BUILTIN_GUARD_ROOT_IDENTITY_MATCHES = _guard_root_identity_matches
+_BUILTIN_IDENTITY_REF_IN_DOMAIN = _identity_ref_in_domain
+_BUILTIN_GUARD_LEAF_IDENTITY_IS_EXCLUDED = (
+    _guard_leaf_identity_is_excluded
+)
 _BUILTIN_OPEN_DIRECTORY_COMPONENT = _open_directory_component
 _BUILTIN_OPEN_TARGET_AT = _open_target_at
 _BUILTIN_FILE_IS_SPARSE = _file_is_sparse
@@ -2244,8 +2527,12 @@ _BUILTIN_NESTED_TARGET_NAMESPACE_SNAPSHOT = (
 )
 _BUILTIN_NESTED_TARGET_NAMESPACE_MATCHES = _nested_target_namespace_matches
 _BUILTIN_MEASURE_TARGET_SET = _measure_target_set
+_BUILTIN_MEASURE_GUARDED_TARGET_SET = _measure_guarded_target_set
 _BUILTIN_PREVALIDATE_PROTECTED_ROOT_ANCESTORS = (
     _prevalidate_protected_root_ancestors
+)
+_BUILTIN_PREVALIDATE_GUARDED_ROOT_ANCESTORS = (
+    _prevalidate_guarded_root_ancestors
 )
 
 
@@ -2413,7 +2700,7 @@ _BUILTIN_PUBLIC_REQUIREMENT = _public_requirement
 _BUILTIN_PUBLIC_BINDING = _public_binding
 
 
-def inspect_staged_executable_shebang_nested_targets(
+def _inspect_staged_executable_shebang_nested_targets(
     expected_target_requirements: (
         RepositoryExecutableShebangTargetRequirementsReceipt
     ),
@@ -2424,10 +2711,29 @@ def inspect_staged_executable_shebang_nested_targets(
     expected_target_staging: RepositoryExecutableShebangTargetStagingReceipt,
     lease: RepositoryExecutableShebangTargetStageLease,
     expected_nested_target_paths: tuple[Path, ...],
+    guard_context: _NestedTargetGuardContext | None = None,
+    expected_receipt_canonical: dict[str, Any] | None = None,
+    closing_guard_anchor: Callable[[], None] | None = None,
 ) -> RepositoryExecutableShebangNestedTargetResolutionReceipt:
-    """Measure exactly one additional absolute target hop at depth two."""
+    """Frozen private resolver with optional stronger pre-read exclusions."""
 
     try:
+        if guard_context is not None:
+            _BUILTIN_NESTED_TARGET_GUARD_CONTEXT_PROJECTION(guard_context)
+        if (
+            expected_receipt_canonical is not None
+            and type(expected_receipt_canonical) is not dict
+        ):
+            raise _InvalidNestedTargetResolution
+        if (
+            closing_guard_anchor is not None
+            and (
+                guard_context is None
+                or expected_receipt_canonical is None
+                or type(closing_guard_anchor) is not _FIXED_FUNCTION_TYPE
+            )
+        ):
+            raise _InvalidNestedTargetResolution
         _BUILTIN_REQUIRE_SUPPORTED_PLATFORM()
         (
             derived,
@@ -2447,15 +2753,28 @@ def inspect_staged_executable_shebang_nested_targets(
             derived,
             expected_nested_target_paths,
         )
-        _BUILTIN_PREVALIDATE_PROTECTED_ROOT_ANCESTORS(
-            paths,
-            protected_root_identity=protected_root_identity,
-        )
-        first_measurement = _BUILTIN_MEASURE_TARGET_SET(
-            paths,
-            protected_root_identity=protected_root_identity,
-            known_first_hop_identities=known_first_hop_identities,
-        )
+        if guard_context is None:
+            _BUILTIN_PREVALIDATE_PROTECTED_ROOT_ANCESTORS(
+                paths,
+                protected_root_identity=protected_root_identity,
+            )
+            first_measurement = _BUILTIN_MEASURE_TARGET_SET(
+                paths,
+                protected_root_identity=protected_root_identity,
+                known_first_hop_identities=known_first_hop_identities,
+            )
+        else:
+            _BUILTIN_PREVALIDATE_GUARDED_ROOT_ANCESTORS(
+                paths,
+                protected_root_identity=protected_root_identity,
+                guard_context=guard_context,
+            )
+            first_measurement = _BUILTIN_MEASURE_GUARDED_TARGET_SET(
+                paths,
+                protected_root_identity=protected_root_identity,
+                known_first_hop_identities=known_first_hop_identities,
+                guard_context=guard_context,
+            )
         derived_projection = tuple(
             _BUILTIN_DERIVED_NESTED_REQUIREMENT_PROJECTION(item)
             for item in derived
@@ -2498,15 +2817,28 @@ def inspect_staged_executable_shebang_nested_targets(
             != paths
         ):
             raise _InvalidNestedTargetResolution
-        _BUILTIN_PREVALIDATE_PROTECTED_ROOT_ANCESTORS(
-            paths,
-            protected_root_identity=protected_root_identity,
-        )
-        second_measurement = _BUILTIN_MEASURE_TARGET_SET(
-            paths,
-            protected_root_identity=protected_root_identity,
-            known_first_hop_identities=known_first_hop_identities,
-        )
+        if guard_context is None:
+            _BUILTIN_PREVALIDATE_PROTECTED_ROOT_ANCESTORS(
+                paths,
+                protected_root_identity=protected_root_identity,
+            )
+            second_measurement = _BUILTIN_MEASURE_TARGET_SET(
+                paths,
+                protected_root_identity=protected_root_identity,
+                known_first_hop_identities=known_first_hop_identities,
+            )
+        else:
+            _BUILTIN_PREVALIDATE_GUARDED_ROOT_ANCESTORS(
+                paths,
+                protected_root_identity=protected_root_identity,
+                guard_context=guard_context,
+            )
+            second_measurement = _BUILTIN_MEASURE_GUARDED_TARGET_SET(
+                paths,
+                protected_root_identity=protected_root_identity,
+                known_first_hop_identities=known_first_hop_identities,
+                guard_context=guard_context,
+            )
         if (
             tuple(
                 _BUILTIN_MEASURED_NESTED_TARGET_PROJECTION(item)
@@ -2548,10 +2880,23 @@ def inspect_staged_executable_shebang_nested_targets(
             )
             != paths
             or any(
-                not _BUILTIN_NESTED_TARGET_NAMESPACE_MATCHES(
-                    item,
-                    protected_root_identity=protected_root_identity,
-                    known_first_hop_identities=known_first_hop_identities,
+                not (
+                    _BUILTIN_NESTED_TARGET_NAMESPACE_MATCHES(
+                        item,
+                        protected_root_identity=protected_root_identity,
+                        known_first_hop_identities=(
+                            known_first_hop_identities
+                        ),
+                    )
+                    if guard_context is None
+                    else _BUILTIN_NESTED_TARGET_NAMESPACE_MATCHES(
+                        item,
+                        protected_root_identity=protected_root_identity,
+                        known_first_hop_identities=(
+                            known_first_hop_identities
+                        ),
+                        guard_context=guard_context,
+                    )
                 )
                 for item in first_measurement
             )
@@ -2665,7 +3010,12 @@ def inspect_staged_executable_shebang_nested_targets(
                 item.content_bytes for item in measurements
             ),
         )
-        _BUILTIN_RECEIPT_PROJECTION(receipt)
+        receipt_canonical = _BUILTIN_RECEIPT_PROJECTION(receipt)
+        if (
+            expected_receipt_canonical is not None
+            and receipt_canonical != expected_receipt_canonical
+        ):
+            raise _InvalidNestedTargetResolution
 
         if (
             _BUILTIN_TARGET_REQUIREMENTS_PROJECTION(
@@ -2701,11 +3051,25 @@ def inspect_staged_executable_shebang_nested_targets(
                     "target_staging_context_digest"
                 ],
             )
+        if (
+            closing_guard_anchor is not None
+            and closing_guard_anchor() is not None
+        ):
+            raise _InvalidNestedTargetResolution
         if any(
-            not _BUILTIN_NESTED_TARGET_NAMESPACE_MATCHES(
-                item,
-                protected_root_identity=protected_root_identity,
-                known_first_hop_identities=known_first_hop_identities,
+            not (
+                _BUILTIN_NESTED_TARGET_NAMESPACE_MATCHES(
+                    item,
+                    protected_root_identity=protected_root_identity,
+                    known_first_hop_identities=known_first_hop_identities,
+                )
+                if guard_context is None
+                else _BUILTIN_NESTED_TARGET_NAMESPACE_MATCHES(
+                    item,
+                    protected_root_identity=protected_root_identity,
+                    known_first_hop_identities=known_first_hop_identities,
+                    guard_context=guard_context,
+                )
             )
             for item in first_measurement
         ):
@@ -2715,6 +3079,34 @@ def inspect_staged_executable_shebang_nested_targets(
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise
         raise _FIXED_VALIDATION_ERROR(_INVALID_MESSAGE) from None
+
+
+_BUILTIN_INSPECT_STAGED_EXECUTABLE_SHEBANG_NESTED_TARGETS = (
+    _inspect_staged_executable_shebang_nested_targets
+)
+
+
+def inspect_staged_executable_shebang_nested_targets(
+    expected_target_requirements: (
+        RepositoryExecutableShebangTargetRequirementsReceipt
+    ),
+    *,
+    expected_target_runtime: (
+        RepositoryExecutableShebangTargetRuntimeManifestReceipt
+    ),
+    expected_target_staging: RepositoryExecutableShebangTargetStagingReceipt,
+    lease: RepositoryExecutableShebangTargetStageLease,
+    expected_nested_target_paths: tuple[Path, ...],
+) -> RepositoryExecutableShebangNestedTargetResolutionReceipt:
+    """Measure exactly one additional absolute target hop at depth two."""
+
+    return _BUILTIN_INSPECT_STAGED_EXECUTABLE_SHEBANG_NESTED_TARGETS(
+        expected_target_requirements,
+        expected_target_runtime=expected_target_runtime,
+        expected_target_staging=expected_target_staging,
+        lease=lease,
+        expected_nested_target_paths=expected_nested_target_paths,
+    )
 
 
 __all__ = [

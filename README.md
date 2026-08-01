@@ -613,6 +613,67 @@ persistence, dispatch, routing, billing, capacity, circuit, live eligibility,
 CLI/state/runner integration, subprocesses, harnesses, models, and execution
 remain absent or explicitly unverified. Only Class 0/1 effects remain enabled.
 
+The eighteenth bounded Phase 3 slice adds the separate library-only schema-v1
+Class 0 `ordomata.repository_executable_shebang_nested_target_chain_guard`
+boundary. `inspect_staged_executable_shebang_nested_target_chain_guard(
+expected_nested_resolution, *, expected_target_requirements,
+expected_target_runtime, expected_target_staging, target_lease,
+expected_source_staging, source_lease, expected_nested_target_paths)` requires
+the exact expected nested-resolution receipt, exact staged-target
+requirements/runtime/staging chain and active same-PID target lease, and the
+exact source-staging receipt and active same-PID source lease. Under fixed
+`controller_inspected` /
+`known_source_chain_identity_and_staging_root_identity_v1` semantics it
+freshly reproduces the fixed-depth nested resolution with a private guard
+active during measurement. Source and target snapshots are checked before and
+after receipt construction. In the final guarded reproduction, target
+descriptor anchors run first, the source lease is re-anchored next, and guarded
+namespace validation remains the closing proof action.
+
+The guard derives bounded sets containing both the original and detached
+staged identities of every source executable and direct shebang target, plus
+the source staging-root identity and the target staging-root identity when
+that root exists. A guarded directory walk rejects any protected staging-root
+identity at the root or any component, and rejects a leaf matching any known
+original or staged source/target identity before candidate bytes are read;
+the same exclusions remain active during both complete measurements, reopen
+checks, and closing namespace validation. Fixed dispositions are
+`source_native_not_applicable`, `target_native_not_applicable`, and
+`known_chain_guard_verified`. Source-native and target-native chains preserve
+their exact requirement/binding correspondence with zero guarded
+measurements and no nested-target or staging-root path lookup; a native
+depth-1 target still receives the upstream descriptor validation required to
+reproduce its nested-resolution input.
+
+The immutable
+`RepositoryExecutableShebangNestedTargetChainGuardReceipt` contains exact
+`RepositoryExecutableShebangNestedTargetChainGuardedMeasurement`,
+`RepositoryExecutableShebangNestedTargetChainGuardRequirement`, and
+`RepositoryExecutableShebangNestedTargetChainGuardBinding` records. They
+contain only digest/reference lineage, fixed outcomes, bounded command
+identifiers, identity-set digests, counts, and byte totals. Totals are
+`requirement_count`, `command_count`,
+`known_chain_guard_verified_count`, `target_native_not_applicable_count`,
+`source_native_not_applicable_count`, `guarded_measurement_count`,
+`known_source_identity_count`, `known_target_identity_count`,
+`protected_staging_root_identity_count`, and `total_guarded_bytes`. Raw paths,
+bytes, identity numbers, temporary names, and descriptor numbers are absent.
+`guard_summary_ref` binds the three identity-set digests to their counts, the
+guarded-measurement count, the nested receipt digest, and the byte total for
+internal consistency only; it is deterministic and unkeyed, so receipt
+authenticity remains explicitly unverified.
+This proves only exact identity-domain re-entry exclusion for the known source
+chain and the one or two anchored staging-root identities present in the
+inputs. It makes no source-path or staging-root-path claim, generic cycle
+claim, or broader protected-root claim;
+performs no staging, write, cleanup, lease mutation, subprocess, harness,
+model, or execution; and grants no authority, authorization, action receipt,
+proposal/worktree lineage, persistence, dispatch, routing, billing, capacity,
+circuit, live eligibility, or CLI/state/runner capability. The seventeenth
+resolver retains its narrower schema-v1 meaning. A separate Class 1 nested-
+target staging boundary remains next, and only Class 0/1 effects remain
+enabled.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -877,6 +938,18 @@ outcomes, bounded command identifiers, counts, and byte totals; it stops after
 one additional hop and adds no broader cycle or protected-root closure,
 staging, authority, routing, live, subprocess, harness, model, or execution
 capability.
+
+The eighteenth bounded Phase 3 slice is the separate schema-v1 nested-target
+known-chain guard described above. It requires the exact expected nested
+resolution plus the exact active source- and target-stage receipt/lease
+lineages, then reproduces the depth-2 measurement with original and staged
+source/target identities and the one or two staging-root identities present
+excluded before candidate reads. Native-only input performs no nested-target
+or root-path lookup. Its privacy-bounded Class 0 receipt remains non-authorizing and
+makes no source-path, root-path, generic-cycle, broader-protected-root,
+staging, write, routing, live, subprocess, harness, model, or execution claim.
+The seventeenth resolver is unchanged; separate Class 1 nested-target staging
+remains next.
 
 ## Quick start
 

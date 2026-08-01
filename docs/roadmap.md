@@ -502,6 +502,52 @@ parallel because it cannot exercise worker authority.
   authority, authorization, action receipt, proposal/worktree lineage,
   persistence, routing, billing, capacity, circuit, live, subprocess, harness,
   model, or execution capability. The Class 0/1 ceiling remains unchanged.
+- The eighteenth bounded Phase 3 slice implements the separate library-only
+  schema-v1
+  `ordomata.repository_executable_shebang_nested_target_chain_guard` Class 0
+  inspection. `inspect_staged_executable_shebang_nested_target_chain_guard(
+  expected_nested_resolution, *, expected_target_requirements,
+  expected_target_runtime, expected_target_staging, target_lease,
+  expected_source_staging, source_lease, expected_nested_target_paths)`
+  requires the exact expected nested-resolution receipt and path expectation,
+  exact staged-target requirements/runtime/staging lineage and active same-PID
+  target lease, and exact source-staging receipt and active same-PID source
+  lease. Fixed `controller_inspected` /
+  `known_source_chain_identity_and_staging_root_identity_v1` semantics freshly
+  reproduce the fixed depth-2 resolution with stronger exclusions active
+  inside both measurements, descriptor reopen checks, and closing namespace
+  validation.
+  The guarded identity sets contain the original and detached staged identity
+  of every source executable and direct shebang target. The protected-root set
+  contains the source staging-root identity and the target staging-root
+  identity when used. Any protected root identity in `/` or a directory
+  component, or any known original/staged source/target leaf identity, fails
+  before candidate bytes are read. The reproduced nested receipt must exactly equal
+  the expected receipt. Source and target snapshots are checked before and
+  after receipt construction; the final guarded reproduction checks target
+  descriptor anchors, re-anchors the source lease, and then performs its final
+  guarded namespace validation.
+  Fixed dispositions are `source_native_not_applicable`,
+  `target_native_not_applicable`, and `known_chain_guard_verified`; native-only
+  input preserves exact rows and bindings with no guarded measurement and no
+  nested-target or staging-root path lookup.
+  `RepositoryExecutableShebangNestedTargetChainGuardReceipt` contains exact
+  `RepositoryExecutableShebangNestedTargetChainGuardedMeasurement`,
+  `RepositoryExecutableShebangNestedTargetChainGuardRequirement`, and
+  `RepositoryExecutableShebangNestedTargetChainGuardBinding` records. They
+  expose only digest/reference lineage, identity-set digests, fixed outcomes,
+  bounded identifiers, counts, and byte totals. Raw paths, content, identity
+  numbers, temporary names, and descriptors are absent. The deterministic,
+  unkeyed `guard_summary_ref` provides internal digest/count/byte-total
+  consistency, not authenticity. The guard makes no
+  source-path or staging-root-path
+  claim, generic-cycle claim, or broader-protected-root claim; stages or writes
+  nothing; mutates or cleans up no lease; grants no authority, authorization,
+  action receipt, proposal/worktree lineage, persistence, routing, billing,
+  capacity, circuit, or live capability; and invokes no subprocess, harness,
+  model, or execution. The seventeenth resolver retains its narrower contract,
+  the Class 0/1 ceiling is unchanged, and separate Class 1 nested-target
+  staging remains next.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

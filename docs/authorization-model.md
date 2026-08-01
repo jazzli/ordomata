@@ -588,6 +588,57 @@ billing, capacity, circuit, live eligibility, CLI/state/runner, subprocess,
 harness, model, or execution capability. The implemented authorization ceiling
 remains Class 0/1.
 
+The eighteenth bounded Phase 3 slice adds a separate Class 0 PIP, not a PDP or
+PEP: `ordomata.repository_executable_shebang_nested_target_chain_guard`
+exposes `inspect_staged_executable_shebang_nested_target_chain_guard(
+expected_nested_resolution, *, expected_target_requirements,
+expected_target_runtime, expected_target_staging, target_lease,
+expected_source_staging, source_lease, expected_nested_target_paths)`. It
+requires the exact expected nested-resolution receipt and path expectation,
+the exact staged-target requirements/runtime/staging receipt chain and active
+same-PID target lease, and the exact source-staging receipt and active same-PID
+source lease. These inputs are PIP evidence and process-local proof anchors,
+not authority. Fixed `controller_inspected` /
+`known_source_chain_identity_and_staging_root_identity_v1` semantics freshly
+reproduce the depth-2 nested resolution while an identity guard remains active
+inside every measurement and namespace check.
+
+The exact known-source set contains the original and detached staged identity
+of every source executable; the exact known-target set contains the original
+and detached staged identity of every direct shebang target. The source-stage
+root and, when used, target-stage root form a separate protected identity set.
+A no-follow walk rejects any protected root identity at any directory
+component and rejects any known source/target identity before leaf bytes are
+read, with the same exclusions on reopen and closing namespace validation.
+Source and target
+lease snapshots are required before and after receipt construction; the final
+guarded reproduction checks target descriptor anchors, re-anchors the source
+lease, and then performs its final guarded namespace validation. Fixed dispositions are
+`source_native_not_applicable`,
+`target_native_not_applicable`, and `known_chain_guard_verified`. Native-only
+input preserves the exact requirement/binding lineage with zero guarded
+measurements and no nested-target or staging-root path lookup.
+
+`RepositoryExecutableShebangNestedTargetChainGuardReceipt` contains exact
+`RepositoryExecutableShebangNestedTargetChainGuardedMeasurement`,
+`RepositoryExecutableShebangNestedTargetChainGuardRequirement`, and
+`RepositoryExecutableShebangNestedTargetChainGuardBinding` records. They are
+digest/reference-, identity-set-digest-, bounded-count-, and byte-total-only
+and expose no path, content, device/inode number, temporary name, or
+descriptor. Its deterministic unkeyed `guard_summary_ref` establishes only
+internal digest/count/byte-total consistency; receipt authenticity remains
+explicitly unverified. This narrow PIP verifies
+only known original/staged source and target identity re-entry exclusion and
+the one or two staging-root identities present. It does not verify a source
+path or staging-root path, generic cycle closure, or broader protected-root closure;
+perform staging, a write, cleanup, or lease mutation; or grant authority,
+authorization, an action receipt, proposal/worktree lineage, persistence,
+dispatch, routing, billing, capacity, circuit, live eligibility, CLI/state/
+runner, subprocess, harness, model, or execution capability. The seventeenth
+resolver remains a separate narrower PIP. A future Class 1 nested-target
+staging primitive must freshly consume this evidence at its own effect
+boundary; the current Class 0/1 ceiling is unchanged.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -833,6 +884,19 @@ identifiers, counts, and byte totals; it stops after one additional hop, is
 neither a PDP decision nor PEP receipt, and grants no broader cycle/protected-
 root closure, staging, proposal, route, billing, live, subprocess, harness,
 model, or execution capability.
+
+The eighteenth bounded Phase 3 slice adds the nested-target known-chain guard
+PIP described above. Exact active source- and target-stage lineages anchor
+original and staged source/target identities and the one or two staging-root
+identities present while the expected depth-2 measurement is freshly
+reproduced.
+Those exclusions apply before candidate reads and through closing namespace
+validation. Native-only input performs no nested-target or root-path lookup.
+The privacy-bounded Class 0 result is neither a PDP decision nor PEP receipt
+and grants no source-path/root-path, generic-cycle, broader-protected-root,
+staging, write, route, live, subprocess, harness, model, or execution
+capability. The seventeenth PIP is unchanged; separate Class 1 nested-target
+staging remains next.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
