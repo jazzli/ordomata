@@ -97,6 +97,9 @@ class RepositoryExecutableNativeLoaderNestedTargetResolutionTests(
         nested_reentry: bool = False,
         nested_hardlink_alias: bool = False,
         nested_under_stage_root: bool = False,
+        nested_source_reentry: bool = False,
+        nested_source_hardlink_alias: bool = False,
+        nested_under_source_stage_root: bool = False,
     ) -> dict[str, object]:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -121,7 +124,26 @@ class RepositoryExecutableNativeLoaderNestedTargetResolutionTests(
             if same_nested_target
             else root.parent / "private-nested-loader-two"
         )
-        if nested_reentry:
+        source_bare_path = search_one / "private-bare-tool-marker"
+        source_relative_path = (
+            root
+            / "private-source-path-marker"
+            / "private-relative-tool-marker"
+        )
+        if nested_source_reentry:
+            nested_one = source_bare_path
+            nested_two = (
+                source_bare_path
+                if same_first_target
+                else source_relative_path
+            )
+        elif nested_source_hardlink_alias:
+            nested_one = root.parent / "private-source-hardlink-alias"
+            nested_two = nested_one
+        elif nested_under_source_stage_root:
+            nested_one = source_stage_root / "private-late-nested-loader"
+            nested_two = nested_one
+        elif nested_reentry:
             nested_one = first_one
             nested_two = first_two
         elif nested_hardlink_alias:
@@ -155,7 +177,15 @@ class RepositoryExecutableNativeLoaderNestedTargetResolutionTests(
                 self.fixture._write_target(first_two, second_content)
             if nested_hardlink_alias:
                 os.link(first_one, nested_one)
-            elif not nested_reentry and not nested_under_stage_root:
+            elif not any(
+                (
+                    nested_reentry,
+                    nested_under_stage_root,
+                    nested_source_reentry,
+                    nested_source_hardlink_alias,
+                    nested_under_source_stage_root,
+                )
+            ):
                 self.fixture._write_target(
                     nested_one,
                     b"private-nested-loader-one-bytes\n",
@@ -192,6 +222,8 @@ class RepositoryExecutableNativeLoaderNestedTargetResolutionTests(
             bare=source_bare,
             relative=source_relative,
         )
+        if nested_source_hardlink_alias:
+            os.link(source_bare_path, nested_one)
         registration = self.fixture._registration(root)
         source_lease, source_staging, source_runtime, source_requirements = (
             self.fixture._stage_chain(
@@ -201,6 +233,11 @@ class RepositoryExecutableNativeLoaderNestedTargetResolutionTests(
             )
         )
         self.addCleanup(source_lease.close)
+        if nested_under_source_stage_root:
+            self.fixture._write_target(
+                nested_one,
+                b"private-source-stage-root-nested-loader\n",
+            )
         first_resolution = inspect_staged_executable_native_loader_targets(
             source_requirements,
             expected_runtime=source_runtime,
@@ -244,6 +281,7 @@ class RepositoryExecutableNativeLoaderNestedTargetResolutionTests(
             "registration": registration,
             "root": root,
             "source_lease": source_lease,
+            "source_staging": source_staging,
             "target_lease": target_lease,
             "target_requirements": target_requirements,
             "target_runtime": target_runtime,

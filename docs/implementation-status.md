@@ -921,6 +921,40 @@ deferred. No lease mutation/cleanup, persistence, proposal/worktree, routing,
 billing, network, worker, subprocess, harness, model, loader invocation, or
 execution integration is added. Only Class 0/1 effects remain enabled.
 
+Implemented as the twenty-eighth bounded Phase 3 slice, the library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_loader_nested_target_chain_guard` API
+accepts the exact depth-two native-loader resolution plus its exact target
+loader requirements, target runtime, target staging, first-hop resolution,
+source staging, active same-PID leases, and ordered current/nested path sets. It
+reproduces the nested resolution with a stronger combined guard, brackets
+receipt construction with exact source/target snapshots, and performs a final
+canonical reproduction whose closing source anchor follows target-stage
+revalidation.
+
+The combined guard adds every original and detached staged source-executable
+identity and the source staging-root identity to the original/staged target
+identities and target staging-root identity already enforced. Exact source
+identity, hardlink, staged-copy, and source-stage-root descendant re-entry fail
+before leaf bytes are read. Shared declarations remain measured once while
+exact measurement, requirement, source-lineage, and command bindings are
+preserved. Fixed absent, unsupported/fat, non-native, and no-target outcomes
+avoid unnecessary lookup or reads. Canonical records expose digest-only known-
+identity sets, protected-root sets, guarded measurements, requirements,
+lineages, bindings, counts, and byte totals. Raw paths, bytes, identity numbers,
+temporary names, and descriptors remain private, while deterministic digests
+remain correlatable and potentially guessable.
+
+The receipt is historical depth-two evidence. Newly measured bytes remain
+opaque and are not parsed, staged, followed, invoked, or executed. General
+cycles, source path-spelling re-entry beyond exact anchored identities, broader
+protected-root closure, loader identity/authenticity/compatibility/invocability,
+dependency/shared-library closure, freshness, authorization, and future-
+execution correspondence remain deferred. No lease mutation/cleanup,
+persistence, proposal/worktree, routing, billing, network, worker, subprocess,
+harness, model, loader invocation, or execution integration is added. Only
+Class 0/1 effects remain enabled.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -1226,6 +1260,14 @@ declared native-loader hop. Exact declaration/path reproduction, two guarded
 no-follow measurements, and immediate current-target, hardlink, detached-
 target, and target-staging-root re-entry exclusions extend digest-only lineage
 to depth two without parsing the new bytes or adding lease, subprocess, model,
+loader, or execution integration.
+
+The twenty-eighth slice adds a separate Class 0 known-chain guard over that
+depth-two native-loader receipt. Exact reproduction adds original/staged source
+identities and the source staging-root identity to the existing target
+protections and closes on exact source/target lease anchors. Source identity,
+hardlink, staged-copy, and source-stage-root re-entry now fail before leaf reads
+without parsing the newly measured bytes or adding staging, subprocess, model,
 loader, or execution integration.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
