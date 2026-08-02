@@ -1564,13 +1564,15 @@ decisions with distinct `permit`, `defer`, `deny`, and `indeterminate`
 effects, policy and evidence digests, obligations, continuous enforcement,
 RBAC role constraints, adapted confidentiality/integrity/availability impact
 labels, untrusted MCP claim handling, and conservatively derived Class 0-3
-summaries. There is still no general/live/comparison/supervisor admission or
-shared-publication PDP, RBAC
+summaries. There is still no general/live/comparison or supervisor
+claim/dispatch admission or shared-publication PDP, RBAC
 separation-of-duty enforcement, approval resumption, mediated command/tool
-coverage, supervisor worker permit, or live-harness ABAC enforcement. The three
+coverage, supervisor worker permit, or live-harness ABAC enforcement. The
 persisted enforcing decision/action-receipt chains are limited to Class 1
 admission of a new profile-backed exact built-in-mock attempt, its dispatch,
-and its owner-private local-candidate publication. The
+its owner-private local-candidate publication, one immutable deterministic-mock
+supervisor flow admission, and one reversible local supervisor control
+transition. The
 controlled comparison path now records a
 durable Class 0 run/event stream for every started trial, including a schema-v2
 digest-only binding, bounded billing/accounting facts, runner-event ordinals,
@@ -1629,14 +1631,20 @@ Subsequent additive migrations record canonical, non-enforcing supervisor ABAC
 shadow observations at flow admission, attempt claim, operator control
 transition, and sticky cancellation, including exact request/decision digests,
 conservatively derived class, legacy executability, and parity. A later
-additive migration also makes each new reversible local control transition pass
-an exact fixed Class 1 PEP: its privacy-bounded decision is persisted and
-exactly reread before the control event, and its succeeded action receipt is
-appended and reread in the same transaction. The read-only supervisor audit
-verifies the shadow records and independently replays post-v5 control
-decision/receipt pairs from one consistent SQLite snapshot, checking
-coverage/order, exact append-only schema, and migration provenance. Frozen
-migration baselines exclude pre-shadow flow, attempt, control-event, and
+additive migration makes each new reversible local control transition pass an
+exact fixed Class 1 PEP: its privacy-bounded decision is persisted and exactly
+reread before the control event, and its succeeded action receipt is appended
+and reread in the same transaction. The next additive migration makes each new
+immutable deterministic-mock flow admission pass a separate exact fixed Class
+1 PEP: it binds an admission-key reference, immutable flow digest, and exact
+initial queued revision; persists and rereads its permit before the flow write;
+and appends and rereads its receipt before commit. The PEP covers only that
+local bookkeeping write, not the task, claim, cancellation, worker, repository,
+network, or Class 2/3 effect. The read-only supervisor audit verifies the
+shadow records and independently replays post-v5 control and post-v6
+flow-admission decision/receipt pairs from one consistent SQLite snapshot,
+checking coverage/order, exact append-only schema, and migration provenance.
+Frozen migration baselines exclude pre-shadow flow, attempt, control-event, and
 cancellation-request identifiers so historical records are not falsely treated
 as missing evidence. Control transitions bind the previous control revision;
 cancellation shadows bind the exact source flow revision and deterministic
@@ -1648,7 +1656,7 @@ Startup verifies canonical baseline, migration-ledger, and supervisor schema
 objects, including non-prefixed triggers targeting owned tables, before use.
 Fresh baseline creation and exact pre-ledger baseline adoption are atomic; all
 schema statements and frozen migration rows commit together or not at all.
-Existing databases must carry a contiguous known v1-v5 migration prefix whose
+Existing databases must carry a contiguous known v1-v6 migration prefix whose
 identities agree with the installed supervisor tables. Baseline foreign keys,
 the atomic first `created` event, and subsequent status-transition lineage are
 also checked. Missing guards, partial schemas, ledger gaps, future versions,

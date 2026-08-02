@@ -82,6 +82,13 @@ from .supervisor_control_authorization import (
     build_supervisor_control_action_receipt,
     evaluate_supervisor_control_authorization,
 )
+from .supervisor_flow_admission_authorization import (
+    SupervisorFlowAdmission,
+    SupervisorFlowAdmissionAuthorization,
+    assert_supervisor_flow_admission_authorized,
+    build_supervisor_flow_admission_action_receipt,
+    evaluate_supervisor_flow_admission_authorization,
+)
 
 
 class SupervisorError(OrdomataError):
@@ -199,7 +206,7 @@ _REASON_CODE = re.compile(r"[a-z0-9_]{1,100}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _RESOURCE_KEY = re.compile(r"[a-z0-9][a-z0-9._:/-]{0,199}")
 _MAX_JSON_BYTES = 262_144
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 _FOREGROUND_LEASE_KEY = "supervisor:foreground"
 SUPERVISOR_DISPATCH_BLOCKERS = (
     "runtime_abac_enforcement_not_implemented",
@@ -330,6 +337,8 @@ class SupervisorAuthorizationAudit:
     findings: tuple[SupervisorAuthorizationFinding, ...]
     control_enforcement_record_count: int = 0
     expected_control_enforcement_record_count: int = 0
+    flow_admission_enforcement_record_count: int = 0
+    expected_flow_admission_enforcement_record_count: int = 0
 
     @property
     def clean(self) -> bool:
@@ -347,6 +356,12 @@ class SupervisorAuthorizationAudit:
             "expected_control_enforcement_record_count": (
                 self.expected_control_enforcement_record_count
             ),
+            "flow_admission_enforcement_record_count": (
+                self.flow_admission_enforcement_record_count
+            ),
+            "expected_flow_admission_enforcement_record_count": (
+                self.expected_flow_admission_enforcement_record_count
+            ),
             "finding_count": len(self.findings),
             "clean": self.clean,
             "findings": [finding.to_mapping() for finding in self.findings],
@@ -356,6 +371,16 @@ class SupervisorAuthorizationAudit:
 @dataclass(frozen=True, slots=True)
 class _SupervisorControlEnforcementAudit:
     """Internal read-only replay summary for the control-transition PEP."""
+
+    schema_present: bool
+    record_count: int
+    expected_record_count: int
+    findings: tuple[SupervisorAuthorizationFinding, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _SupervisorFlowAdmissionEnforcementAudit:
+    """Internal read-only replay summary for the flow-admission PEP."""
 
     schema_present: bool
     record_count: int
@@ -1043,6 +1068,73 @@ END;
 """
 
 
+_SCHEMA_V6 = """
+CREATE TABLE supervisor_flow_admission_authorization_baseline (
+    flow_id TEXT PRIMARY KEY REFERENCES supervisor_flows(flow_id)
+);
+INSERT INTO supervisor_flow_admission_authorization_baseline (flow_id)
+    SELECT flow_id FROM supervisor_flows;
+
+CREATE TABLE supervisor_flow_admission_authorization_decisions (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_event_id TEXT NOT NULL UNIQUE CHECK (length(decision_event_id) = 71),
+    flow_id TEXT NOT NULL UNIQUE,
+    admission_key_ref TEXT NOT NULL CHECK (length(admission_key_ref) = 71),
+    flow_request_digest TEXT NOT NULL CHECK (length(flow_request_digest) = 64),
+    initial_flow_event_id TEXT NOT NULL CHECK (length(initial_flow_event_id) <= 256),
+    initial_revision INTEGER NOT NULL CHECK (initial_revision = 1),
+    request_digest TEXT NOT NULL CHECK (length(request_digest) = 71),
+    decision_digest TEXT NOT NULL CHECK (length(decision_digest) = 71),
+    payload_json TEXT NOT NULL CHECK (length(payload_json) <= 262144),
+    evaluated_at REAL NOT NULL CHECK (evaluated_at >= 0)
+);
+CREATE INDEX supervisor_flow_admission_authorization_decisions_flow
+    ON supervisor_flow_admission_authorization_decisions(flow_id, sequence);
+
+CREATE TABLE supervisor_flow_admission_authorization_action_receipts (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    receipt_event_id TEXT NOT NULL UNIQUE CHECK (length(receipt_event_id) = 71),
+    flow_id TEXT NOT NULL UNIQUE REFERENCES supervisor_flows(flow_id),
+    decision_event_id TEXT NOT NULL UNIQUE
+        REFERENCES supervisor_flow_admission_authorization_decisions(decision_event_id),
+    receipt_digest TEXT NOT NULL CHECK (length(receipt_digest) = 71),
+    payload_json TEXT NOT NULL CHECK (length(payload_json) <= 262144),
+    completed_at REAL NOT NULL CHECK (completed_at >= 0)
+);
+CREATE INDEX supervisor_flow_admission_authorization_receipts_flow
+    ON supervisor_flow_admission_authorization_action_receipts(flow_id, sequence);
+
+CREATE TRIGGER supervisor_flow_admission_authorization_baseline_no_update
+BEFORE UPDATE ON supervisor_flow_admission_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor flow admission authorization baseline is append-only');
+END;
+CREATE TRIGGER supervisor_flow_admission_authorization_baseline_no_delete
+BEFORE DELETE ON supervisor_flow_admission_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor flow admission authorization baseline is append-only');
+END;
+CREATE TRIGGER supervisor_flow_admission_authorization_baseline_no_insert
+BEFORE INSERT ON supervisor_flow_admission_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor flow admission authorization baseline is frozen');
+END;
+CREATE TRIGGER supervisor_flow_admission_authorization_decisions_no_update
+BEFORE UPDATE ON supervisor_flow_admission_authorization_decisions BEGIN
+    SELECT RAISE(ABORT, 'supervisor flow admission authorization decisions are append-only');
+END;
+CREATE TRIGGER supervisor_flow_admission_authorization_decisions_no_delete
+BEFORE DELETE ON supervisor_flow_admission_authorization_decisions BEGIN
+    SELECT RAISE(ABORT, 'supervisor flow admission authorization decisions are append-only');
+END;
+CREATE TRIGGER supervisor_flow_admission_authorization_action_receipts_no_update
+BEFORE UPDATE ON supervisor_flow_admission_authorization_action_receipts BEGIN
+    SELECT RAISE(ABORT, 'supervisor flow admission authorization receipts are append-only');
+END;
+CREATE TRIGGER supervisor_flow_admission_authorization_action_receipts_no_delete
+BEFORE DELETE ON supervisor_flow_admission_authorization_action_receipts BEGIN
+    SELECT RAISE(ABORT, 'supervisor flow admission authorization receipts are append-only');
+END;
+"""
+
+
 class SQLiteSupervisorStore:
     """Supervisor-specific event store sharing the existing local SQLite file."""
 
@@ -1145,6 +1237,7 @@ class SQLiteSupervisorStore:
                     3: _SCHEMA_V3,
                     4: _SCHEMA_V4,
                     5: _SCHEMA_V5,
+                    6: _SCHEMA_V6,
                 }
                 for version, script in migration_scripts.items():
                     if _sha256_text(script) != _KNOWN_STATE_MIGRATIONS[version][1]:
@@ -1163,6 +1256,9 @@ class SQLiteSupervisorStore:
                     if version == 5:
                         _verify_pre_v5_supervisor_schema(self._connection)
                         _verify_pre_v5_control_history(self._connection)
+                    if version == 6:
+                        _verify_pre_v6_supervisor_schema(self._connection)
+                        _verify_pre_v6_flow_history(self._connection)
                     _execute_schema_script(
                         self._connection,
                         migration_scripts[version],
@@ -1316,6 +1412,44 @@ class SQLiteSupervisorStore:
                 "SELECT 1 FROM supervisor_flows WHERE flow_id = ?", (spec.flow_id,)
             ).fetchone() is not None:
                 raise AdmissionConflictError("flow identifier already exists")
+            initial_flow_event_id = self._new_id("flow_event")
+            admission = SupervisorFlowAdmission(
+                flow_id=spec.flow_id,
+                admission_key_ref=canonical_digest(
+                    {"admission_key": spec.admission_key}
+                ),
+                flow_request_digest=spec.request_digest,
+                initial_flow_event_id=initial_flow_event_id,
+                occurred_at=spec.created_at,
+            )
+            authorization = evaluate_supervisor_flow_admission_authorization(
+                admission=admission,
+                legacy_executable=True,
+            )
+            decision_payload = authorization.to_event_payload()
+            persisted_decision_payload = (
+                self._append_flow_admission_authorization_decision(
+                    connection,
+                    authorization=authorization,
+                    payload=decision_payload,
+                )
+            )
+            assert_supervisor_flow_admission_authorized(
+                authorization,
+                admission=admission,
+                action_started_at=spec.created_at,
+                persisted_payload=persisted_decision_payload,
+            )
+            if (
+                admission.flow_id != spec.flow_id
+                or admission.admission_key_ref
+                != canonical_digest({"admission_key": spec.admission_key})
+                or admission.flow_request_digest != spec.request_digest
+                or admission.occurred_at != spec.created_at
+            ):
+                raise AuthorizationBlocked(
+                    "supervisor flow admission target does not match its immutable flow"
+                )
             connection.execute(
                 """
                 INSERT INTO supervisor_flows (
@@ -1338,7 +1472,7 @@ class SQLiteSupervisorStore:
                     spec.max_attempts, spec.created_at,
                 ),
             )
-            self._insert_flow_revision(
+            initial_revision = self._insert_flow_revision(
                 connection,
                 flow_id=spec.flow_id,
                 revision=1,
@@ -1347,7 +1481,39 @@ class SQLiteSupervisorStore:
                 active_attempt_id=None,
                 reason_code="admitted",
                 occurred_at=spec.created_at,
+                event_id=initial_flow_event_id,
             )
+            if (
+                not isinstance(initial_revision, FlowRevision)
+                or initial_revision.event_id != admission.initial_flow_event_id
+                or initial_revision.flow_id != admission.flow_id
+                or initial_revision.revision != 1
+                or initial_revision.state is not FlowState.QUEUED
+                or initial_revision.cancellation_requested
+                or initial_revision.active_attempt_id is not None
+                or initial_revision.reason_code != "admitted"
+                or initial_revision.occurred_at != admission.occurred_at
+            ):
+                raise SupervisorError(
+                    "supervisor flow admission revision persistence is uncertain"
+                )
+            receipt_payload = build_supervisor_flow_admission_action_receipt(
+                authorization=authorization,
+                action_started_at=spec.created_at,
+                completed_at=spec.created_at,
+            )
+            persisted_receipt_payload = (
+                self._append_flow_admission_authorization_receipt(
+                    connection,
+                    authorization=authorization,
+                    payload=receipt_payload,
+                    completed_at=spec.created_at,
+                )
+            )
+            if persisted_receipt_payload != receipt_payload:
+                raise SupervisorError(
+                    "supervisor flow admission authorization receipt persistence is uncertain"
+                )
             try:
                 self._append_authorization_observation(
                     connection,
@@ -1719,6 +1885,155 @@ class SQLiteSupervisorStore:
                 observed_at,
             ),
         )
+
+    def _append_flow_admission_authorization_decision(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        authorization: SupervisorFlowAdmissionAuthorization,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Durably bind an exact PEP decision before a flow admission."""
+
+        if (
+            not isinstance(authorization, SupervisorFlowAdmissionAuthorization)
+            or dict(payload) != authorization.to_event_payload()
+        ):
+            raise AuthorizationBlocked(
+                "supervisor flow admission authorization decision is inconsistent"
+            )
+        admission = authorization.admission
+        payload_json = _bounded_json(
+            dict(payload),
+            "supervisor flow admission authorization decision payload",
+        )
+        values = (
+            authorization.decision.digest,
+            admission.flow_id,
+            admission.admission_key_ref,
+            admission.flow_request_digest,
+            admission.initial_flow_event_id,
+            1,
+            authorization.request.digest,
+            authorization.decision.digest,
+            payload_json,
+            admission.occurred_at,
+        )
+        connection.execute(
+            """
+            INSERT INTO supervisor_flow_admission_authorization_decisions (
+                decision_event_id, flow_id, admission_key_ref, flow_request_digest,
+                initial_flow_event_id, initial_revision, request_digest,
+                decision_digest, payload_json, evaluated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+        row = connection.execute(
+            """
+            SELECT decision_event_id, flow_id, admission_key_ref, flow_request_digest,
+                   initial_flow_event_id, initial_revision, request_digest,
+                   decision_digest, payload_json, evaluated_at
+            FROM supervisor_flow_admission_authorization_decisions
+            WHERE flow_id = ?
+            """,
+            (admission.flow_id,),
+        ).fetchone()
+        if row is None or tuple(row) != values:
+            raise SupervisorError(
+                "supervisor flow admission authorization decision persistence is uncertain"
+            )
+        try:
+            persisted_payload = json.loads(row["payload_json"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise SupervisorError(
+                "supervisor flow admission authorization decision persistence is uncertain"
+            ) from error
+        if type(persisted_payload) is not dict:
+            raise SupervisorError(
+                "supervisor flow admission authorization decision persistence is uncertain"
+            )
+        return persisted_payload
+
+    def _append_flow_admission_authorization_receipt(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        authorization: SupervisorFlowAdmissionAuthorization,
+        payload: Mapping[str, Any],
+        completed_at: float,
+    ) -> dict[str, Any]:
+        """Append and exactly reread the receipt after a local admission."""
+
+        if (
+            not isinstance(authorization, SupervisorFlowAdmissionAuthorization)
+            or type(completed_at) not in (int, float)
+            or isinstance(completed_at, bool)
+            or not math.isfinite(float(completed_at))
+            or completed_at < 0
+        ):
+            raise AuthorizationBlocked(
+                "supervisor flow admission authorization receipt is inconsistent"
+            )
+        expected_payload = build_supervisor_flow_admission_action_receipt(
+            authorization=authorization,
+            action_started_at=authorization.admission.occurred_at,
+            completed_at=float(completed_at),
+        )
+        if dict(payload) != expected_payload:
+            raise AuthorizationBlocked(
+                "supervisor flow admission authorization receipt is inconsistent"
+            )
+        receipt_digest = payload.get("receipt_digest")
+        if type(receipt_digest) is not str:
+            raise AuthorizationBlocked(
+                "supervisor flow admission authorization receipt is inconsistent"
+            )
+        payload_json = _bounded_json(
+            dict(payload),
+            "supervisor flow admission authorization receipt payload",
+        )
+        values = (
+            receipt_digest,
+            authorization.admission.flow_id,
+            authorization.decision.digest,
+            receipt_digest,
+            payload_json,
+            float(completed_at),
+        )
+        connection.execute(
+            """
+            INSERT INTO supervisor_flow_admission_authorization_action_receipts (
+                receipt_event_id, flow_id, decision_event_id, receipt_digest,
+                payload_json, completed_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+        row = connection.execute(
+            """
+            SELECT receipt_event_id, flow_id, decision_event_id, receipt_digest,
+                   payload_json, completed_at
+            FROM supervisor_flow_admission_authorization_action_receipts
+            WHERE flow_id = ?
+            """,
+            (authorization.admission.flow_id,),
+        ).fetchone()
+        if row is None or tuple(row) != values:
+            raise SupervisorError(
+                "supervisor flow admission authorization receipt persistence is uncertain"
+            )
+        try:
+            persisted_payload = json.loads(row["payload_json"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise SupervisorError(
+                "supervisor flow admission authorization receipt persistence is uncertain"
+            ) from error
+        if type(persisted_payload) is not dict:
+            raise SupervisorError(
+                "supervisor flow admission authorization receipt persistence is uncertain"
+            )
+        return persisted_payload
 
     def _append_control_authorization_decision(
         self,
@@ -2411,8 +2726,12 @@ class SQLiteSupervisorStore:
         active_attempt_id: str | None,
         reason_code: str,
         occurred_at: float,
+        event_id: str | None = None,
     ) -> FlowRevision:
-        event_id = self._new_id("flow_event")
+        if event_id is None:
+            event_id = self._new_id("flow_event")
+        else:
+            _validate_text(event_id, "flow_event", maximum=256)
         cursor = connection.execute(
             """
             INSERT INTO supervisor_flow_revisions (
@@ -2908,10 +3227,14 @@ def _inspect_supervisor_authorization_connection(
     flow = _inspect_flow_authorization_connection(connection)
     bookkeeping = _inspect_bookkeeping_authorization_connection(connection)
     control_enforcement = _inspect_control_enforcement_connection(connection)
+    flow_admission_enforcement = (
+        _inspect_flow_admission_enforcement_connection(connection)
+    )
     findings = (
         *flow.findings,
         *bookkeeping.findings,
         *control_enforcement.findings,
+        *flow_admission_enforcement.findings,
         *guard_findings,
     )
     return SupervisorAuthorizationAudit(
@@ -2920,6 +3243,7 @@ def _inspect_supervisor_authorization_connection(
             flow.schema_present
             and bookkeeping.schema_present
             and control_enforcement.schema_present
+            and flow_admission_enforcement.schema_present
             and not guard_findings
         ),
         observation_count=flow.observation_count + bookkeeping.observation_count,
@@ -2931,6 +3255,12 @@ def _inspect_supervisor_authorization_connection(
         control_enforcement_record_count=control_enforcement.record_count,
         expected_control_enforcement_record_count=(
             control_enforcement.expected_record_count
+        ),
+        flow_admission_enforcement_record_count=(
+            flow_admission_enforcement.record_count
+        ),
+        expected_flow_admission_enforcement_record_count=(
+            flow_admission_enforcement.expected_record_count
         ),
     )
 
@@ -3663,6 +3993,300 @@ def _inspect_control_enforcement_connection(
     )
 
 
+def _inspect_flow_admission_enforcement_connection(
+    connection: sqlite3.Connection,
+) -> _SupervisorFlowAdmissionEnforcementAudit:
+    """Replay only post-v6 mock-flow admissions without repairing state."""
+
+    tables = _table_names(connection)
+    required = {
+        "supervisor_flows",
+        "supervisor_flow_revisions",
+        "supervisor_attempts",
+        "supervisor_flow_admission_authorization_baseline",
+        "supervisor_flow_admission_authorization_decisions",
+        "supervisor_flow_admission_authorization_action_receipts",
+    }
+    if not required.issubset(tables):
+        return _SupervisorFlowAdmissionEnforcementAudit(
+            False,
+            0,
+            0,
+            (
+                SupervisorAuthorizationFinding(
+                    "flow_admission_authorization_schema_missing",
+                    None,
+                    "flow_admission",
+                    None,
+                ),
+            ),
+        )
+    try:
+        flow_rows = connection.execute(
+            "SELECT * FROM supervisor_flows ORDER BY created_at, flow_id"
+        ).fetchall()
+        revisions_by_flow: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_flow_revisions ORDER BY flow_id, revision"
+        ).fetchall():
+            revisions_by_flow.setdefault(row["flow_id"], []).append(row)
+        attempt_flow_ids = {
+            row["attempt_id"]: row["flow_id"]
+            for row in connection.execute(
+                "SELECT attempt_id, flow_id FROM supervisor_attempts"
+            ).fetchall()
+        }
+        baseline = {
+            row["flow_id"]
+            for row in connection.execute(
+                "SELECT flow_id FROM supervisor_flow_admission_authorization_baseline"
+            ).fetchall()
+        }
+        decision_rows = connection.execute(
+            """
+            SELECT * FROM supervisor_flow_admission_authorization_decisions
+            ORDER BY sequence
+            """
+        ).fetchall()
+        receipt_rows = connection.execute(
+            """
+            SELECT * FROM supervisor_flow_admission_authorization_action_receipts
+            ORDER BY sequence
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        return _SupervisorFlowAdmissionEnforcementAudit(
+            False,
+            0,
+            0,
+            (
+                SupervisorAuthorizationFinding(
+                    "flow_admission_authorization_schema_unreadable",
+                    None,
+                    "flow_admission",
+                    None,
+                ),
+            ),
+        )
+
+    findings: list[SupervisorAuthorizationFinding] = []
+    flow_ids = {row["flow_id"] for row in flow_rows}
+    if not baseline.issubset(flow_ids):
+        findings.append(
+            SupervisorAuthorizationFinding(
+                "flow_admission_authorization_baseline_invalid",
+                None,
+                "flow_admission",
+                None,
+            )
+        )
+    expected_ids = tuple(
+        row["flow_id"] for row in flow_rows if row["flow_id"] not in baseline
+    )
+    expected_set = set(expected_ids)
+    decision_by_flow: dict[str, list[sqlite3.Row]] = {}
+    for row in decision_rows:
+        decision_by_flow.setdefault(row["flow_id"], []).append(row)
+    receipt_by_flow: dict[str, list[sqlite3.Row]] = {}
+    for row in receipt_rows:
+        receipt_by_flow.setdefault(row["flow_id"], []).append(row)
+
+    for flow_row in flow_rows:
+        flow_id = flow_row["flow_id"]
+        if flow_id in baseline:
+            continue
+        target_ref = canonical_digest({"flow_id": flow_id})
+        decisions = decision_by_flow.get(flow_id, [])
+        receipts = receipt_by_flow.get(flow_id, [])
+        if len(decisions) != 1:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    (
+                        "flow_admission_authorization_decision_missing"
+                        if not decisions
+                        else "flow_admission_authorization_decision_duplicated"
+                    ),
+                    _audit_flow_reference(flow_id),
+                    "flow_admission",
+                    None,
+                    target_ref,
+                )
+            )
+        if len(receipts) != 1:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    (
+                        "flow_admission_authorization_receipt_missing"
+                        if not receipts
+                        else "flow_admission_authorization_receipt_duplicated"
+                    ),
+                    _audit_flow_reference(flow_id),
+                    "flow_admission",
+                    None,
+                    target_ref,
+                )
+            )
+        try:
+            spec = _flow_from_row(flow_row)
+            _validate_flow_spec(spec)
+            if flow_row["request_digest"] != spec.request_digest:
+                raise ValidationError("flow request digest is invalid")
+            revisions = revisions_by_flow.get(spec.flow_id, [])
+            _verify_flow_revision_lineage(
+                spec.flow_id,
+                revisions,
+                attempt_flow_ids,
+            )
+            initial = revisions[0]
+            if initial["occurred_at"] != spec.created_at:
+                raise ValidationError("flow admission source time is invalid")
+            admission = SupervisorFlowAdmission(
+                flow_id=spec.flow_id,
+                admission_key_ref=canonical_digest(
+                    {"admission_key": spec.admission_key}
+                ),
+                flow_request_digest=spec.request_digest,
+                initial_flow_event_id=initial["event_id"],
+                occurred_at=spec.created_at,
+            )
+            authorization = evaluate_supervisor_flow_admission_authorization(
+                admission=admission,
+                legacy_executable=True,
+            )
+            decision_payload = authorization.to_event_payload()
+            decision_values = (
+                authorization.decision.digest,
+                admission.flow_id,
+                admission.admission_key_ref,
+                admission.flow_request_digest,
+                admission.initial_flow_event_id,
+                1,
+                authorization.request.digest,
+                authorization.decision.digest,
+                _bounded_json(
+                    decision_payload,
+                    "supervisor flow admission authorization audit decision payload",
+                ),
+                admission.occurred_at,
+            )
+            receipt_payload = build_supervisor_flow_admission_action_receipt(
+                authorization=authorization,
+                action_started_at=admission.occurred_at,
+                completed_at=admission.occurred_at,
+            )
+            receipt_digest = receipt_payload["receipt_digest"]
+            receipt_values = (
+                receipt_digest,
+                admission.flow_id,
+                authorization.decision.digest,
+                receipt_digest,
+                _bounded_json(
+                    receipt_payload,
+                    "supervisor flow admission authorization audit receipt payload",
+                ),
+                admission.occurred_at,
+            )
+        except Exception:
+            decision_values = None
+            receipt_values = None
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "flow_admission_authorization_source_invalid",
+                    _audit_flow_reference(flow_id),
+                    "flow_admission",
+                    None,
+                    target_ref,
+                )
+            )
+        if (
+            len(decisions) == 1
+            and (
+                decision_values is None
+                or tuple(
+                    decisions[0][field]
+                    for field in (
+                        "decision_event_id",
+                        "flow_id",
+                        "admission_key_ref",
+                        "flow_request_digest",
+                        "initial_flow_event_id",
+                        "initial_revision",
+                        "request_digest",
+                        "decision_digest",
+                        "payload_json",
+                        "evaluated_at",
+                    )
+                )
+                != decision_values
+            )
+        ):
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "flow_admission_authorization_decision_invalid",
+                    _audit_flow_reference(flow_id),
+                    "flow_admission",
+                    None,
+                    target_ref,
+                )
+            )
+        if (
+            len(receipts) == 1
+            and (
+                receipt_values is None
+                or tuple(
+                    receipts[0][field]
+                    for field in (
+                        "receipt_event_id",
+                        "flow_id",
+                        "decision_event_id",
+                        "receipt_digest",
+                        "payload_json",
+                        "completed_at",
+                    )
+                )
+                != receipt_values
+            )
+        ):
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "flow_admission_authorization_receipt_invalid",
+                    _audit_flow_reference(flow_id),
+                    "flow_admission",
+                    None,
+                    target_ref,
+                )
+            )
+
+    for flow_id in decision_by_flow:
+        if flow_id not in expected_set:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "flow_admission_authorization_decision_unexpected",
+                    _audit_flow_reference(flow_id),
+                    "flow_admission",
+                    None,
+                    canonical_digest({"flow_id": flow_id}),
+                )
+            )
+    for flow_id in receipt_by_flow:
+        if flow_id not in expected_set:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "flow_admission_authorization_receipt_unexpected",
+                    _audit_flow_reference(flow_id),
+                    "flow_admission",
+                    None,
+                    canonical_digest({"flow_id": flow_id}),
+                )
+            )
+    return _SupervisorFlowAdmissionEnforcementAudit(
+        True,
+        len(decision_rows) + len(receipt_rows),
+        len(expected_ids) * 2,
+        tuple(findings),
+    )
+
+
 def inspect_pending_completions(
     database_path: str | Path,
 ) -> tuple[CompletionIntent, ...]:
@@ -3726,6 +4350,7 @@ def _authorization_guard_findings(
             "authorization_migration_ledger_mismatch",
             "bookkeeping_authorization_migration_ledger_mismatch",
             "control_authorization_migration_ledger_mismatch",
+            "flow_admission_authorization_migration_ledger_mismatch",
         ):
             findings.append(
                 SupervisorAuthorizationFinding(code, None, None, None)
@@ -3804,6 +4429,21 @@ def _authorization_guard_findings(
         findings.append(
             SupervisorAuthorizationFinding(
                 "control_authorization_migration_ledger_mismatch",
+                None,
+                None,
+                None,
+            )
+        )
+    flow_admission_migration = ledger.get(6)
+    if (
+        flow_admission_migration is None
+        or flow_admission_migration["name"]
+        != "supervisor_flow_admission_authorization_enforcement"
+        or flow_admission_migration["script_sha256"] != _sha256_text(_SCHEMA_V6)
+    ):
+        findings.append(
+            SupervisorAuthorizationFinding(
+                "flow_admission_authorization_migration_ledger_mismatch",
                 None,
                 None,
                 None,
@@ -4398,6 +5038,66 @@ def _verify_pre_v5_control_history(connection: sqlite3.Connection) -> None:
         ) from error
 
 
+def _verify_pre_v6_flow_history(connection: sqlite3.Connection) -> None:
+    """Refuse to baseline malformed legacy flows into the enforcing PEP."""
+
+    try:
+        foreign_key_errors = tuple(
+            row
+            for table in (
+                "supervisor_control_events",
+                "supervisor_flows",
+                "supervisor_flow_revisions",
+                "supervisor_cancellation_requests",
+                "supervisor_attempts",
+                "supervisor_attempt_events",
+                "supervisor_completion_outbox",
+                "supervisor_completion_delivery_events",
+                "supervisor_completion_receipts",
+                "supervisor_authorization_observations",
+                "supervisor_bookkeeping_authorization_sources",
+                "supervisor_bookkeeping_authorization_observations",
+                "supervisor_control_authorization_baseline",
+                "supervisor_control_authorization_decisions",
+                "supervisor_control_authorization_action_receipts",
+            )
+            for row in connection.execute(f'PRAGMA foreign_key_check("{table}")')
+        )
+        if foreign_key_errors:
+            raise ValidationError("supervisor history has invalid references")
+        flow_rows = connection.execute(
+            "SELECT * FROM supervisor_flows ORDER BY flow_id"
+        ).fetchall()
+        revision_rows_by_flow: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_flow_revisions ORDER BY flow_id, revision"
+        ).fetchall():
+            revision_rows_by_flow.setdefault(row["flow_id"], []).append(row)
+        attempt_flow_ids = {
+            row["attempt_id"]: row["flow_id"]
+            for row in connection.execute(
+                "SELECT attempt_id, flow_id FROM supervisor_attempts"
+            ).fetchall()
+        }
+        for row in flow_rows:
+            spec = _flow_from_row(row)
+            _validate_flow_spec(spec)
+            if row["request_digest"] != spec.request_digest:
+                raise ValidationError("flow request digest is invalid")
+            head = _verify_flow_revision_lineage(
+                spec.flow_id,
+                revision_rows_by_flow.get(spec.flow_id, []),
+                attempt_flow_ids,
+            )
+            initial = revision_rows_by_flow[spec.flow_id][0]
+            if initial["occurred_at"] != spec.created_at or head.flow_id != spec.flow_id:
+                raise ValidationError("flow admission source history is invalid")
+    except (KeyError, TypeError, ValueError, ValidationError, sqlite3.Error) as error:
+        raise ConfigurationError(
+            "pre-v6 supervisor flow history is invalid"
+        ) from error
+
+
 def _verify_pre_v4_bookkeeping_history(connection: sqlite3.Connection) -> None:
     foreign_key_tables = (
         "supervisor_attempt_events",
@@ -4560,7 +5260,15 @@ def _expected_supervisor_schema() -> dict[
     connection.row_factory = sqlite3.Row
     try:
         connection.executescript(
-            _SCHEMA_V2 + "\n" + _SCHEMA_V3 + "\n" + _SCHEMA_V4 + "\n" + _SCHEMA_V5
+            _SCHEMA_V2
+            + "\n"
+            + _SCHEMA_V3
+            + "\n"
+            + _SCHEMA_V4
+            + "\n"
+            + _SCHEMA_V5
+            + "\n"
+            + _SCHEMA_V6
         )
         objects = _schema_objects(connection)
         return {
@@ -4611,6 +5319,27 @@ def _expected_pre_v5_supervisor_schema() -> dict[
         connection.close()
 
 
+@cache
+def _expected_pre_v6_supervisor_schema() -> dict[
+    tuple[str, str], tuple[str, str, str]
+]:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.executescript(
+            _SCHEMA_V2 + "\n" + _SCHEMA_V3 + "\n" + _SCHEMA_V4 + "\n" + _SCHEMA_V5
+        )
+        objects = _schema_objects(connection)
+        return {
+            key: value
+            for key, value in objects.items()
+            if key[1].startswith("supervisor_")
+            or value[1].startswith("supervisor_")
+        }
+    finally:
+        connection.close()
+
+
 def _verify_pre_v4_supervisor_schema(connection: sqlite3.Connection) -> None:
     objects = _schema_objects(connection)
     actual = {
@@ -4633,6 +5362,18 @@ def _verify_pre_v5_supervisor_schema(connection: sqlite3.Connection) -> None:
     }
     if actual != _expected_pre_v5_supervisor_schema():
         raise ConfigurationError("pre-v5 supervisor schema is invalid")
+
+
+def _verify_pre_v6_supervisor_schema(connection: sqlite3.Connection) -> None:
+    objects = _schema_objects(connection)
+    actual = {
+        key: value
+        for key, value in objects.items()
+        if key[1].startswith("supervisor_")
+        or value[1].startswith("supervisor_")
+    }
+    if actual != _expected_pre_v6_supervisor_schema():
+        raise ConfigurationError("pre-v6 supervisor schema is invalid")
 
 
 def _verify_supervisor_schema(connection: sqlite3.Connection) -> None:

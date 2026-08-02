@@ -62,7 +62,31 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         self.store = self._open_store()
 
     @staticmethod
+    def _remove_v6_schema(connection: sqlite3.Connection) -> None:
+        connection.executescript(
+            """
+            DROP TRIGGER supervisor_flow_admission_authorization_action_receipts_no_update;
+            DROP TRIGGER supervisor_flow_admission_authorization_action_receipts_no_delete;
+            DROP TRIGGER supervisor_flow_admission_authorization_decisions_no_update;
+            DROP TRIGGER supervisor_flow_admission_authorization_decisions_no_delete;
+            DROP TRIGGER supervisor_flow_admission_authorization_baseline_no_update;
+            DROP TRIGGER supervisor_flow_admission_authorization_baseline_no_delete;
+            DROP TRIGGER supervisor_flow_admission_authorization_baseline_no_insert;
+            DROP TABLE supervisor_flow_admission_authorization_action_receipts;
+            DROP TABLE supervisor_flow_admission_authorization_decisions;
+            DROP TABLE supervisor_flow_admission_authorization_baseline;
+            DROP TRIGGER state_schema_migrations_no_delete;
+            DELETE FROM state_schema_migrations WHERE version = 6;
+            CREATE TRIGGER state_schema_migrations_no_delete
+            BEFORE DELETE ON state_schema_migrations BEGIN
+                SELECT RAISE(ABORT, 'schema migrations are append-only');
+            END;
+            """
+        )
+
+    @staticmethod
     def _remove_v5_schema(connection: sqlite3.Connection) -> None:
+        SQLiteSupervisorStoreTests._remove_v6_schema(connection)
         connection.executescript(
             """
             DROP TRIGGER supervisor_control_authorization_action_receipts_no_update;
@@ -187,6 +211,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
                 (3, "supervisor_authorization_shadow"),
                 (4, "supervisor_bookkeeping_authorization_shadow"),
                 (5, "supervisor_control_authorization_enforcement"),
+                (6, "supervisor_flow_admission_authorization_enforcement"),
             ],
         )
         self.assertEqual(
@@ -367,7 +392,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
             value = connection.execute(
                 "SELECT parent_id FROM private_child"
             ).fetchone()[0]
-        self.assertEqual(version, 5)
+        self.assertEqual(version, 6)
         self.assertEqual(value, "private-value")
 
     def test_missing_v3_schema_is_a_finding_even_without_flows(self) -> None:
@@ -848,6 +873,233 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
                     """
                 )
 
+    def test_flow_admission_pep_persists_exact_decision_and_receipt(self) -> None:
+        spec = self._flow(
+            "flow-private-marker",
+            admission_key="admit/private-marker",
+        )
+        admitted, created = self.store.admit_flow(spec)
+
+        self.assertTrue(created)
+        self.assertEqual(admitted, spec)
+        with closing(sqlite3.connect(self.database)) as connection:
+            decision = connection.execute(
+                """
+                SELECT flow_id, decision_event_id, request_digest, decision_digest,
+                       payload_json
+                FROM supervisor_flow_admission_authorization_decisions
+                """
+            ).fetchone()
+            receipt = connection.execute(
+                """
+                SELECT flow_id, decision_event_id, receipt_digest, payload_json
+                FROM supervisor_flow_admission_authorization_action_receipts
+                """
+            ).fetchone()
+        self.assertIsNotNone(decision)
+        self.assertIsNotNone(receipt)
+        assert decision is not None
+        assert receipt is not None
+        self.assertEqual(decision[0], spec.flow_id)
+        self.assertEqual(receipt[0], spec.flow_id)
+        self.assertEqual(decision[1], decision[3])
+        self.assertEqual(receipt[1], decision[1])
+        serialized = json.dumps([decision[4], receipt[3]], sort_keys=True)
+        self.assertNotIn("flow-private-marker", serialized)
+        self.assertNotIn("admit/private-marker", serialized)
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean)
+        self.assertEqual(audit.flow_admission_enforcement_record_count, 2)
+        self.assertEqual(audit.expected_flow_admission_enforcement_record_count, 2)
+
+    def test_flow_admission_pep_receipt_failure_rolls_back_admission(self) -> None:
+        with patch.object(
+            self.store,
+            "_append_flow_admission_authorization_receipt",
+            side_effect=RuntimeError("private receipt failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "private receipt failure"):
+                self.store.admit_flow(self._flow())
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            counts = tuple(
+                connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in (
+                    "supervisor_flows",
+                    "supervisor_flow_revisions",
+                    "supervisor_flow_admission_authorization_decisions",
+                    "supervisor_flow_admission_authorization_action_receipts",
+                )
+            )
+        self.assertEqual(counts, (0, 0, 0, 0))
+
+    def test_flow_admission_pep_requires_exact_initial_revision(self) -> None:
+        with patch.object(
+            self.store,
+            "_insert_flow_revision",
+            return_value=None,
+        ):
+            with self.assertRaisesRegex(
+                SupervisorError,
+                "revision persistence is uncertain",
+            ):
+                self.store.admit_flow(self._flow())
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            counts = tuple(
+                connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in (
+                    "supervisor_flows",
+                    "supervisor_flow_admission_authorization_decisions",
+                    "supervisor_flow_admission_authorization_action_receipts",
+                )
+            )
+        self.assertEqual(counts, (0, 0, 0))
+
+    def test_flow_admission_pep_requires_exact_decision_and_receipt_readback(
+        self,
+    ) -> None:
+        with patch.object(
+            self.store,
+            "_append_flow_admission_authorization_decision",
+            return_value={},
+        ):
+            with self.assertRaises(AuthorizationBlocked):
+                self.store.admit_flow(self._flow())
+
+        with patch.object(
+            self.store,
+            "_append_flow_admission_authorization_receipt",
+            return_value={},
+        ):
+            with self.assertRaisesRegex(
+                SupervisorError,
+                "receipt persistence is uncertain",
+            ):
+                self.store.admit_flow(self._flow("flow-two"))
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            counts = tuple(
+                connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in (
+                    "supervisor_flows",
+                    "supervisor_flow_admission_authorization_decisions",
+                    "supervisor_flow_admission_authorization_action_receipts",
+                )
+            )
+        self.assertEqual(counts, (0, 0, 0))
+
+    def test_flow_admission_pep_rebuild_rejects_a_replaced_first_pass(self) -> None:
+        original = supervisor_module.evaluate_supervisor_flow_admission_authorization
+
+        def forged_first_pass(*args, **kwargs):
+            authorization = original(*args, **kwargs)
+            forged_action = replace(
+                authorization.request.action,
+                parameters_digest=canonical_digest({"forged": True}),
+            )
+            return replace(
+                authorization,
+                request=replace(authorization.request, action=forged_action),
+            )
+
+        with patch(
+            "ordomata.supervisor.evaluate_supervisor_flow_admission_authorization",
+            side_effect=forged_first_pass,
+        ):
+            with self.assertRaises(AuthorizationBlocked):
+                self.store.admit_flow(self._flow())
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM supervisor_flows"
+                ).fetchone()[0],
+                0,
+            )
+
+    def test_flow_admission_pep_audit_detects_decision_and_receipt_tampering(
+        self,
+    ) -> None:
+        self.store.admit_flow(self._flow())
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.executescript(
+                """
+                DROP TRIGGER supervisor_flow_admission_authorization_decisions_no_update;
+                DROP TRIGGER supervisor_flow_admission_authorization_action_receipts_no_update;
+                """
+            )
+            connection.execute(
+                """
+                UPDATE supervisor_flow_admission_authorization_decisions
+                SET payload_json = '{"tampered":true}'
+                """
+            )
+            connection.execute(
+                """
+                UPDATE supervisor_flow_admission_authorization_action_receipts
+                SET payload_json = '{"tampered":true}'
+                """
+            )
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+        codes = {finding.code for finding in audit.findings}
+        self.assertFalse(audit.clean)
+        self.assertIn("authorization_schema_mismatch", codes)
+        self.assertIn("flow_admission_authorization_decision_invalid", codes)
+        self.assertIn("flow_admission_authorization_receipt_invalid", codes)
+
+    def test_v6_migration_baselines_existing_flows_before_enforcement(self) -> None:
+        legacy = self._flow("flow-legacy")
+        self.store.admit_flow(legacy)
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v6_schema(connection)
+
+        self.store = self._open_store()
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean)
+        self.assertEqual(audit.flow_admission_enforcement_record_count, 0)
+        self.assertEqual(audit.expected_flow_admission_enforcement_record_count, 0)
+        current = self._flow("flow-current")
+        self.store.admit_flow(current)
+        with closing(sqlite3.connect(self.database)) as connection:
+            baseline = connection.execute(
+                """
+                SELECT flow_id
+                FROM supervisor_flow_admission_authorization_baseline
+                """
+            ).fetchall()
+        self.assertEqual(baseline, [(legacy.flow_id,)])
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean)
+        self.assertEqual(audit.flow_admission_enforcement_record_count, 2)
+        self.assertEqual(audit.expected_flow_admission_enforcement_record_count, 2)
+
+    def test_malformed_pre_v6_flow_history_is_rejected_before_baseline(self) -> None:
+        self.store.admit_flow(self._flow())
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v6_schema(connection)
+            connection.executescript(
+                """
+                DROP TRIGGER supervisor_flow_revisions_no_delete;
+                DELETE FROM supervisor_flow_revisions WHERE flow_id = 'flow-one';
+                CREATE TRIGGER supervisor_flow_revisions_no_delete
+                BEFORE DELETE ON supervisor_flow_revisions BEGIN
+                    SELECT RAISE(ABORT, 'supervisor flow revisions are append-only');
+                END;
+                """
+            )
+
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "pre-v6 supervisor flow history is invalid",
+        ):
+            self._open_store()
+
     def test_control_pep_persists_exact_decisions_and_receipts(self) -> None:
         running = self.store.update_control(
             expected_revision=0,
@@ -1227,7 +1479,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
                 """
                 INSERT INTO state_schema_migrations (
                     version, name, script_sha256, applied_at
-                ) VALUES (6, 'future_unknown', ?, 100.0)
+                ) VALUES (7, 'future_unknown', ?, 100.0)
                 """,
                 ("0" * 64,),
             )
