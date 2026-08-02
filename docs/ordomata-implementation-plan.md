@@ -1045,6 +1045,18 @@ dependency/shared-library/runtime/toolchain closure, authority, persistence,
 routing, billing, network, subprocess, harness, model, execution, or permission
 widening. Only Class 0/1 effects remain enabled.
 
+The thirty-fifth bounded Phase 3 slice adds a separate library-only schema-v1
+Class 0 explicit dependency-manifest target-measurement primitive. It requires
+the exact manifest/dependency/runtime/staging chain, active same-PID lease, and
+the same ordered private manifest input. Three fresh chain snapshots surround
+two matching no-follow measurements and closing namespace validation. Only
+manifest-bound canonical targets are read; shared targets deduplicate their
+measurements without collapsing declaration or command lineage. It applies no
+loader search or token semantics and grants no staging, loading, dependency/
+shared-library/runtime/toolchain closure, authority, persistence, routing,
+billing, network, subprocess, harness, model, execution, or permission
+widening. Only Class 0/1 effects remain enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -1853,6 +1865,17 @@ Only Class 0/1 effects remain enabled.
     loader invocation, dependency/shared-library/runtime/toolchain closure,
     freshness, authority, persistence, proposal/worktree integration, routing,
     billing, subprocess, harness, model, and execution remain deferred);
+  - controller-measured explicit non-absolute direct native dependency manifest
+    targets (separate schema-v1 Class 0 receipt implemented; exact manifest/
+    dependency/runtime/staging/active-lease anchoring, three fresh manifest
+    reproductions, two matching no-follow target measurements, closing namespace
+    validation, shared-target deduplication, and exact declaration/command
+    lineage are implemented; raw dependency names/paths/content, filesystem
+    numbers, and descriptors remain private, while host loader environment,
+    cache, RPATH/RUNPATH, and Mach-O token semantics, target staging, loader
+    invocation, dependency/shared-library/runtime/toolchain closure, freshness,
+    authority, persistence, proposal/worktree integration, routing, billing,
+    subprocess, harness, model, and execution remain deferred);
   - controller-measured direct native-loader targets (separate schema-v1 Class
     0 receipt implemented; exact loader-requirements/runtime/staging/active-
     lease anchoring, exact ordered unique canonical-absolute path expectations,

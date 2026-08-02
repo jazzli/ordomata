@@ -1084,6 +1084,15 @@ emitting only declaration- and canonical-target-reference digests. It opens no
 mapped target and applies no host loader environment, cache, RPATH/RUNPATH, or
 Mach-O token semantics; dependency staging and closure remain deferred.
 
+Implemented as the thirty-fifth bounded Phase 3 slice, the library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_dependency_manifest_targets` API
+reproduces that manifest on three fresh direct-chain snapshots around two
+matching no-follow measurements and closing namespace validation. It reads only
+the already manifest-bound canonical targets, keeps target and source details
+digest-only, and adds no host loader search, token expansion, staging, loading,
+or dependency closure.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -1441,6 +1450,11 @@ snapshots verify an ordered private spelling-to-canonical-path mapping and
 retain only digest-bound references. Ambient loader search and token expansion
 remain prohibited, mapped targets are not opened or staged, and closure remains
 unverified.
+
+The thirty-fifth slice adds separate Class 0 no-follow measurement for the
+explicit-manifest target set. Fresh manifest reproduction surrounds matching
+measurements and namespace checks; shared paths deduplicate measurements while
+raw values, staging, loading, and closure remain out of scope.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and
