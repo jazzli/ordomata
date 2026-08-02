@@ -1771,4 +1771,17 @@ added by this slice. The current child-facing output-schema argument remains a
 pathname protected by the adapter sandbox, not an immutable adversarial-worker
 handoff.
 
+`ordomata.worker_cell_containment` now supplies the first inert contract seam
+for the deferred repository-worker boundary. It accepts only bounded,
+shape-constrained schema-v4 digest-only registration evidence and derives a
+fixed local-container/network-disabled requirement plus typed preflight and
+postflight declaration shapes. Its one deterministic mock backend has no I/O:
+it creates no cell, launches no process, inspects no host or repository, and
+persists nothing. Every v1 assessment permanently reports containment
+unproven, authority absent, and worker execution/dispatch disabled—even when
+the mock declarations are internally complete. The module is covered by
+adversarial validation tests and documents the evidence a later real backend
+must provide; it is not a containment implementation, an admission boundary,
+or a substitute for authoritative ABAC enforcement.
+
 The controlled comparison machinery has been implemented and tested with deterministic fixtures. No claim is made that the planned three-runs-per-profile live experiment has run, passed automated checks, received human scores, or produced a winner.

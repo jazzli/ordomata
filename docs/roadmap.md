@@ -1085,6 +1085,20 @@ shared Git authority, credentials, control sockets, and undeclared network
 remain unavailable. Repository and connector registrations also pin scoped
 project instructions and versioned source-of-truth/freshness rules.
 
+The first contract-only worker-cell slice is now implemented as
+`ordomata.worker_cell_containment`. It derives a bounded digest-only contract
+from exact schema-v4 registration evidence and defines deterministic preflight
+and postflight attestation shapes for the fixed local-container,
+network-disabled requirement. Its only deterministic mock backend is explicitly
+non-authoritative: it performs no host or repository inspection, creates no
+cell or process, writes no state, and reports `containment_proven: false`,
+`worker_execution_permitted: false`, and `dispatch_enabled: false` even when
+the declarations are shape-complete. This removes ambiguity from the future
+backend interface; it is not verified repository containment or worker-cell
+enablement. A real backend must land as a separately reviewed version with
+observed preflight/postflight evidence and authoritative worker-boundary
+enforcement.
+
 ## Phase 3 — bounded local loop
 
 - Extend the implemented dispatch-disabled foreground tracer into an

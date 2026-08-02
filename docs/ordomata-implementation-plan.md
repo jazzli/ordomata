@@ -1750,8 +1750,9 @@ satisfied.
 ## Phase 3 - Repository registrations and isolated worker cells
 
 **Implementation checkpoint — read-only registration, proposal evidence,
-single-run inspection, inert admission shadow, and independent shadow-contract
-verification, not worker-cell enablement:** frozen
+single-run inspection, inert admission shadow, independent shadow-contract
+verification, and a contract-only worker-cell seam—not worker-cell
+enablement:** frozen
 `schemas/repository-registration.schema.json` schema v1, separate
 `schemas/repository-registration-v2.schema.json` and
 `schemas/repository-registration-v3.schema.json`, all frozen, plus
@@ -1799,6 +1800,20 @@ false. The identity block adds no PATH/environment lookup, stat/content read,
 symlink/shebang or interpreter/launcher/module/plugin/loader/package
 inspection, or execution. Existing registration root and repository-relative
 path/executable safety checks are unchanged.
+
+The separate `ordomata.worker_cell_containment` v1 module takes only the
+bounded digest-only schema-v4 evidence projection, never a repository path or
+full registration document. It binds that untrusted snapshot to the fixed
+local-container/network-disabled profile and expresses the required preflight
+and postflight declaration fields. Its only backend is a deterministic no-I/O
+mock that emits a no-execution pair of shape-complete declarations for tests.
+The corresponding assessment has a permanent
+`deterministic_mock_not_authoritative` finding and fixed false authority,
+containment, execution, dispatch, enforcement, and persistence fields. It does
+not inspect the host, create a worker cell, spawn a process, write state,
+revalidate a registration, or serve as a dispatch/admission decision. A future
+real backend needs a new reviewed version that binds observed containment and
+post-run reconciliation evidence before any worker boundary may rely on it.
 
 The separate proposal-evidence API freshly revalidates that registration and
 binds its controller-owned selection plus an explicit canonical proposal
