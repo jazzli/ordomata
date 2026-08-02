@@ -41,7 +41,10 @@ Earlier design discussion selected machine-verifiable repository maintenance as 
 - No purchased-credit, subscription-overage, AI API SDK, cloud-model, or metered fallback.
 - No recurring schedule installation.
 - No supervisor worker dispatch: the implemented foreground loop is a
-  mock-only control-plane tracer and cannot claim or execute queued work.
+  mock-only control-plane tracer and cannot claim or execute queued work. Its
+  read-only status and foreground tick retain the legacy primary blocker and
+  additionally report an ordered blocker list for both missing supervisor
+  runtime-ABAC enforcement and unproven repository-worker containment.
 - Repository-proposal selection and binding are inert evidence only. They
   require an existing `repository-proposal-disabled` run to remain `CREATED`
   and cannot admit, claim, dispatch, or execute it.
@@ -1659,7 +1662,10 @@ and mediated-tool boundaries lack authoritative ABAC coverage and verified
 repository containment. The narrow ordinary mock PEPs supply neither. It
 starts no live model, worker subprocess, network action, repository worker,
 Class 2/3 action, or OS schedule. Queue execution, worker cells, boundary-
-specific authorization enforcement, and soak evidence remain planned.
+specific authorization enforcement, and soak evidence remain planned. Its
+dispatch-disabled status keeps `dispatch_blocker` for compatibility and adds
+the ordered `dispatch_blockers` list so operators can see the independent ABAC
+and containment prerequisites without treating either as authority.
 
 ## Implemented vertical slice
 

@@ -61,6 +61,7 @@ from .supervisor import (
     FlowSpec,
     ForegroundSupervisor,
     SQLiteSupervisorStore,
+    SUPERVISOR_DISPATCH_BLOCKERS,
     SupervisorMode,
     inspect_pending_completions,
     inspect_reconciliation,
@@ -545,7 +546,8 @@ async def _run_foreground_supervisor(
         "control_revision": 0,
         "dispatch_enabled": False,
         "claimed": False,
-        "dispatch_blocker": "runtime_abac_enforcement_not_implemented",
+        "dispatch_blocker": SUPERVISOR_DISPATCH_BLOCKERS[0],
+        "dispatch_blockers": list(SUPERVISOR_DISPATCH_BLOCKERS),
     }
     with SQLiteSupervisorStore(state_path) as store:
         supervisor = ForegroundSupervisor(
