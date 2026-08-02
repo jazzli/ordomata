@@ -879,6 +879,20 @@ parallel because it cannot exercise worker authority.
   or shared-library closure, execution, persistence, routing, authorization,
   network, subprocess, harness, model, or permission widening is added. Only
   Class 0/1 effects remain enabled.
+- The thirty-third bounded Phase 3 slice implements a separate library-only
+  schema-v1 Class 0
+  `ordomata.repository_executable_native_dependency_target_resolution`
+  primitive. It requires the exact direct dependency/runtime/staging chain,
+  active same-PID lease, and exact ordered canonical-absolute path expectation.
+  Three fresh chain snapshots surround two matching no-follow measurements and
+  closing namespace/lease validation. Absolute declarations receive digest-
+  only measurements; bare, relative, and Mach-O tokenized declarations remain
+  fixed unresolved zero-read outcomes. Shared targets deduplicate measurement
+  without collapsing provenance. No loader search semantics, dependency
+  staging, lease mutation/cleanup, fat-image selection, loader invocation,
+  recursive/shared-library/runtime/toolchain closure, execution, persistence,
+  routing, authorization, network, subprocess, harness, model, or permission
+  widening is added. Only Class 0/1 effects remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

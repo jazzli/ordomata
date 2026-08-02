@@ -1018,6 +1018,21 @@ authority, persistence, proposal/worktree integration, routing, billing,
 network, subprocess, harness, model, or permission widening. Only Class 0/1
 effects remain enabled.
 
+The thirty-third bounded Phase 3 slice adds a separate library-only schema-v1
+Class 0 canonical-absolute dependency-target measurement primitive. It requires
+the exact direct dependency/runtime/staging chain, active same-PID lease, and
+exact ordered tuple of canonical ASCII absolute dependency paths. Three fresh
+chain snapshots surround two matching no-follow measurements and closing
+target-namespace/stage validation. Absolute declarations bind digest-only
+measurements; bare, relative, and Mach-O tokenized declarations remain fixed
+unresolved zero-read outcomes. Shared targets deduplicate measurement without
+collapsing declaration, requirement, or command lineage. The primitive applies
+no loader search semantics, stages no dependency, mutates no lease, invokes no
+loader, and grants no recursive dependency/shared-library/runtime/toolchain
+closure, authority, persistence, proposal/worktree integration, routing,
+billing, network, subprocess, harness, model, execution, or permission
+widening. Only Class 0/1 effects remain enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -1802,6 +1817,19 @@ Only Class 0/1 effects remain enabled.
     invocation, shared-library/recursive dependency/runtime/toolchain closure,
     freshness, authority, persistence, proposal/worktree integration, routing,
     billing, subprocess, harness, model, and execution remain deferred);
+  - controller-measured canonical-absolute direct native dependency targets
+    (separate schema-v1 Class 0 receipt implemented; exact direct dependency/
+    runtime/staging/active-lease anchoring, exact ordered canonical-absolute
+    expectations, three fresh chain snapshots, two matching no-follow
+    measurements, closing namespace validation, shared-target deduplication,
+    fixed non-absolute unresolved outcomes, and exact declaration/requirement/
+    command lineage are implemented; raw dependency names/paths/content,
+    filesystem numbers, and descriptors remain private, while bare/relative/
+    Mach-O tokenized search semantics, dependency staging, fat-image selection,
+    loader invocation, recursive dependency/shared-library/runtime/toolchain
+    closure, freshness, authority, persistence, proposal/worktree integration,
+    routing, billing, subprocess, harness, model, and execution remain
+    deferred);
   - controller-measured direct native-loader targets (separate schema-v1 Class
     0 receipt implemented; exact loader-requirements/runtime/staging/active-
     lease anchoring, exact ordered unique canonical-absolute path expectations,

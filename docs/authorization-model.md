@@ -1035,6 +1035,29 @@ and establishes no dependency, shared-library, recursive, runtime, toolchain,
 freshness, persistence, routing, network, subprocess, harness, model, or wider-
 permission eligibility. The current Class 0/1 ceiling is unchanged.
 
+The thirty-third bounded Phase 3 slice adds another separate Class 0 PIP, not
+a PDP or PEP:
+`ordomata.repository_executable_native_dependency_target_resolution`. It
+accepts only the exact direct dependency/runtime/staging receipt chain and
+active same-PID lease plus an exact ordered expectation of canonical ASCII
+absolute dependency paths. Three fresh dependency-chain snapshots surround two
+matching no-follow target measurements and closing namespace/lease validation.
+
+Absolute declarations become digest-bound measurement outcomes. Bare,
+relative, `@rpath`, `@loader_path`, and `@executable_path` declarations remain
+fixed unresolved outcomes and cause no target read. Shared absolute files are
+measured once while declaration, requirement, and command provenance remains
+distinct. Raw dependency names, target paths, content, filesystem numbers, and
+descriptors are not policy attributes and remain private.
+
+This descriptive evidence grants no authority, satisfies no fresh
+authorization, and is not an action receipt. It applies no loader search
+semantics, stages no dependency, mutates no lease, invokes no loader, and
+establishes no recursive dependency/shared-library/runtime/toolchain closure,
+freshness, execution, persistence, routing, network, subprocess, harness,
+model, or wider-permission eligibility. The current Class 0/1 ceiling is
+unchanged.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -1379,6 +1402,13 @@ lineage and two matching descriptor/parser passes emit only digest-bound ELF
 `DT_NEEDED` and thin Mach-O dylib-load metadata. The PIP performs no dependency
 lookup, resolution, staging, loader invocation, or execution and grants no
 shared-library or recursive dependency closure.
+
+The thirty-third slice adds separate Class 0 measurement for only canonical-
+absolute direct dependency declarations. Exact path expectations, three fresh
+chain snapshots, two no-follow measurements, and closing namespace checks emit
+digest-only evidence. Non-absolute declarations stay unresolved and zero-read;
+the PIP grants no loader-search, dependency-staging, recursive/shared-library,
+authorization, or execution authority.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and

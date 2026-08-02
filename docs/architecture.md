@@ -1521,6 +1521,30 @@ dependency closure, freshness, authorization, execution, persistence, routing,
 network, subprocess, harness, model, or wider permission. The Class 0/1 ceiling
 is unchanged.
 
+The thirty-third bounded Phase 3 slice is a separate library-only schema-v1
+Class 0 canonical-absolute dependency-target PIP. Its conceptual flow is
+`exact dependency receipt + exact active direct stage + exact absolute path
+expectation -> fresh dependency-chain snapshot -> first no-follow measurement
+-> fresh snapshot -> matching second measurement -> fresh snapshot -> closing
+namespace and lease anchors`. Every absolute declaration must uniquely
+reproduce one expected canonical ASCII path before any target read, and the
+ordered first-use target set must exactly equal the caller's expectation.
+
+One target outcome is retained per upstream dependency declaration. Absolute
+declarations bind a digest-only measurement; bare, relative, `@rpath`,
+`@loader_path`, and `@executable_path` declarations bind a fixed unresolved
+outcome. Shared absolute targets deduplicate measurement without collapsing
+file, declaration, requirement, or command provenance. Non-absolute and
+terminal inputs perform no target reads.
+
+This historical evidence contains no raw dependency name, target path, file
+content, filesystem number, or descriptor. It does not emulate ELF or Mach-O
+search rules, stage a target, select a fat architecture, mutate a lease, invoke
+a loader, or establish recursive dependency/shared-library/runtime/toolchain
+closure, freshness, authorization, execution, persistence, routing, network,
+subprocess, harness, model, or wider permission. The Class 0/1 ceiling is
+unchanged.
+
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
 It freshly revalidates a `RepositoryRegistration`, requires an existing
@@ -1866,6 +1890,13 @@ matching complete descriptor/parser passes produce digest-only ordered ELF
 `DT_NEEDED` and thin Mach-O dylib-load metadata. It performs no dependency
 lookup, resolution, staging, path open, loader invocation, or execution and
 proves no shared-library or recursive dependency closure.
+
+The thirty-third slice adds a separate Class 0 canonical-absolute dependency-
+target measurement boundary. Exact caller paths, three fresh dependency-chain
+snapshots, two matching no-follow measurements, and closing namespace checks
+produce digest-only evidence while every non-absolute declaration remains
+unresolved and zero-read. No loader search semantics, dependency staging, or
+recursive/shared-library closure is added.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor

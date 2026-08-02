@@ -1126,6 +1126,27 @@ recursive dependency, loader, runtime, or toolchain closure. It adds no
 persistence, routing, authorization, network, subprocess, harness, model, or
 permission widening. Only Class 0/1 effects remain enabled.
 
+The thirty-third bounded Phase 3 slice adds the separate library-only schema-v1
+Class 0
+`ordomata.repository_executable_native_dependency_target_resolution`
+primitive. It consumes the exact direct dependency/runtime/staging chain and
+active same-PID lease, freshly reproduces dependency evidence on three chain
+snapshots, and measures an exactly expected ordered set of canonical ASCII
+absolute dependency paths twice with no-follow traversal and closing namespace
+validation. Shared absolute targets are measured once without collapsing
+declaration, file, or command lineage. Bare, relative, `@rpath`,
+`@loader_path`, and `@executable_path` declarations remain explicit unresolved
+outcomes and perform no target read.
+
+Canonical records contain only digest-bound path, identity, metadata, content,
+declaration, requirement, and command references plus bounded counts and byte
+totals. Raw dependency names, paths, content, filesystem numbers, and
+descriptors remain private. This boundary applies no loader search semantics,
+stages no dependency, mutates or cleans up no lease, invokes no loader, and
+proves no recursive dependency/shared-library/runtime/toolchain closure. It
+adds no execution, persistence, routing, authorization, network, subprocess,
+harness, model, or permission widening. Only Class 0/1 effects remain enabled.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -1498,6 +1519,13 @@ fresh native-loader reproduction, and two matching descriptor/parser passes
 produce digest-only ordered ELF `DT_NEEDED` and thin Mach-O dylib-load syntax.
 It performs no dependency lookup, resolution, staging, path open, or execution
 and proves no shared-library or recursive dependency closure.
+
+The thirty-third slice adds separate Class 0 measurement for only those direct
+dependency declarations that are already canonical absolute paths. Exact
+caller expectations, three fresh dependency-chain snapshots, two matching
+no-follow measurements, and closing namespace checks produce digest-only
+evidence. Non-absolute declarations remain unresolved and zero-read; no loader
+search semantics, dependency staging, or closure is claimed.
 
 ## Quick start
 

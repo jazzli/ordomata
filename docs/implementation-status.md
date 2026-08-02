@@ -1049,6 +1049,32 @@ authorization, persistence, proposal/worktree integration, routing, billing,
 network, subprocess, harness, model, or permission widening. Only Class 0/1
 effects remain enabled.
 
+Implemented as the thirty-third bounded Phase 3 slice, the library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_dependency_target_resolution` API
+consumes the exact direct dependency/runtime/staging receipts and active same-
+PID lease plus an exact ordered tuple of canonical ASCII absolute dependency
+paths. It reproduces the complete dependency chain on three snapshots around
+two matching exact-spelling no-follow target measurements, then validates the
+closing target namespaces and stage lease.
+
+Each upstream dependency declaration receives one target outcome. An absolute
+declaration must uniquely reproduce an expected path before any read and binds
+its digest-only measurement. Bare, relative, `@rpath`, `@loader_path`, and
+`@executable_path` declarations remain fixed unresolved outcomes and perform no
+target read. Shared target paths deduplicate measurement without collapsing
+declaration, requirement, or command lineage; duplicate filesystem identities,
+symlinks, namespace drift, content drift, and expectation mismatch fail closed.
+
+Canonical receipts and evidence exclude raw dependency names, target paths,
+content, filesystem numbers, and descriptors. The API applies no loader search
+semantics, stages no dependency, mutates or cleans up no lease, selects no fat
+architecture, invokes no loader, and adds no recursive dependency/shared-
+library/runtime/toolchain closure, freshness, authority, authorization,
+persistence, proposal/worktree integration, routing, billing, network,
+subprocess, harness, model, or permission widening. Only Class 0/1 effects
+remain enabled.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -1392,6 +1418,13 @@ matching complete descriptor/parser passes produce digest-only ordered ELF
 `DT_NEEDED` and thin Mach-O dylib-load metadata. It performs no dependency
 lookup, resolution, staging, path open, loader invocation, or execution and
 proves no shared-library or recursive dependency closure.
+
+The thirty-third slice adds separate Class 0 measurement for canonical-
+absolute direct dependency declarations only. Exact caller paths, three fresh
+chain snapshots, two matching no-follow measurements, and closing namespace
+checks emit digest-only evidence. Non-absolute declarations remain unresolved
+and zero-read; no loader search semantics, dependency staging, or recursive/
+shared-library closure is added.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and
