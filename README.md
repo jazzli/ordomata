@@ -1160,6 +1160,15 @@ digest-bound mappings and lineage. It consults no host loader environment,
 cache, RPATH/RUNPATH, or token-expansion semantics, opens no target path,
 stages no target, and proves no dependency closure or execution eligibility.
 
+The thirty-fifth bounded Phase 3 slice adds the separate library-only schema-v1
+Class 0 `ordomata.repository_executable_native_dependency_manifest_targets`
+primitive. It re-proves the explicit manifest three times, then measures only
+its exact canonical targets twice with no-follow traversal and closing namespace
+checks. Shared manifest targets deduplicate their measurement without
+collapsing declaration or command lineage. It still consults no host loader
+state, expands no token, stages no target, invokes no loader, and proves no
+dependency closure or execution eligibility.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -1547,6 +1556,12 @@ then yield only digest-bound mapping evidence after three fresh chain snapshots.
 It neither consults ambient loader search state nor expands Mach-O tokens, and
 opens or stages no mapped path; target measurement and dependency closure remain
 future boundaries.
+
+The thirty-fifth slice adds separate Class 0 no-follow measurement for the
+already controller-bound manifest targets. It repeats the manifest proof around
+two matching target measurements and closing namespace checks, while keeping
+raw names, paths, content, and filesystem identifiers private. No host loader
+search, target staging, loading, or closure is added.
 
 ## Quick start
 

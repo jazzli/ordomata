@@ -904,6 +904,17 @@ parallel because it cannot exercise worker authority.
   shared-library/runtime/toolchain closure, authority, execution, persistence,
   routing, network, subprocess, harness, model, or permission widening. Only
   Class 0/1 effects remain enabled.
+- The thirty-fifth bounded Phase 3 slice implements a separate library-only
+  schema-v1 Class 0
+  `ordomata.repository_executable_native_dependency_manifest_targets`
+  primitive. It re-proves the exact direct dependency/runtime/staging manifest
+  chain on three snapshots around two matching no-follow target measurements
+  and closing namespace validation. It reads only already controller-bound
+  canonical manifest targets, deduplicates shared targets without collapsing
+  provenance, and adds no loader search, token expansion, staging, loading,
+  shared-library/runtime/toolchain closure, authority, execution, persistence,
+  routing, network, subprocess, harness, model, or permission widening. Only
+  Class 0/1 effects remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

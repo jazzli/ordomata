@@ -1068,6 +1068,13 @@ receipt exposes neither. The PIP consults no host loader environment, cache,
 RPATH/RUNPATH, or Mach-O token expansion, opens no target, and creates no
 execution or shared-library-closure authority.
 
+The thirty-fifth bounded Phase 3 slice adds another separate Class 0 PIP, not
+a PDP or PEP: `ordomata.repository_executable_native_dependency_manifest_targets`.
+It re-proves the exact manifest chain three times, then measures only its
+already bound canonical targets twice with no-follow traversal and closing
+namespace validation. Its digest-only evidence grants neither loader-search,
+target-staging, shared-library-closure, authorization, nor execution authority.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -1426,6 +1433,11 @@ reproduces the direct chain three times and records only declaration- and
 canonical-path-reference digests. Ambient loader state and token expansion are
 not policy inputs, no mapped target is opened or staged, and the PIP grants no
 closure, authorization, or execution authority.
+
+The thirty-fifth slice adds separate Class 0 no-follow measurement for mapped
+targets after reproducing the manifest on fresh direct chains. It applies no
+ambient loader or token semantics and grants no staging, loading, closure,
+authorization, or execution authority.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and

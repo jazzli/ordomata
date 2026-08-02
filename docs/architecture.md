@@ -1556,6 +1556,15 @@ The PIP neither consults loader environment/cache/RPATH/RUNPATH state nor
 expands Mach-O tokens, opens no target, stages no target, and grants no
 dependency closure, freshness, authorization, or execution authority.
 
+The thirty-fifth bounded Phase 3 slice is a separate library-only schema-v1
+Class 0 manifest-target measurement PIP. It re-proves the ordered controller
+manifest on three fresh direct-chain snapshots around two matching no-follow
+measurements and closing namespace validation. The only opened paths are the
+already manifest-bound canonical targets; shared targets deduplicate their
+measurements without collapsing declaration or command provenance. Host loader
+state and token expansion remain excluded, and no staging, loading, closure,
+authorization, or execution authority is granted.
+
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
 It freshly revalidates a `RepositoryRegistration`, requires an existing
@@ -1915,6 +1924,11 @@ private declaration-name-to-canonical-path manifest against three fresh direct
 chains, retaining digest-only mappings. It applies no host loader search or
 Mach-O token semantics and opens or stages no mapped path; closure remains
 unverified.
+
+The thirty-fifth slice adds a separate Class 0 no-follow measurement boundary
+for those explicit-manifest targets. It re-proves the mapping before and after
+matching measurements and preserves digest-only target, declaration, and
+command lineage. It performs no loader search, staging, loading, or closure.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor
