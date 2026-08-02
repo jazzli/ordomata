@@ -60,6 +60,7 @@ _MAX_BILLING_PROBE_LINE_BYTES = 64 * 1024
 _MAX_BILLING_PROBE_MESSAGE_COUNT = 256
 _BILLING_PROBE_TERM_GRACE_SECONDS = 0.5
 _BILLING_PROBE_KILL_GRACE_SECONDS = 0.5
+_BILLING_PROBE_POST_REPLY_QUIESCENCE_SECONDS = 0.5
 _BILLING_PROBE_STREAM_SETTLE_SECONDS = 0.5
 
 
@@ -148,6 +149,7 @@ class CodexAppServerBillingProbe:
         cleanup: CleanupResult | None = None
         cleanup_cancellation_deferred = False
         overflow_event = asyncio.Event()
+        post_reply_message_count = [0]
         try:
             async with asyncio.timeout(self._timeout_seconds):
                 contained = await launch_contained_process(
@@ -174,6 +176,7 @@ class CodexAppServerBillingProbe:
                         maximum_bytes=self._max_output_bytes,
                         overflow_event=overflow_event,
                         candidate_future=candidate_future,
+                        post_reply_message_count=post_reply_message_count,
                         clock=self._clock,
                     )
                 )
@@ -186,38 +189,84 @@ class CodexAppServerBillingProbe:
                     wait_task,
                     overflow_task,
                 }
-                while candidate is None:
+                loop = asyncio.get_running_loop()
+                candidate_quiet_deadline: float | None = None
+                post_reply_messages_at_quiet_start = 0
+                while True:
+                    timeout = (
+                        None
+                        if candidate_quiet_deadline is None
+                        else max(0.0, candidate_quiet_deadline - loop.time())
+                    )
                     done, _ = await asyncio.wait(
                         watched,
+                        timeout=timeout,
                         return_when=asyncio.FIRST_COMPLETED,
                     )
+                    if not done:
+                        if overflow_event.is_set():
+                            raise _CodexBillingProbeLimitExceeded
+                        if (
+                            post_reply_message_count[0]
+                            != post_reply_messages_at_quiet_start
+                        ):
+                            post_reply_messages_at_quiet_start = (
+                                post_reply_message_count[0]
+                            )
+                            candidate_quiet_deadline = (
+                                loop.time()
+                                + _BILLING_PROBE_POST_REPLY_QUIESCENCE_SECONDS
+                            )
+                            continue
+                        # A candidate becomes usable only after the stdout
+                        # parser has observed a bounded quiet interval.  The
+                        # protocol task remains the sole stdout consumer while
+                        # this timer is running, so immediate post-reply data
+                        # cannot race the controller's cleanup signal.
+                        break
                     if overflow_event.is_set():
                         raise _CodexBillingProbeLimitExceeded
+                    if protocol_task in done:
+                        protocol_candidate = protocol_task.result()
+                        if candidate is None:
+                            if candidate_future.done():
+                                candidate = candidate_future.result()
+                            else:
+                                candidate = protocol_candidate
+                            if candidate is None:
+                                raise ValueError(
+                                    "Codex app-server billing protocol failed"
+                                )
+                        if protocol_candidate != candidate:
+                            raise ValueError(
+                                "Codex app-server billing protocol disagreed "
+                                "with billing evidence"
+                            )
+                        # EOF proves there can be no later stdout message, so
+                        # a quiet interval is unnecessary.
+                        break
                     if stderr_task in done:
                         stderr_result = stderr_task.result()
                         if stderr_result.truncated:
                             raise _CodexBillingProbeLimitExceeded
                         watched.remove(stderr_task)
-                    if candidate_future in done:
-                        candidate = candidate_future.result()
-                        if candidate is None:
-                            raise ValueError(
-                                "Codex app-server billing protocol failed"
-                            )
-                        break
-                    if protocol_task in done:
-                        # Protocol completion before the candidate future is a
-                        # failure; a raised task result stays sanitized here.
-                        protocol_task.result()
-                        raise ValueError(
-                            "Codex app-server closed before billing evidence was ready"
-                        )
                     if wait_task in done:
                         # A clean response can already be buffered when the
                         # direct process exits.  Keep consuming the bounded
                         # protocol stream; EOF will otherwise fail it closed.
                         wait_task.result()
                         watched.remove(wait_task)
+                    if candidate_future in done:
+                        candidate = candidate_future.result()
+                        watched.remove(candidate_future)
+                        if candidate is None:
+                            raise ValueError(
+                                "Codex app-server billing protocol failed"
+                            )
+                        candidate_quiet_deadline = (
+                            loop.time()
+                            + _BILLING_PROBE_POST_REPLY_QUIESCENCE_SECONDS
+                        )
         except asyncio.CancelledError as exc:
             pending_interruption = exc
         except Exception:
@@ -561,6 +610,7 @@ async def _run_codex_billing_protocol(
     maximum_bytes: int,
     overflow_event: asyncio.Event,
     candidate_future: asyncio.Future[CodexBillingEvidence | None],
+    post_reply_message_count: list[int],
     clock: Callable[[], float],
 ) -> CodexBillingEvidence:
     lines = iter_bounded_lines(
@@ -621,10 +671,13 @@ async def _run_codex_billing_protocol(
             candidate_future.set_result(candidate)
 
         # Keep the one stdout consumer alive until cleanup closes the pipe.
-        # This preserves aggregate-byte, per-line, and message-count
-        # enforcement for output buffered or emitted after the final reply.
+        # The caller waits for a bounded quiet interval after every post-reply
+        # message before it begins cleanup, preserving aggregate-byte,
+        # per-line, and message-count enforcement for data emitted after the
+        # final RPC response.
         async for line in lines:
             _decode_rpc_message(line, observed_messages=observed_messages)
+            post_reply_message_count[0] += 1
         return candidate
     except BaseException:
         if not candidate_future.done():

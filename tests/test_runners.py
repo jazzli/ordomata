@@ -1037,6 +1037,10 @@ for line in sys.stdin:
         result = {{"rateLimits": {{"credits": {{"hasCredits": False, "unlimited": False, "balance": "0"}}, "primary": {{"usedPercent": 1}}, "rateLimitReachedType": None}}}}
     print(json.dumps({{"id": request_id, "result": result}}), flush=True)
     if request_id == 3:
+        # This delayed burst must be observed before cleanup begins.  It makes
+        # the post-reply stream boundary deterministic instead of relying on
+        # the parent and child being scheduled in a particular order.
+        time.sleep(0.05)
         for sequence in range(300):
             print(json.dumps({{"method": "notice", "params": sequence}}))
         sys.stdout.flush()
