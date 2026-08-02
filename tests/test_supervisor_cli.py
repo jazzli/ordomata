@@ -73,7 +73,9 @@ class SupervisorCLITests(unittest.TestCase):
                 audit["authorization"],
                 {
                     "clean": True,
+                    "control_enforcement_record_count": 0,
                     "database_present": False,
+                    "expected_control_enforcement_record_count": 0,
                     "expected_observation_count": 0,
                     "finding_count": 0,
                     "findings": [],

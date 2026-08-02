@@ -1439,19 +1439,21 @@ targets after reproducing the manifest on fresh direct chains. It applies no
 ambient loader or token semantics and grants no staging, loading, closure,
 authorization, or execution authority.
 
-The durable supervisor now also records non-enforcing controller-bookkeeping
-shadows for mock-flow admission and claim, operator control transitions, and
-sticky cancellation. Control requests bind the exact previous control revision;
-cancellation requests bind the exact source flow revision and the deterministic
-local writes that follow, including whether a completion intent is appended.
-These bookkeeping projections grant no worker, network, repository, or
-external authority. Control transitions are reversible local changes and
-currently derive Class 1. Cancellation is irreversible on the original flow;
-explicitly admitting a replacement is compensation, not reversal, so it
-conservatively derives Class 3. Current policy denies it and the audit reports
-the resulting legacy-execution parity mismatch. The existing operator safety
-path remains unchanged because these shadows are non-authoritative. Storage
-can retain the denied Class 3 evidence, but current policy still enables only
+The durable supervisor records non-enforcing controller-bookkeeping shadows for
+mock-flow admission and claim, compatibility observations for operator control
+transitions, and sticky cancellation. Each new reversible local control
+transition also passes a separate fixed Class 1 PEP. It binds the exact prior
+and target control revisions, retains only a digest of the operator identity,
+persists and exactly rereads its permit before the append-only control event,
+and appends a reread action receipt in the same SQLite transaction. The PEP
+cannot authorize flow admission, claims, cancellation, worker dispatch,
+repository work, network access, or a Class 2/3 effect. Cancellation requests
+bind the exact source flow revision and deterministic local writes that follow,
+including whether a completion intent is appended. Cancellation is irreversible
+on the original flow; explicitly admitting a replacement is compensation, not
+reversal, so it conservatively derives Class 3. Current policy denies it and
+the audit reports the resulting legacy-execution parity mismatch. Storage can
+retain that denied Class 3 evidence, but current policy still enables only
 Classes 0/1.
 
 ## Canonical request

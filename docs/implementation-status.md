@@ -1628,23 +1628,27 @@ local completion outbox with idempotency keys and append-only receipts.
 Subsequent additive migrations record canonical, non-enforcing supervisor ABAC
 shadow observations at flow admission, attempt claim, operator control
 transition, and sticky cancellation, including exact request/decision digests,
-conservatively derived class, legacy executability, and parity. The read-only
-supervisor audit verifies those records from one consistent SQLite snapshot,
-independently recomputing requests and decisions while checking coverage/order,
-exact append-only schema, and migration provenance. Frozen migration baselines
-exclude pre-shadow flow, attempt, control-event, and cancellation-request
-identifiers so historical records are not falsely treated as missing evidence.
-Control shadows bind the previous control revision; cancellation shadows bind
-the exact source flow revision and deterministic local state/outbox effect.
-Sticky cancellation is conservatively irreversible, derives Class 3, and is
-retained as a denied legacy-parity mismatch without blocking the existing
-operator safety path. This does not enable Class 2/3; current policy remains
-Class 0/1 only.
+conservatively derived class, legacy executability, and parity. A later
+additive migration also makes each new reversible local control transition pass
+an exact fixed Class 1 PEP: its privacy-bounded decision is persisted and
+exactly reread before the control event, and its succeeded action receipt is
+appended and reread in the same transaction. The read-only supervisor audit
+verifies the shadow records and independently replays post-v5 control
+decision/receipt pairs from one consistent SQLite snapshot, checking
+coverage/order, exact append-only schema, and migration provenance. Frozen
+migration baselines exclude pre-shadow flow, attempt, control-event, and
+cancellation-request identifiers so historical records are not falsely treated
+as missing evidence. Control transitions bind the previous control revision;
+cancellation shadows bind the exact source flow revision and deterministic
+local state/outbox effect. Sticky cancellation is conservatively irreversible,
+derives Class 3, and is retained as a denied legacy-parity mismatch without
+blocking the existing operator safety path. This does not enable Class 2/3;
+current policy remains Class 0/1 only.
 Startup verifies canonical baseline, migration-ledger, and supervisor schema
 objects, including non-prefixed triggers targeting owned tables, before use.
 Fresh baseline creation and exact pre-ledger baseline adoption are atomic; all
 schema statements and frozen migration rows commit together or not at all.
-Existing databases must carry a contiguous known v1-v4 migration prefix whose
+Existing databases must carry a contiguous known v1-v5 migration prefix whose
 identities agree with the installed supervisor tables. Baseline foreign keys,
 the atomic first `created` event, and subsequent status-transition lineage are
 also checked. Missing guards, partial schemas, ledger gaps, future versions,

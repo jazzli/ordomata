@@ -141,6 +141,13 @@ schema v6; they add no authority. The dispatch PEP remains
 limited to Class 0/1 requests for the exact profile-backed controller-owned
 `MockRunner`, while every new attempt that reaches it still requires the Class
 1 admission permit.
+Separately, a fourth narrow PEP mediates only an exact reversible local
+supervisor control transition. It binds the prior control revision and intended
+next revision, retains only a digest of the operator identity, persists and
+exactly rereads its fixed Class 1 decision before the append-only control event,
+then appends and rereads an action receipt in the same SQLite transaction. It
+does not authorize flow admission, cancellation, claims, worker dispatch,
+repository work, network access, or any Class 2/3 effect.
 There is still no
 general, live, comparison, or supervisor admission PEP, live/shared
 publication or promotion PEP, per-command/tool mediation,
@@ -2011,7 +2018,7 @@ object and fails closed on missing, replaced, or unexpected triggers. A new
 baseline, or the migration-ledger adoption of an exact legacy baseline, is
 created statement-by-statement in one explicit transaction. Existing state is
 verified before any schema DDL: the ledger must be a contiguous prefix of the
-frozen v1-v4 identities, its version must agree with the installed supervisor
+frozen v1-v5 identities, its version must agree with the installed supervisor
 tables, baseline foreign keys and run-status lineage must remain valid, and a
 rejected database is not repaired. WAL mode is selected only after baseline
 acceptance.
@@ -2020,15 +2027,17 @@ absent state without creating it.
 Reconciliation is preview-first and its apply step must present the exact
 current plan digest.
 
-Flow admission, library-only attempt claims, operator control transitions, and
-sticky cancellation append separate, non-enforcing ABAC shadow observations.
+Flow admission, library-only attempt claims, and sticky cancellation append
+separate, non-enforcing ABAC shadow observations. Reversible operator control
+transitions still append their compatibility shadow, but first pass the
+separate authoritative Class 1 control PEP.
 The read-only authorization inspector and supervisor audit each hold one
 SQLite snapshot while checking baseline and migration integrity. The
-supervisor audit also independently recomputes shadow requests and decisions
-and checks coverage, order, parity,
+supervisor audit independently recomputes both the shadow observations and
+post-v5 control-PEP decision/receipt pairs, then checks coverage, order, parity,
 append-only guards, and migration provenance. Frozen migration baselines
-exclude history created before each shadow schema. These observations do not
-authorize a worker or replace the deterministic control path.
+exclude history created before each applicable schema. Neither the control PEP
+nor its shadows authorize a worker or replace the deterministic control path.
 Control observations bind the exact previous control revision. Cancellation
 observations bind the exact source flow revision and resulting local state/
 outbox writes. The original flow remains irreversibly sticky-cancelled;
