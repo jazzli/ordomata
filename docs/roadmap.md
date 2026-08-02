@@ -835,6 +835,19 @@ parallel because it cannot exercise worker authority.
   closed. Separate controller authorization remains required. No parsing,
   recursion, invocation, execution, persistence, routing, network, model, or
   permission widening is added. Only Class 0/1 effects remain enabled.
+- The thirtieth bounded Phase 3 slice implements the matching library-only
+  schema-v1 Class 0
+  `ordomata.repository_executable_native_loader_nested_target_runtime_manifest`
+  primitive. It consumes one exact active nested-target staging receipt and
+  same-PID lease, fully remeasures every detached descriptor before and after a
+  separate bounded position-independent header read, and applies the fixed
+  ELF, Mach-O, POSIX shebang, unsupported-shebang, or unknown classification.
+  Runtime requirements, source lineages, and commands remain distinct across
+  shared-file deduplication; empty outcomes retain lineage without descriptor
+  reads or a staging root. Public receipts are digest-only. No path open, lease
+  mutation/cleanup, recursive resolution, dependency closure, loader
+  invocation, execution, persistence, routing, network, model, or permission
+  widening is added. Only Class 0/1 effects remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

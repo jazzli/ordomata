@@ -1450,6 +1450,28 @@ library closure, freshness, future correspondence, crash cleanup, secure
 erasure, and external descriptor absence remain deferred. The Class 0/1
 ceiling is unchanged.
 
+The thirtieth bounded Phase 3 slice is the matching library-only schema-v1
+Class 0 native-loader nested-target runtime-manifest PIP. Its conceptual flow
+is `exact active nested stage -> full descriptor remeasurement -> bounded
+position-independent header read -> fixed classification -> full
+remeasurement -> closing lease snapshot`. It accepts only the exact staging
+receipt and same-PID lease, validates their immutable anchors and private
+staging-root context, and opens no path or mutation boundary.
+
+Each unique detached file is classified as ELF, Mach-O, a valid bounded ASCII
+POSIX shebang, an unsupported shebang, or unknown. Only a digest reference to a
+valid directive is retained. Runtime-file, requirement, source-lineage, and
+command-binding records preserve the full depth-two staging and guard
+correspondence; shared files remain deduplicated without collapsing lineage,
+and empty outcomes produce no descriptor reads.
+
+Canonical output is digest-only and excludes raw paths, headers, content,
+filesystem numbers, temporary names, and descriptors. This is historical PIP
+evidence, not freshness, authorization, or an action receipt. It adds no lease
+mutation/cleanup, recursive resolution, dependency closure, loader invocation,
+execution, persistence, routing, network, subprocess, harness, model, or
+permission widening. The Class 0/1 ceiling is unchanged.
+
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
 It freshly revalidates a `RepositoryRegistration`, requires an existing
@@ -1774,6 +1796,13 @@ bound lease and replays the exact guard after staging. Empty outcomes preserve
 command lineage without opening a staging root. Separate authorization remains
 required; no parsing, recursion, loader invocation, execution, persistence,
 routing, or permission widening is added.
+
+The thirtieth slice adds the matching Class 0 nested-target runtime-manifest
+boundary. It fully remeasures each detached descriptor around a separate
+bounded position-independent header read, preserves exact requirement,
+source-lineage, and command correspondence, and performs no reads for empty
+stages. It opens no path, mutates no lease, follows no further declaration,
+invokes no loader, and executes nothing.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor

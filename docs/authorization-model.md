@@ -973,6 +973,24 @@ cycles, broader protected-root closure, future correspondence, crash cleanup,
 secure erasure, and external descriptor absence remain unproved. The current
 Class 0/1 ceiling is unchanged.
 
+The thirtieth bounded Phase 3 slice adds a separate Class 0 policy information
+point (PIP), not a PDP or PEP:
+`ordomata.repository_executable_native_loader_nested_target_runtime_manifest`.
+It requires one exact active nested-target staging receipt and same-PID lease,
+validates their immutable anchors and private root context, fully remeasures
+each detached descriptor around a separate bounded position-independent header
+read, and emits only fixed descriptive runtime classifications and digest
+lineage.
+
+The Class 0 result grants no authority, satisfies no fresh authorization, and
+is not an action receipt. Shared files remain deduplicated while requirements,
+source lineages, and command bindings remain distinct; empty stages perform no
+descriptor reads. Raw paths, headers, content, filesystem numbers, temporary
+names, and descriptors remain private. The boundary grants no recursive-
+resolution, loader, dependency, shared-library, subprocess, model, network,
+persistence, routing, or execution authority. The current Class 0/1 ceiling is
+unchanged.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -1296,6 +1314,12 @@ measurement descriptors; retained copies are unlinked, mode-`0400`, read-only,
 non-inheritable, and same-process. This primitive requires separate ABAC
 authorization and grants no parsing, recursion, loader, dependency,
 shared-library, persistence, routing, model, subprocess, or execution authority.
+
+The thirtieth slice adds matching Class 0 bounded runtime-header inspection for
+those detached descriptors. Full remeasurement surrounds the read and exact
+digest lineage remains descriptive only. It grants no authorization,
+recursive-resolution, loader, dependency, shared-library, persistence,
+routing, model, subprocess, or execution authority.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and

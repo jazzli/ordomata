@@ -1063,6 +1063,25 @@ erasure, and external descriptor absence remain deferred. No proposal,
 worktree, route, billing, network, worker, subprocess, harness, model, loader,
 or permission widening is added. Only Class 0/1 effects remain enabled.
 
+The thirtieth bounded Phase 3 slice adds the matching library-only schema-v1
+Class 0
+`ordomata.repository_executable_native_loader_nested_target_runtime_manifest`
+primitive. It consumes one exact active nested-target staging receipt and
+same-PID lease, fully remeasures each detached descriptor before and after a
+separate position-independent header read, and applies the fixed bounded ELF,
+Mach-O, POSIX shebang, unsupported-shebang, or unknown classification. Runtime
+requirements and source lineages remain distinct even when staged files are
+deduplicated; empty outcomes preserve command lineage without descriptor reads
+or a staging root.
+
+Canonical records expose only digests, classifications, bounded counts, and
+byte totals. Raw headers, file content, paths, filesystem numbers, descriptors,
+and staging names remain private. Inspection opens no path and does not mutate
+or clean up the lease. It does not follow a newly discovered declaration,
+recurse beyond depth two, resolve dependencies, invoke a loader, execute,
+persist, route, authorize, call a network/model/subprocess, or widen
+permissions. Only Class 0/1 effects remain enabled.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -1414,6 +1433,13 @@ process-bound lease, followed by exact post-stage guard replay. Empty outcomes
 retain command lineage without touching a staging root. Separate authorization
 is still required, and no parsing, recursion, loader invocation, execution,
 persistence, routing, or permission widening is added.
+
+The thirtieth slice adds matching Class 0 runtime-header evidence for those
+detached depth-two descriptors. Full descriptor remeasurement surrounds one
+bounded position-independent read, fixed byte-level classification preserves
+requirement, source-lineage, and command correspondence, and empty stages
+perform no descriptor reads. It opens no path, mutates no lease, follows no
+further declaration, invokes no loader, and executes nothing.
 
 ## Quick start
 

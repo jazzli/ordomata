@@ -979,6 +979,25 @@ library closure, freshness, future correspondence, crash cleanup, secure
 erasure, and external descriptor absence remain deferred. Only Class 0/1
 effects remain enabled.
 
+Implemented as the thirtieth bounded Phase 3 slice, the library-only schema-v1
+Class 0
+`ordomata.repository_executable_native_loader_nested_target_runtime_manifest`
+API consumes one exact active nested-target staging receipt and same-PID lease.
+It fully remeasures every detached descriptor before and after one separate
+bounded position-independent header read, then emits a fixed ELF, Mach-O,
+POSIX shebang, unsupported-shebang, or unknown classification. Runtime
+requirements and source lineages remain exact across shared-file
+deduplication; empty outcomes preserve command lineage without descriptor
+reads or a staging root.
+
+Canonical receipts contain only digest references, classifications, counts,
+and byte totals. Raw headers, file content, paths, filesystem numbers,
+descriptors, and temporary names remain private. The API opens no path, mutates
+or cleans up no lease, follows no new loader declaration, and adds no recursive
+resolution, dependency closure, loader invocation, execution, persistence,
+routing, authorization, network, subprocess, model, or permission widening.
+Only Class 0/1 effects remain enabled.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -1301,6 +1320,13 @@ files behind exact post-stage guard replay. Empty outcomes preserve source
 lineage without touching a staging root. Separate authorization is still
 required, and no parsing, recursion, loader invocation, execution, persistence,
 routing, or permission widening is added.
+
+The thirtieth slice adds matching Class 0 bounded runtime-header evidence for
+those detached depth-two descriptors. Full remeasurement surrounds the header
+read, fixed classifications preserve requirement, source-lineage, and command
+correspondence, and empty stages perform no descriptor reads. It opens no path,
+mutates no lease, follows no further declaration, invokes no loader, and
+executes nothing.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and
