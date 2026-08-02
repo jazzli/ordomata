@@ -1135,6 +1135,17 @@ remain digest-only. It performs no name lookup, pathname open, loading,
 recursive closure, execution, authority, persistence, networking, subprocess,
 model, or Class 2/3 effect.
 
+Implemented as the fortieth bounded Phase 3 slice, the library-only schema-v1
+Class 0
+`ordomata.repository_executable_native_dependency_manifest_target_dependency_manifest`
+API requires an ordered, private controller mapping for each non-absolute
+dependency declaration from the active detached manifest-target lease. It
+reproduces the staged dependency receipt three times and emits only declaration
+and canonical-target-reference digests. It performs no loader-environment
+lookup, token expansion, pathname open, target staging, loading, recursive
+closure, execution, authority, persistence, networking, subprocess, model, or
+Class 2/3 effect.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a

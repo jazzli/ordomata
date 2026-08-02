@@ -958,6 +958,17 @@ parallel because it cannot exercise worker authority.
   digest-only; no name lookup, path open, loading, recursive closure,
   execution, authority, persistence, network, subprocess, model, or permission
   widening is added. Only Class 0/1 effects remain enabled.
+- The fortieth bounded Phase 3 slice implements a separate library-only
+  schema-v1 Class 0
+  `ordomata.repository_executable_native_dependency_manifest_target_dependency_manifest`
+  primitive. It requires the exact staged-target dependency/runtime/staging
+  receipts, an active descriptor lease, and one ordered private controller
+  mapping for every non-absolute declaration. Three fresh dependency snapshots
+  bind only declaration and canonical-target-reference digests. It performs no
+  ambient loader search, Mach-O token expansion, target pathname open, target
+  staging, loading, recursive closure, authority, execution, persistence,
+  routing, network, subprocess, harness, model, or permission widening. Only
+  Class 0/1 effects remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.
