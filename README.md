@@ -1202,6 +1202,16 @@ the lease unchanged. Dependency parsing and closure, loader behavior,
 authority, persistence, network, subprocess, model, and higher-class effects
 remain out of scope.
 
+The thirty-ninth bounded Phase 3 slice adds the separate library-only schema-v1
+Class 0
+`ordomata.repository_executable_native_dependency_manifest_target_dependency_requirements`
+primitive. It validates the runtime receipt and active detached descriptor
+lease, then records only bounded ELF `DT_NEEDED` and thin Mach-O dylib-load
+syntax as digest-only declarations. It never resolves a declaration, opens a
+path, loads a target, proves recursive/shared-library closure, or enables
+execution, authority, persistence, network, subprocess, model, or higher-class
+effects.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
