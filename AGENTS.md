@@ -18,6 +18,17 @@ This repository implements a local, single-operator agent orchestrator. Preserve
 - Use Python 3.12+ and the standard library unless a dependency is explicitly justified and approved.
 - Keep run, capacity, and billing-circuit records append-only; quarantine artifacts after paid or unknown post-run billing evidence; keep changes reviewable and tests free of live model calls.
 
+## Repository navigation
+
+- Start with `README.md` for the product boundary, operator workflow, and local
+  commands.
+- Use `docs/README.md` to find the canonical architecture, policy, status,
+  roadmap, and design documents.
+- Treat `docs/implementation-status.md` as the detailed current-capability
+  ledger; do not copy that ledger into the README or agent instructions.
+- When prose conflicts with executable behaviour, treat current code, schemas,
+  fixtures, and tests as authoritative and repair the stale prose.
+
 ## Response clarity and comprehension
 
 **Explain meaning before mechanics.** Make technical work easy for a capable
