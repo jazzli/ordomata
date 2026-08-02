@@ -1033,6 +1033,18 @@ closure, authority, persistence, proposal/worktree integration, routing,
 billing, network, subprocess, harness, model, execution, or permission
 widening. Only Class 0/1 effects remain enabled.
 
+The thirty-fourth bounded Phase 3 slice adds a separate library-only schema-v1
+Class 0 explicit dependency-manifest binding primitive. It requires the exact
+direct dependency/runtime/staging chain, active same-PID lease, and an ordered
+controller-owned private mapping for every bare, relative, or Mach-O tokenized
+declaration. Three fresh chain snapshots verify that every spelling reproduces
+its existing declaration digest and retain only canonical target-path-reference
+digests. It does not consult loader environment, cache, RPATH/RUNPATH, or token
+expansion semantics, open or stage a target, invoke a loader, or grant
+dependency/shared-library/runtime/toolchain closure, authority, persistence,
+routing, billing, network, subprocess, harness, model, execution, or permission
+widening. Only Class 0/1 effects remain enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -1830,6 +1842,17 @@ Only Class 0/1 effects remain enabled.
     closure, freshness, authority, persistence, proposal/worktree integration,
     routing, billing, subprocess, harness, model, and execution remain
     deferred);
+  - controller-bound explicit non-absolute direct native dependency manifest
+    (separate schema-v1 Class 0 receipt implemented; exact direct dependency/
+    runtime/staging/active-lease anchoring, three fresh dependency-chain
+    snapshots, exact ordered private declaration-spelling checks, canonical
+    absolute target-path-reference binding, shared-target reference
+    deduplication, and exact requirement/command lineage are implemented; raw
+    dependency names and paths remain private, while host loader environment,
+    cache, RPATH/RUNPATH, and Mach-O token semantics, target reads/staging,
+    loader invocation, dependency/shared-library/runtime/toolchain closure,
+    freshness, authority, persistence, proposal/worktree integration, routing,
+    billing, subprocess, harness, model, and execution remain deferred);
   - controller-measured direct native-loader targets (separate schema-v1 Class
     0 receipt implemented; exact loader-requirements/runtime/staging/active-
     lease anchoring, exact ordered unique canonical-absolute path expectations,

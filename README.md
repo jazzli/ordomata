@@ -1147,6 +1147,19 @@ proves no recursive dependency/shared-library/runtime/toolchain closure. It
 adds no execution, persistence, routing, authorization, network, subprocess,
 harness, model, or permission widening. Only Class 0/1 effects remain enabled.
 
+The thirty-fourth bounded Phase 3 slice adds the separate library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_dependency_manifest` primitive. It
+freshly reproduces the exact dependency/runtime/staging/active-lease chain
+three times and requires one ordered controller-supplied mapping for every
+bare, relative, `@rpath`, `@loader_path`, or `@executable_path` declaration.
+Each mapping cryptographically reproduces its private declaration spelling and
+binds it to a canonical ASCII absolute target-path reference; absolute
+declarations remain outside this manifest boundary. The receipt contains only
+digest-bound mappings and lineage. It consults no host loader environment,
+cache, RPATH/RUNPATH, or token-expansion semantics, opens no target path,
+stages no target, and proves no dependency closure or execution eligibility.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -1526,6 +1539,14 @@ caller expectations, three fresh dependency-chain snapshots, two matching
 no-follow measurements, and closing namespace checks produce digest-only
 evidence. Non-absolute declarations remain unresolved and zero-read; no loader
 search semantics, dependency staging, or closure is claimed.
+
+The thirty-fourth slice adds separate Class 0 explicit controller-manifest
+binding for every non-absolute direct dependency declaration. Ordered private
+name-to-canonical-path inputs reproduce the existing digest-bound declarations,
+then yield only digest-bound mapping evidence after three fresh chain snapshots.
+It neither consults ambient loader search state nor expands Mach-O tokens, and
+opens or stages no mapped path; target measurement and dependency closure remain
+future boundaries.
 
 ## Quick start
 

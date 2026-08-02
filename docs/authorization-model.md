@@ -1058,6 +1058,16 @@ freshness, execution, persistence, routing, network, subprocess, harness,
 model, or wider-permission eligibility. The current Class 0/1 ceiling is
 unchanged.
 
+The thirty-fourth bounded Phase 3 slice adds another separate Class 0 PIP, not
+a PDP or PEP: `ordomata.repository_executable_native_dependency_manifest`.
+It accepts only the exact direct dependency/runtime/staging receipt chain and
+active same-PID lease plus an exact ordered controller manifest for every
+non-absolute declaration. Private spellings must reproduce their existing
+digest references and bind canonical absolute target-path references; the
+receipt exposes neither. The PIP consults no host loader environment, cache,
+RPATH/RUNPATH, or Mach-O token expansion, opens no target, and creates no
+execution or shared-library-closure authority.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -1409,6 +1419,13 @@ chain snapshots, two no-follow measurements, and closing namespace checks emit
 digest-only evidence. Non-absolute declarations stay unresolved and zero-read;
 the PIP grants no loader-search, dependency-staging, recursive/shared-library,
 authorization, or execution authority.
+
+The thirty-fourth slice adds separate Class 0 explicit controller-manifest
+binding for every non-absolute direct dependency declaration. It independently
+reproduces the direct chain three times and records only declaration- and
+canonical-path-reference digests. Ambient loader state and token expansion are
+not policy inputs, no mapped target is opened or staged, and the PIP grants no
+closure, authorization, or execution authority.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and

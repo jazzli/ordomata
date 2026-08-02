@@ -1545,6 +1545,17 @@ closure, freshness, authorization, execution, persistence, routing, network,
 subprocess, harness, model, or wider permission. The Class 0/1 ceiling is
 unchanged.
 
+The thirty-fourth bounded Phase 3 slice is a separate library-only schema-v1
+Class 0 explicit dependency-manifest PIP. Its conceptual flow is `exact
+dependency receipt + exact active direct stage + ordered controller manifest ->
+three fresh dependency-chain snapshots -> digest-only binding receipt`. Every
+bare, relative, `@rpath`, `@loader_path`, and `@executable_path` declaration
+must reproduce one private ordered manifest name and bind a canonical ASCII
+absolute target-path reference. Absolute declarations are not manifest inputs.
+The PIP neither consults loader environment/cache/RPATH/RUNPATH state nor
+expands Mach-O tokens, opens no target, stages no target, and grants no
+dependency closure, freshness, authorization, or execution authority.
+
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
 It freshly revalidates a `RepositoryRegistration`, requires an existing
@@ -1897,6 +1908,13 @@ snapshots, two matching no-follow measurements, and closing namespace checks
 produce digest-only evidence while every non-absolute declaration remains
 unresolved and zero-read. No loader search semantics, dependency staging, or
 recursive/shared-library closure is added.
+
+The thirty-fourth slice adds a separate Class 0 explicit controller-manifest
+binding boundary for non-absolute direct dependencies. It validates an ordered
+private declaration-name-to-canonical-path manifest against three fresh direct
+chains, retaining digest-only mappings. It applies no host loader search or
+Mach-O token semantics and opens or stages no mapped path; closure remains
+unverified.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor

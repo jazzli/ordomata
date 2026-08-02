@@ -893,6 +893,17 @@ parallel because it cannot exercise worker authority.
   recursive/shared-library/runtime/toolchain closure, execution, persistence,
   routing, authorization, network, subprocess, harness, model, or permission
   widening is added. Only Class 0/1 effects remain enabled.
+- The thirty-fourth bounded Phase 3 slice implements a separate library-only
+  schema-v1 Class 0
+  `ordomata.repository_executable_native_dependency_manifest` primitive. It
+  requires the exact direct dependency/runtime/staging chain, active same-PID
+  lease, and one ordered controller-supplied private mapping per non-absolute
+  declaration. Three fresh snapshots bind digest-only declaration and canonical
+  target-path references. It deliberately does not consult host loader search
+  state or expand Mach-O tokens, open or stage a target, or establish
+  shared-library/runtime/toolchain closure, authority, execution, persistence,
+  routing, network, subprocess, harness, model, or permission widening. Only
+  Class 0/1 effects remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.
