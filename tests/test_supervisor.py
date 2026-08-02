@@ -1712,6 +1712,13 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         first = supervisor.tick()
         self.assertFalse(first["dispatch_enabled"])
         self.assertFalse(first["claimed"])
+        self.assertEqual(
+            first["dispatch_blockers"],
+            [
+                "runtime_abac_enforcement_not_implemented",
+                "repository_worker_containment_not_proven",
+            ],
+        )
 
         tables = (
             "state_schema_migrations",

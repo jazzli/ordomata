@@ -53,6 +53,10 @@ class SupervisorCLITests(unittest.TestCase):
                     "control_revision": 0,
                     "database_present": False,
                     "dispatch_blocker": "runtime_abac_enforcement_not_implemented",
+                    "dispatch_blockers": [
+                        "runtime_abac_enforcement_not_implemented",
+                        "repository_worker_containment_not_proven",
+                    ],
                     "dispatch_enabled": False,
                     "flow_counts": {},
                     "foreground_lease_active": False,
@@ -439,6 +443,13 @@ class SupervisorCLITests(unittest.TestCase):
             self.assertEqual(
                 report["dispatch_blocker"],
                 "runtime_abac_enforcement_not_implemented",
+            )
+            self.assertEqual(
+                report["dispatch_blockers"],
+                [
+                    "runtime_abac_enforcement_not_implemented",
+                    "repository_worker_containment_not_proven",
+                ],
             )
             self.assertTrue(report["foreground_only"])
             self.assertFalse(report["installed_os_schedule"])

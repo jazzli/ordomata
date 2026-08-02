@@ -189,6 +189,10 @@ _RESOURCE_KEY = re.compile(r"[a-z0-9][a-z0-9._:/-]{0,199}")
 _MAX_JSON_BYTES = 262_144
 _SCHEMA_VERSION = 4
 _FOREGROUND_LEASE_KEY = "supervisor:foreground"
+SUPERVISOR_DISPATCH_BLOCKERS = (
+    "runtime_abac_enforcement_not_implemented",
+    "repository_worker_containment_not_proven",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -465,7 +469,8 @@ class SupervisorStatus:
             "pending_completion_count": self.pending_completion_count,
             "foreground_lease_active": self.foreground_lease_active,
             "dispatch_enabled": self.dispatch_enabled,
-            "dispatch_blocker": "runtime_abac_enforcement_not_implemented",
+            "dispatch_blocker": SUPERVISOR_DISPATCH_BLOCKERS[0],
+            "dispatch_blockers": list(SUPERVISOR_DISPATCH_BLOCKERS),
         }
 
 
@@ -2387,7 +2392,8 @@ class ForegroundSupervisor:
             "control_revision": control.revision,
             "dispatch_enabled": False,
             "claimed": False,
-            "dispatch_blocker": "runtime_abac_enforcement_not_implemented",
+            "dispatch_blocker": SUPERVISOR_DISPATCH_BLOCKERS[0],
+            "dispatch_blockers": list(SUPERVISOR_DISPATCH_BLOCKERS),
         }
 
     def close(self) -> None:
@@ -4615,6 +4621,7 @@ __all__ = [
     "StaleRevisionError",
     "SupervisorControlRevision",
     "SupervisorBookkeepingAuthorizationObservation",
+    "SUPERVISOR_DISPATCH_BLOCKERS",
     "SupervisorAuthorizationObservation",
     "SupervisorAuthorizationAudit",
     "SupervisorAuthorizationFinding",
