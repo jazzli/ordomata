@@ -929,6 +929,16 @@ parallel because it cannot exercise worker authority.
   target or loader execution, search/token expansion, network, subprocess,
   model, authority, persistence, or permission widening is added. Only Class
   0/1 effects remain enabled.
+- The thirty-seventh bounded Phase 3 slice implements a separate library-only
+  schema-v1 Class 0
+  `ordomata.repository_executable_native_dependency_manifest_target_runtime_manifest`
+  primitive. It validates the active same-PID detached descriptor lease,
+  fully remeasures each retained file with position-independent reads, and
+  emits only bounded ELF, Mach-O, POSIX-shebang, unsupported-shebang, or
+  unknown header classifications. It opens no path and leaves the lease
+  unchanged. Dependency parsing, recursive closure, loader behavior,
+  execution, authority, persistence, network, subprocess, model, and
+  permission widening remain absent. Only Class 0/1 effects remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

@@ -1181,6 +1181,17 @@ remains on a one-shot same-PID lease. Evidence is digest-only. It neither
 authorizes nor performs search, loading, execution, persistence, network,
 subprocess, model, or higher-class effects.
 
+The thirty-seventh bounded Phase 3 slice adds the separate library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_dependency_manifest_target_runtime_manifest`
+primitive. It validates that active detached target-stage lease, fully
+remeasures each unlinked read-only descriptor with `pread`, and records only a
+bounded byte-level ELF, Mach-O, shebang, unsupported-shebang, or unknown
+classification. It opens no path and leaves the lease unchanged. It does not
+parse dependencies, invoke loader behavior, establish recursive closure, or
+enable execution, persistence, network, subprocess, model, or higher-class
+effects.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
