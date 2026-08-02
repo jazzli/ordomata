@@ -871,6 +871,11 @@ class RepositoryExecutableStagingTests(unittest.TestCase):
             wrong_mode = Path(temporary) / f"{private_marker}-mode"
             wrong_mode.mkdir(mode=0o755)
             wrong_mode.chmod(0o755)
+            nonempty = Path(temporary) / f"{private_marker}-nonempty"
+            nonempty.mkdir(mode=0o700)
+            nonempty.chmod(0o700)
+            sentinel = nonempty / "sentinel"
+            sentinel.write_text("untouched\n", encoding="utf-8")
             inside_repository = root / f"{private_marker}-repository"
             inside_repository.mkdir(mode=0o700)
             inside_repository.chmod(0o700)
@@ -884,6 +889,7 @@ class RepositoryExecutableStagingTests(unittest.TestCase):
                 ("ordinary-file", ordinary_file),
                 ("symlink", symlink),
                 ("wrong-mode", wrong_mode),
+                ("nonempty", nonempty),
                 ("inside-repository", inside_repository),
                 ("inside-search", inside_search),
             )
@@ -903,6 +909,10 @@ class RepositoryExecutableStagingTests(unittest.TestCase):
                         self.fail("invalid staging root retained a descriptor")
                     if lease.state == "new":
                         lease.close()
+            self.assertEqual(
+                sentinel.read_text(encoding="utf-8"),
+                "untouched\n",
+            )
 
     def test_v1_through_v3_reject_before_expected_or_resolution_inspection(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

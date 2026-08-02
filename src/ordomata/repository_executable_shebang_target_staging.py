@@ -1385,6 +1385,26 @@ def _prepare_target_staging_root(
     try:
         pinned = _BUILTIN_OPEN_ABSOLUTE_DIRECTORY(lease.staging_root)
         metadata = os.fstat(pinned.descriptor)
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or stat.S_IMODE(metadata.st_mode) != _STAGING_ROOT_MODE
+            or metadata.st_nlink <= 0
+            or os.get_inheritable(pinned.descriptor)
+            or not _directory_is_empty(pinned.descriptor)
+            or any(
+                _same_identity(metadata, item.metadata)
+                for item in protected.all_directories
+            )
+            or _target_ancestor_aliases_root(
+                expected_target_paths,
+                root_metadata=metadata,
+            )
+        ):
+            raise _InvalidTargetStaging
+
+        # Keep an invalid pre-existing root outside the lease: cleanup owns
+        # only roots that passed every non-mutating validation above.
         lease._root_metadata = _metadata_signature(metadata)
         lease._root_descriptor = pinned.descriptor
     except BaseException:
@@ -1395,23 +1415,6 @@ def _prepare_target_staging_root(
                 raise _CleanupUncertain from None
             lease._root_metadata = None
         raise
-    if (
-        not stat.S_ISDIR(metadata.st_mode)
-        or metadata.st_uid != os.geteuid()
-        or stat.S_IMODE(metadata.st_mode) != _STAGING_ROOT_MODE
-        or metadata.st_nlink <= 0
-        or os.get_inheritable(pinned.descriptor)
-        or not _directory_is_empty(pinned.descriptor)
-        or any(
-            _same_identity(metadata, item.metadata)
-            for item in protected.all_directories
-        )
-        or _target_ancestor_aliases_root(
-            expected_target_paths,
-            root_metadata=metadata,
-        )
-    ):
-        raise _InvalidTargetStaging
     return _BUILTIN_CANONICAL_DIGEST(
         {
             "directory_device": metadata.st_dev,
