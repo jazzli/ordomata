@@ -769,6 +769,33 @@ parallel because it cannot exercise worker authority.
   model, loader invocation, or execution. Recursive closure, freshness,
   containment, runtime/toolchain completeness, and future-execution semantics
   remain deferred. Only Class 0/1 effects remain enabled.
+- The twenty-seventh bounded Phase 3 slice implements the separate library-
+  only schema-v1 Class 0
+  `ordomata.repository_executable_native_loader_nested_target_resolution`
+  PIP. It requires the exact loader-of-loader requirements, target runtime,
+  target staging, first-hop target-resolution, active same-PID target-stage
+  lease, exact ordered current-loader paths, and exact ordered newly declared
+  nested-loader paths. Three fresh chain reproductions, the same retained
+  target tuple, and a closing stage snapshot bind the result.
+  Each canonical absolute declaration is reproduced before two guarded no-
+  follow measurements. Shared declarations deduplicate while exact target,
+  source, requirement, lineage, and command bindings remain. Exact current-
+  loader path re-entry plus original first-hop target, hardlink, detached
+  staged-target, and target-staging-root identity re-entry reject before leaf
+  reads. Fixed absent, unsupported/fat, non-native, and no-target outcomes
+  avoid unnecessary lookup or read. Public evidence contains only digest-
+  bound path, identity, metadata, content, byte-count, disposition, count, and
+  lineage facts; raw paths, bytes, identity numbers, names, and descriptors
+  remain private, while deterministic digests remain correlatable and
+  potentially guessable.
+  Resolution stops at depth two. The newly measured bytes are not parsed,
+  staged, followed, invoked, or executed. Source-path/source-staging-root re-
+  entry, general cycles, broader protected-root closure, identity,
+  authenticity, compatibility, invocability, dependency/shared-library
+  closure, freshness, authority, and future correspondence remain deferred.
+  It adds no lease mutation, persistence, proposal/worktree, routing, billing,
+  network, worker, subprocess, harness, model, loader invocation, or execution.
+  Only Class 0/1 effects remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

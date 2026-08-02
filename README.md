@@ -969,6 +969,39 @@ nothing. Recursion beyond this syntax hop, freshness, containment,
 runtime/toolchain completeness, and future-execution correspondence remain
 unproved. Only Class 0/1 effects remain enabled.
 
+The twenty-seventh bounded Phase 3 slice adds the separate library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_loader_nested_target_resolution` PIP.
+`inspect_staged_executable_native_loader_nested_targets(...)` accepts only the
+exact loader-of-loader requirements receipt, target-runtime manifest,
+target-staging receipt, first-hop target-resolution receipt, active same-PID
+target-stage lease, exact ordered current-loader paths, and exact ordered newly
+declared nested-loader paths. It reproduces the loader-of-loader receipt on
+each of three chain snapshots and requires the exact retained target-stage
+tuple through a closing snapshot.
+
+Every declared canonical absolute nested-loader path must reproduce its
+digest-only declaration before two complete guarded no-follow measurements.
+Shared declarations are measured once while exact target, source, requirement,
+lineage, and command bindings are retained. Exact current-loader path re-entry,
+original first-hop target identity re-entry, detached staged-target identity
+re-entry, and traversal into the target staging root fail before leaf bytes are
+read. Absent, unsupported/fat, and non-native loader declarations require no
+nested path; a no-target chain performs no nested lookup or read. Public
+records expose only digest-bound path, identity, metadata, content, byte-count,
+disposition, count, and lineage evidence. Raw paths, content, identity numbers,
+temporary names, and descriptors remain private, while deterministic digests
+remain correlatable and potentially guessable.
+
+Resolution stops at depth two: newly measured bytes are not parsed, staged,
+followed, invoked, or executed. Source-path and source-staging-root re-entry,
+general cycle detection, broader protected-root closure, loader identity,
+authenticity, compatibility, invocability, shared-library/dependency closure,
+current freshness, authorization, and future-execution correspondence remain
+unproved. The PIP mutates no lease, persists no state, creates no proposal,
+worktree, route, worker, or subprocess, calls no network or model, invokes no
+loader, and executes nothing. Only Class 0/1 effects remain enabled.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -1297,6 +1330,13 @@ inspection. Fresh runtime reproduction and repeated descriptor measurements
 bind bounded ELF `PT_INTERP` or thin Mach-O `LC_LOAD_DYLINKER` syntax to every
 target and command without resolving a newly declared path, invoking a loader,
 or executing anything.
+
+The twenty-seventh slice adds matching Class 0 measurement of exactly one
+newly declared native-loader hop. Exact declaration/path reproduction, two
+guarded no-follow measurements, and immediate current-target, hardlink, staged-
+target, and target-staging-root re-entry exclusions extend digest-only lineage
+to depth two without parsing the new bytes, invoking a loader, or executing
+anything.
 
 ## Quick start
 
