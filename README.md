@@ -1212,6 +1212,16 @@ path, loads a target, proves recursive/shared-library closure, or enables
 execution, authority, persistence, network, subprocess, model, or higher-class
 effects.
 
+The fortieth bounded Phase 3 slice adds the separate library-only schema-v1
+Class 0
+`ordomata.repository_executable_native_dependency_manifest_target_dependency_manifest`
+primitive. It requires one ordered, private controller mapping for every
+non-absolute staged-target dependency declaration, re-proves the dependency
+receipt three times, and emits declaration- and canonical-target-reference
+digests only. It consults no ambient loader state, expands no loader token,
+opens or stages no mapped target, and establishes no dependency closure or
+execution eligibility.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -1605,6 +1615,13 @@ already controller-bound manifest targets. It repeats the manifest proof around
 two matching target measurements and closing namespace checks, while keeping
 raw names, paths, content, and filesystem identifiers private. No host loader
 search, target staging, loading, or closure is added.
+
+The fortieth slice adds separate Class 0 explicit controller mapping for
+non-absolute declarations discovered inside the detached manifest targets.
+Every mapping entry must reproduce the exact ordered staged declaration across
+three fresh dependency snapshots, and the receipt retains only bound digests.
+It performs no ambient loader search, token expansion, path open, target
+staging, loading, or recursive dependency closure.
 
 ## Quick start
 

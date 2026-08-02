@@ -1093,6 +1093,17 @@ name, open a path, load a target, establish recursive/shared-library closure,
 or enable execution, persistence, network, subprocess, model, or Class 2/3
 capability.
 
+The fortieth bounded Phase 3 slice adds a separate library-only schema-v1
+Class 0 explicit controller-mapping primitive for non-absolute declarations
+inside an active detached manifest-target lease. It requires exact staged
+dependency/runtime/staging receipts and an ordered private mapping that
+cryptographically reproduces every non-absolute declaration across three fresh
+dependency snapshots. It records declaration and canonical-target-reference
+digests only. Ambient loader search, RPATH/RUNPATH semantics, Mach-O token
+expansion, pathname opens, target staging, loading, recursive closure,
+execution, persistence, network, subprocess, model, and Class 2/3 capability
+remain deferred.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
