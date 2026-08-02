@@ -21,7 +21,6 @@ from ..models import (
     EnvironmentValidation,
     PaidContinuationProtection,
     PaidCreditBalance,
-    PermissionClass,
     RunRequest,
     RunnerCapabilities,
 )

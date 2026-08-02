@@ -12175,24 +12175,6 @@ def _is_safe_identifier(value: Any) -> bool:
     return isinstance(value, str) and _safe_run_identifier(value) == value
 
 
-def _is_safe_optional_text(value: Any) -> bool:
-    if value is None:
-        return True
-    if (
-        not isinstance(value, str)
-        or not value
-        or len(value) > 256
-        or "\x00" in value
-        or any(ord(character) < 32 for character in value)
-    ):
-        return False
-    folded = value.casefold()
-    return not (
-        any(marker in folded for marker in _SENSITIVE_IDENTIFIER_MARKERS)
-        or folded.startswith(_SENSITIVE_IDENTIFIER_PREFIXES)
-    )
-
-
 def _is_bounded_private_text(value: Any) -> bool:
     return (
         isinstance(value, str)
