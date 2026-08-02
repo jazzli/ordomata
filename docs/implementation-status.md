@@ -1116,6 +1116,16 @@ unchanged; dependency parsing, loader behavior, recursive closure, execution,
 authority, persistence, network, subprocess, model, and Class 2/3 effects
 remain absent.
 
+Implemented as the thirty-eighth bounded Phase 3 slice, the library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_dependency_manifest_target_loader_requirements`
+API validates that runtime receipt and active detached lease, then parses only
+bounded direct ELF interpreter and Mach-O dylinker syntax from the retained
+descriptors. It performs no name lookup, pathname open, loading, or execution,
+and leaves the lease unchanged. Dependency parsing/closure, loader behavior,
+authority, persistence, networking, subprocess, model, and Class 2/3 effects
+remain absent.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
