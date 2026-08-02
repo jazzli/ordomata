@@ -915,6 +915,20 @@ parallel because it cannot exercise worker authority.
   shared-library/runtime/toolchain closure, authority, execution, persistence,
   routing, network, subprocess, harness, model, or permission widening. Only
   Class 0/1 effects remain enabled.
+- The thirty-sixth bounded Phase 3 slice implements a separate library-only
+  schema-v1 Class 1
+  `ordomata.repository_executable_native_dependency_manifest_target_staging`
+  primitive. It accepts only the exact measured explicit-manifest target set,
+  freshly re-proves it before copying, captures each source only through its
+  still-pinned no-follow descriptor, and rejects any action measurement or
+  post-stage reinspection that differs from the expected receipt. The caller
+  must supply a pre-existing, empty, owner-only mode-`0700` staging directory
+  outside every target. Each randomized staging name is opened no-follow,
+  immediately unlinked, written, remeasured, and retained only by a read-only
+  descriptor on a one-shot same-PID lease; receipts retain digests alone. No
+  target or loader execution, search/token expansion, network, subprocess,
+  model, authority, persistence, or permission widening is added. Only Class
+  0/1 effects remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

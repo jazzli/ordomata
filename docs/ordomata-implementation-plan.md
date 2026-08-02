@@ -1057,6 +1057,17 @@ shared-library/runtime/toolchain closure, authority, persistence, routing,
 billing, network, subprocess, harness, model, execution, or permission
 widening. Only Class 0/1 effects remain enabled.
 
+The thirty-sixth bounded Phase 3 slice adds a separate library-only schema-v1
+Class 1 detached descriptor-staging primitive for the exact measured manifest
+target set. It freshly re-proves the upstream receipt, copies only through each
+still-pinned no-follow source descriptor, and requires both the action
+measurement and post-stage reinspection to equal the expected target receipt.
+The caller supplies a pre-existing empty, owner-owned mode-`0700` staging root
+outside every target. Each randomized no-follow name is unlinked before write,
+and only a read-only descriptor is retained by the one-shot same-PID lease.
+This is non-authorizing local draft work only: no search, loading, execution,
+persistence, network, subprocess, model, or Class 2/3 capability is added.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
