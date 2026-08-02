@@ -1105,6 +1105,17 @@ read-only descriptor remains under a one-shot same-PID lease. Receipts are
 digest-only. It adds no loader search, token expansion, loading, execution,
 authority, persistence, networking, subprocess, model, or Class 2/3 effect.
 
+Implemented as the thirty-seventh bounded Phase 3 slice, the library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_dependency_manifest_target_runtime_manifest`
+API validates that active detached descriptor lease, fully remeasures each
+unlinked read-only file with position-independent reads, and emits only bounded
+byte-level ELF, Mach-O, shebang, unsupported-shebang, or unknown
+classifications. It opens no source or staging path and leaves the lease
+unchanged; dependency parsing, loader behavior, recursive closure, execution,
+authority, persistence, network, subprocess, model, and Class 2/3 effects
+remain absent.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a

@@ -1068,6 +1068,15 @@ and only a read-only descriptor is retained by the one-shot same-PID lease.
 This is non-authorizing local draft work only: no search, loading, execution,
 persistence, network, subprocess, model, or Class 2/3 capability is added.
 
+The thirty-seventh bounded Phase 3 slice adds a separate library-only schema-v1
+Class 0 runtime-header primitive over that active detached descriptor lease. It
+fully remeasures each unlinked read-only target with position-independent reads
+and emits only bounded ELF, Mach-O, POSIX-shebang, unsupported-shebang, or
+unknown classifications. It opens no source or staging pathname and leaves the
+lease unchanged. Dependency parsing, loader behavior, recursive closure,
+execution, persistence, network, subprocess, model, and Class 2/3 capability
+remain deferred.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
