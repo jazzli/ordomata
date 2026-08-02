@@ -964,6 +964,25 @@ dependency/shared-library closure, freshness, future correspondence, crash
 cleanup, secure erasure, and external descriptor absence remain deferred. Only
 Class 0/1 effects remain enabled.
 
+The thirtieth bounded Phase 3 slice adds the matching library-only schema-v1
+Class 0 native-loader nested-target runtime-manifest primitive. It requires one
+exact active nested-target staging receipt and same-PID lease, fully remeasures
+each detached descriptor before and after one separate bounded
+position-independent header read, and emits fixed ELF, Mach-O, POSIX shebang,
+unsupported-shebang, or unknown classifications. Shared files remain
+deduplicated while requirements, source lineages, and command bindings stay
+exact; empty outcomes retain lineage without descriptor reads or a staging
+root.
+
+Canonical records expose digest-only correspondence, classifications, counts,
+and byte totals while raw headers, content, paths, filesystem numbers,
+descriptors, and temporary names remain private. The primitive opens no path,
+mutates or cleans up no lease, follows no further loader declaration, and adds
+no recursive resolution, dependency closure, loader invocation, execution,
+persistence, proposal/worktree, routing, billing, network, worker, subprocess,
+harness, model, authorization, or permission widening. Only Class 0/1 effects
+remain enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
