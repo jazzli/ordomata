@@ -1146,6 +1146,16 @@ lookup, token expansion, pathname open, target staging, loading, recursive
 closure, execution, authority, persistence, networking, subprocess, model, or
 Class 2/3 effect.
 
+Implemented as the forty-first bounded Phase 3 slice, the library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_dependency_manifest_target_dependency_manifest_targets`
+API re-proves the exact staged-target mapping before, between, and after two
+matching no-follow measurements of only its explicitly mapped next-hop paths.
+It validates closing namespaces and emits only target/content/identity digests.
+It adds no ambient loader search, token expansion, target staging, loading,
+recursive closure, execution, authority, persistence, networking, subprocess,
+model, or Class 2/3 effect.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a

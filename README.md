@@ -1222,6 +1222,15 @@ digests only. It consults no ambient loader state, expands no loader token,
 opens or stages no mapped target, and establishes no dependency closure or
 execution eligibility.
 
+The forty-first bounded Phase 3 slice adds the separate library-only schema-v1
+Class 0
+`ordomata.repository_executable_native_dependency_manifest_target_dependency_manifest_targets`
+primitive. It re-proves that staged-target mapping around two matching no-follow
+measurements of its exact mapped targets and retains only digest-bound target
+evidence. Loader search and token semantics, staging, loading, recursive
+closure, execution, authority, persistence, network, subprocess, model, and
+higher-class effects remain out of scope.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -1622,6 +1631,12 @@ Every mapping entry must reproduce the exact ordered staged declaration across
 three fresh dependency snapshots, and the receipt retains only bound digests.
 It performs no ambient loader search, token expansion, path open, target
 staging, loading, or recursive dependency closure.
+
+The forty-first slice adds separate Class 0 no-follow measurement for only the
+next-hop targets already bound by that detached-target mapping. Two matching
+target measurements are surrounded by fresh mapping proof and namespace checks;
+paths, content, and filesystem identity remain digest-only. It adds no loader
+search, token expansion, target staging, loading, or recursive closure.
 
 ## Quick start
 
