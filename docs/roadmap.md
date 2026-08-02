@@ -820,6 +820,21 @@ parallel because it cannot exercise worker authority.
   persistence, proposal/worktree, routing, billing, network, worker,
   subprocess, harness, model, loader invocation, or execution. Only Class 0/1
   effects remain enabled.
+- The twenty-ninth bounded Phase 3 slice implements the matching library-only
+  schema-v1 Class 1
+  `ordomata.repository_executable_native_loader_nested_target_staging`
+  primitive. It requires the exact depth-two receipt and known-chain guard,
+  complete active source/target proof chain, both ordered loader-path sets, and
+  a caller-selected private mode-`0700` staging root. Each unique guarded target
+  is copied through its pinned action-measurement descriptor into an unlinked
+  mode-`0400`, read-only, non-inheritable same-process lease; exact post-stage
+  guard replay must match before activation.
+  Shared targets deduplicate storage while requirements, source lineages, and
+  commands remain distinct. Empty outcomes retain exact lineage without opening
+  a staging root. Public receipts are digest-only and cleanup uncertainty fails
+  closed. Separate controller authorization remains required. No parsing,
+  recursion, invocation, execution, persistence, routing, network, model, or
+  permission widening is added. Only Class 0/1 effects remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

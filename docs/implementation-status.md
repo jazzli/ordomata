@@ -955,6 +955,30 @@ persistence, proposal/worktree, routing, billing, network, worker, subprocess,
 harness, model, loader invocation, or execution integration is added. Only
 Class 0/1 effects remain enabled.
 
+Implemented as the twenty-ninth bounded Phase 3 slice, the library-only
+schema-v1 Class 1
+`ordomata.repository_executable_native_loader_nested_target_staging` API
+requires the exact native-loader depth-two receipt, exact known-chain guard,
+complete source/target proof chain, active same-PID leases, both ordered loader-
+path sets, and a caller-selected private mode-`0700` directory. It reproduces
+the guard at the action boundary and copies each unique target through the same
+pinned descriptor used by its guarded measurement. Copies are fully read back,
+set to mode `0400`, reopened read-only and non-inheritable, unlinked, and
+retained by a noncopyable process-bound lease. A second exact guard reproduction
+must match before activation.
+
+Shared targets produce one retained descriptor without collapsing requirement,
+source-lineage, or command evidence. Empty outcomes retain their dispositions
+and lineages without creating a staging root. Canonical records are digest-only;
+raw paths, bytes, filesystem numbers, temporary names, and descriptors remain
+private. Cleanup uncertainty is explicit and fails closed. This primitive does
+not authorize itself; separate controller authorization remains required. It
+does not parse, recurse, follow, invoke, execute, persist, route, or widen
+permissions. General cycles, broader protected-root closure, dependency/shared-
+library closure, freshness, future correspondence, crash cleanup, secure
+erasure, and external descriptor absence remain deferred. Only Class 0/1
+effects remain enabled.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -1269,6 +1293,14 @@ protections and closes on exact source/target lease anchors. Source identity,
 hardlink, staged-copy, and source-stage-root re-entry now fail before leaf reads
 without parsing the newly measured bytes or adding staging, subprocess, model,
 loader, or execution integration.
+
+The twenty-ninth slice adds matching Class 1 descriptor staging for those exact
+guarded bytes. Copies are made through pinned action-measurement descriptors,
+then retained as unlinked mode-`0400`, read-only, non-inheritable process-bound
+files behind exact post-stage guard replay. Empty outcomes preserve source
+lineage without touching a staging root. Separate authorization is still
+required, and no parsing, recursion, loader invocation, execution, persistence,
+routing, or permission widening is added.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and

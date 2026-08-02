@@ -944,6 +944,26 @@ mutation/cleanup, persistence, proposal/worktree, routing, billing, network,
 worker, subprocess, harness, model, loader invocation, or execution. Only
 Class 0/1 effects remain enabled.
 
+The twenty-ninth bounded Phase 3 slice adds the matching library-only schema-v1
+Class 1 native-loader nested-target staging primitive. It requires the exact
+depth-two resolution and known-chain guard, complete active source/target proof
+chain, both ordered loader-path sets, and a caller-selected private mode-`0700`
+directory. It reproduces the guard at the action boundary, copies each unique
+target through the guarded measurement's pinned descriptor, fully reads back
+the copy, changes it to mode `0400`, reopens it read-only and non-inheritable,
+unlinks the temporary name, and retains the descriptor in a same-process,
+noncopyable lease. Exact post-stage guard replay is required before activation.
+
+Shared targets deduplicate storage while requirement, source-lineage, and
+command evidence remains exact. Empty outcomes retain lineage without opening
+a staging root. Receipts are digest-only and cleanup uncertainty fails closed.
+The primitive does not authorize itself; separate controller ABAC authorization
+remains required. It does not parse, recurse, follow, invoke, execute, persist,
+route, or widen permissions. General cycles, broader protected-root closure,
+dependency/shared-library closure, freshness, future correspondence, crash
+cleanup, secure erasure, and external descriptor absence remain deferred. Only
+Class 0/1 effects remain enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
