@@ -1104,6 +1104,15 @@ expansion, pathname opens, target staging, loading, recursive closure,
 execution, persistence, network, subprocess, model, and Class 2/3 capability
 remain deferred.
 
+The forty-first bounded Phase 3 slice adds a separate library-only schema-v1
+Class 0 no-follow target-measurement primitive over those explicit detached-
+target mappings. It re-proves the exact mapping/dependency/runtime/staging
+chain before, between, and after two matching target measurements, then checks
+the closing target namespaces. Receipts retain digest-only target, content, and
+filesystem-identity evidence. Loader search or token expansion, target staging,
+loading, recursive closure, execution, persistence, network, subprocess,
+model, and Class 2/3 capability remain deferred.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical

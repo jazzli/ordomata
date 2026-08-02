@@ -969,6 +969,16 @@ parallel because it cannot exercise worker authority.
   staging, loading, recursive closure, authority, execution, persistence,
   routing, network, subprocess, harness, model, or permission widening. Only
   Class 0/1 effects remain enabled.
+- The forty-first bounded Phase 3 slice implements a separate library-only
+  schema-v1 Class 0
+  `ordomata.repository_executable_native_dependency_manifest_target_dependency_manifest_targets`
+  primitive. It repeats exact staged-target mapping proof around two matching
+  no-follow measurements of only the controller-mapped next-hop paths and
+  closing namespace checks. Evidence retains digests, not paths, bytes, or
+  filesystem identifiers. It adds no loader search or token expansion, target
+  staging, loading, recursive closure, authority, execution, persistence,
+  routing, network, subprocess, harness, model, or permission widening. Only
+  Class 0/1 effects remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.
