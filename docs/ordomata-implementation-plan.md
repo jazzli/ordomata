@@ -1085,6 +1085,14 @@ declared name and leaves the lease unchanged. Dependency parsing and recursive
 closure, loader behavior, execution, persistence, network, subprocess, model,
 and Class 2/3 capability remain deferred.
 
+The thirty-ninth bounded Phase 3 slice adds a separate library-only schema-v1
+Class 0 direct-dependency declaration primitive over the same active detached
+descriptor lease. It reads only bounded ELF `DT_NEEDED` and thin Mach-O
+dylib-load syntax and keeps declarations digest-only. It does not resolve a
+name, open a path, load a target, establish recursive/shared-library closure,
+or enable execution, persistence, network, subprocess, model, or Class 2/3
+capability.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
