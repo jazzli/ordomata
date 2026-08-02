@@ -8,7 +8,13 @@ This repository implements a local, single-operator agent orchestrator. Preserve
 - Never print, persist, or pass prohibited credential values. Child-process environments must be constructed from a narrow allowlist.
 - Deterministic code owns state, permissions, scheduling, evaluation, billing gates, post-run billing disposition, circuit breakers, and promotion. Agents cannot widen their own authority.
 - Only permission classes 0 (read-only) and 1 (local draft) are enabled at this stage.
-- Do not install recurring schedules, send messages, change calendars, merge, deploy, push, or perform other consequential actions automatically.
+- Do not install recurring schedules, send messages, change calendars, deploy,
+  push, or perform other consequential actions automatically. A separate
+  explicit merge authorization is not required after the repository owner has
+  approved the current pull request and asked to proceed in ordinary language;
+  treat that instruction as authorization to merge. Before merging, still
+  verify the exact repository and pull request, required checks, mergeability,
+  intended merge method, and clean local scope.
 - Use Python 3.12+ and the standard library unless a dependency is explicitly justified and approved.
 - Keep run, capacity, and billing-circuit records append-only; quarantine artifacts after paid or unknown post-run billing evidence; keep changes reviewable and tests free of live model calls.
 
