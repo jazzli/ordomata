@@ -1024,6 +1024,31 @@ dependency/shared-library closure, loader invocation, execution, persistence,
 routing, authorization, network, subprocess, harness, model, or permission
 widening. Only Class 0/1 effects remain enabled.
 
+Implemented as the thirty-second bounded Phase 3 slice, the library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_dependency_requirements` API consumes
+the exact direct native-loader, runtime, and staging receipts plus an active
+same-PID lease. It freshly reproduces native-loader evidence before and after
+extraction and requires two matching complete descriptor/parser passes.
+
+Bounded ELF32/ELF64 dynamic-table parsing records ordered `DT_NEEDED`
+declarations. Bounded thin Mach-O32/Mach-O64 load-command parsing records
+required, weak, re-export, upward, and lazy dylib declarations with current and
+compatibility version integers. Each raw dependency name is converted inside
+the parser to a runtime-file- and format-bound digest reference, byte count,
+fixed path style, and load kind. Shared direct executables deduplicate file
+inspection without collapsing registered-command lineage. Unsupported native
+layouts and non-native files have fixed dispositions.
+
+Canonical receipts and evidence exclude raw dependency names and paths,
+headers, content, filesystem numbers, staging names, and descriptors. The API
+performs no dependency lookup, resolution, staging, path open, or execution;
+mutates or cleans up no lease; selects no fat architecture; invokes no loader;
+and adds no shared-library/recursive dependency closure, freshness, authority,
+authorization, persistence, proposal/worktree integration, routing, billing,
+network, subprocess, harness, model, or permission widening. Only Class 0/1
+effects remain enabled.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -1360,6 +1385,13 @@ matching complete descriptor/parser passes extract only ELF `PT_INTERP` or thin
 Mach-O `LC_LOAD_DYLINKER` syntax while preserving full digest lineage. It
 resolves and follows no declaration, invokes no loader, mutates no lease, and
 executes nothing.
+
+The thirty-second slice adds separate Class 0 direct-native dependency-
+declaration evidence. Exact native-loader/runtime/staging/lease lineage and two
+matching complete descriptor/parser passes produce digest-only ordered ELF
+`DT_NEEDED` and thin Mach-O dylib-load metadata. It performs no dependency
+lookup, resolution, staging, path open, loader invocation, or execution and
+proves no shared-library or recursive dependency closure.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and

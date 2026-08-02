@@ -1498,6 +1498,29 @@ closure, freshness, authorization, execution, persistence, routing, network,
 subprocess, harness, model, or wider permission. The Class 0/1 ceiling is
 unchanged.
 
+The thirty-second bounded Phase 3 slice is a separate library-only schema-v1
+Class 0 native-dependency declaration PIP. Its conceptual flow is `exact direct
+native-loader + exact runtime + exact active stage -> fresh loader reproduction
+-> complete descriptor/parser pass -> fresh loader reproduction -> matching
+complete descriptor/parser pass -> closing lease snapshot`. One requirement is
+emitted per unique direct runtime file and remains bound to every registered
+command that uses it.
+
+The fixed parser accepts bounded ELF32/ELF64 program and dynamic tables and
+records ordered `DT_NEEDED` declarations. For thin Mach-O32/Mach-O64 it records
+ordered required, weak, re-export, upward, and lazy dylib load commands plus
+their fixed-width version metadata. Dependency names are immediately converted
+to runtime-file- and format-bound digest references, byte counts, and fixed
+path-style labels; raw names never enter a receipt or evidence projection.
+Malformed or unsupported layouts collapse to a fixed unsupported disposition.
+
+This historical evidence does not resolve a dependency name or select a fat
+Mach-O architecture. It opens no path, stages no dependency, mutates or cleans
+up no lease, invokes no loader, and grants no shared-library/recursive
+dependency closure, freshness, authorization, execution, persistence, routing,
+network, subprocess, harness, model, or wider permission. The Class 0/1 ceiling
+is unchanged.
+
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
 It freshly revalidates a `RepositoryRegistration`, requires an existing
@@ -1836,6 +1859,13 @@ two matching complete descriptor/parser passes, extracts only bounded ELF
 `PT_INTERP` or thin Mach-O `LC_LOAD_DYLINKER` syntax, and preserves the full
 digest lineage. It resolves and follows no declaration, invokes no loader,
 mutates no lease, and executes nothing.
+
+The thirty-second slice adds a separate Class 0 direct-native dependency-
+declaration boundary. Exact native-loader/runtime/staging/lease lineage and two
+matching complete descriptor/parser passes produce digest-only ordered ELF
+`DT_NEEDED` and thin Mach-O dylib-load metadata. It performs no dependency
+lookup, resolution, staging, path open, loader invocation, or execution and
+proves no shared-library or recursive dependency closure.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor

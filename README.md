@@ -1105,6 +1105,27 @@ recursive or dependency/shared-library closure, execution, persistence,
 routing, authorization, network, subprocess, harness, model, or permission
 widening. Only Class 0/1 effects remain enabled.
 
+The thirty-second bounded Phase 3 slice adds the separate library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_dependency_requirements` primitive. It
+consumes the exact direct native-loader, runtime, and staging receipts plus the
+active same-PID lease; freshly reproduces native-loader evidence before and
+after extraction; and requires two matching complete descriptor/parser passes.
+Bounded byte-level parsing records ordered ELF32/ELF64 `DT_NEEDED` entries and
+thin Mach-O32/Mach-O64 required, weak, re-export, upward, and lazy dylib load
+commands. Each declaration contains only a context-bound digest reference, byte count,
+fixed path style, load kind, and—for Mach-O—version integers. Shared direct
+executables remain deduplicated without collapsing command lineage.
+
+Canonical records expose no raw dependency names, paths, headers, content,
+filesystem numbers, descriptors, or staging names. Unsupported layouts and
+non-native inputs have fixed fail-closed dispositions. This inspection does
+not look up, resolve, stage, open, or execute a dependency; mutate or clean up
+the lease; select a fat Mach-O architecture; or establish shared-library,
+recursive dependency, loader, runtime, or toolchain closure. It adds no
+persistence, routing, authorization, network, subprocess, harness, model, or
+permission widening. Only Class 0/1 effects remain enabled.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -1470,6 +1491,13 @@ matching descriptor/parser passes extract only bounded ELF `PT_INTERP` or thin
 Mach-O `LC_LOAD_DYLINKER` syntax and preserve the complete digest lineage.
 Terminal lineages remain zero-read. It does not resolve or follow the declared
 path, invoke a loader, mutate a lease, or execute anything.
+
+The thirty-second slice adds separate Class 0 direct-native dependency-
+declaration evidence. Exact direct native-loader/runtime/staging/lease lineage,
+fresh native-loader reproduction, and two matching descriptor/parser passes
+produce digest-only ordered ELF `DT_NEEDED` and thin Mach-O dylib-load syntax.
+It performs no dependency lookup, resolution, staging, path open, or execution
+and proves no shared-library or recursive dependency closure.
 
 ## Quick start
 

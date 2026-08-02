@@ -864,6 +864,21 @@ parallel because it cannot exercise worker authority.
   loader invocation, execution, persistence, routing, authorization, network,
   subprocess, harness, model, or permission widening is added. Only Class 0/1
   effects remain enabled.
+- The thirty-second bounded Phase 3 slice implements a separate library-only
+  schema-v1 Class 0
+  `ordomata.repository_executable_native_dependency_requirements` primitive.
+  It consumes the exact direct native-loader/runtime/staging receipts and
+  active same-PID lease, freshly reproduces loader evidence before and after
+  extraction, and requires two matching complete descriptor/parser passes.
+  Bounded ELF32/ELF64 `DT_NEEDED` and thin Mach-O32/Mach-O64 required, weak,
+  re-export, upward, and lazy dylib-load declarations become digest-only
+  name references, byte counts, fixed path/load labels, Mach-O version
+  integers, and exact command lineage. Unsupported and non-native cases have
+  fixed dispositions. No dependency lookup/resolution/staging, path open,
+  lease mutation/cleanup, fat-image selection, loader invocation, recursive
+  or shared-library closure, execution, persistence, routing, authorization,
+  network, subprocess, harness, model, or permission widening is added. Only
+  Class 0/1 effects remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

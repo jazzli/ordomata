@@ -1003,6 +1003,21 @@ shared-library closure, loader invocation, execution, persistence, proposal/
 worktree, routing, billing, authorization, network, worker, subprocess,
 harness, model, or permission widening. Only Class 0/1 effects remain enabled.
 
+The thirty-second bounded Phase 3 slice adds a separate library-only schema-v1
+Class 0 native-dependency declaration primitive. It requires the exact direct
+native-loader/runtime/staging receipt chain and active same-PID lease, freshly
+reproduces loader evidence before and after extraction, and accepts only two
+matching complete descriptor/parser passes. Bounded ELF32/ELF64 `DT_NEEDED`
+and thin Mach-O32/Mach-O64 required, weak, re-export, upward, and lazy dylib
+load declarations are reduced to digest-bound name references, byte counts,
+fixed path/load labels, Mach-O version integers, and exact command lineage.
+Raw names and paths never leave the parser. The primitive performs no lookup,
+resolution, staging, path open, fat-architecture selection, loader invocation,
+or execution and grants no shared-library/recursive dependency closure,
+authority, persistence, proposal/worktree integration, routing, billing,
+network, subprocess, harness, model, or permission widening. Only Class 0/1
+effects remain enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -1774,6 +1789,19 @@ Only Class 0/1 effects remain enabled.
     dependency/runtime/toolchain closure, freshness, authority, persistence,
     proposal/worktree integration, routing, billing, subprocess, harness,
     model, and execution remain deferred);
+  - controller-inspected direct staged native dependency declarations
+    (separate schema-v1 Class 0 receipt implemented; exact direct native-
+    loader/runtime/staging/active-lease anchoring, fresh loader reproduction
+    before and after extraction, two matching complete descriptor/parser
+    passes, bounded ELF32/ELF64 `DT_NEEDED` and thin Mach-O32/Mach-O64 dylib-
+    load parsing, digest-only dependency-name references, fixed path/load
+    labels, Mach-O version metadata, shared-file deduplication, and exact
+    command lineage are implemented; raw dependency names/paths, headers,
+    content, identities, staging names, and descriptors remain private, while
+    dependency lookup/resolution/staging, fat-image selection, loader
+    invocation, shared-library/recursive dependency/runtime/toolchain closure,
+    freshness, authority, persistence, proposal/worktree integration, routing,
+    billing, subprocess, harness, model, and execution remain deferred);
   - controller-measured direct native-loader targets (separate schema-v1 Class
     0 receipt implemented; exact loader-requirements/runtime/staging/active-
     lease anchoring, exact ordered unique canonical-absolute path expectations,
