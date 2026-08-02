@@ -1439,21 +1439,21 @@ targets after reproducing the manifest on fresh direct chains. It applies no
 ambient loader or token semantics and grants no staging, loading, closure,
 authorization, or execution authority.
 
-The durable supervisor records non-enforcing controller-bookkeeping shadows for
-mock-flow admission and claim, compatibility observations for operator control
-transitions, and sticky cancellation. Each new reversible local control
-transition also passes a separate fixed Class 1 PEP. It binds the exact prior
-and target control revisions, retains only a digest of the operator identity,
-persists and exactly rereads its permit before the append-only control event,
-and appends a reread action receipt in the same SQLite transaction. The PEP
-cannot authorize flow admission, claims, cancellation, worker dispatch,
-repository work, network access, or a Class 2/3 effect. A separate fixed Class
-1 PEP authorizes only an immutable deterministic-mock flow admission: it binds
-the admission-key reference, immutable flow digest, and exact initial queued
-revision, persists and rereads its permit before either flow write, and appends
-and rereads its action receipt in the same SQLite transaction. It grants no
-claim, cancellation, worker-dispatch, task-execution, repository, network, or
-Class 2/3 authority. Cancellation requests
+The durable supervisor retains compatibility shadows for mock-flow admission
+and claim, operator-control transitions, and sticky cancellation. Each new
+reversible local control transition also passes a separate fixed Class 1 PEP.
+It binds the exact prior and target control revisions, retains only a digest of
+the operator identity, persists and exactly rereads its permit before the
+append-only control event, and appends a reread action receipt in the same
+SQLite transaction. The PEP cannot authorize flow admission, claims,
+cancellation, worker dispatch, repository work, network access, or a Class 2/3
+effect. A separate fixed Class 1 PEP authorizes only an immutable
+deterministic-mock flow admission: it binds the admission-key reference,
+immutable flow digest, and exact initial queued revision, persists and rereads
+its permit before either flow write, and appends and rereads its action receipt
+in the same SQLite transaction. It grants no claim, cancellation,
+worker-dispatch, task-execution, repository, network, or Class 2/3 authority.
+Cancellation requests
 bind the exact source flow revision and deterministic local writes that follow,
 including whether a completion intent is appended. Cancellation is irreversible
 on the original flow; explicitly admitting a replacement is compensation, not
