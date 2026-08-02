@@ -915,6 +915,41 @@ persistence, proposal/worktree integration, routing, billing, network, worker,
 subprocess, harness, model, loader invocation, or execution is enabled. The
 current Class 0/1 ceiling is unchanged.
 
+The twenty-eighth bounded Phase 3 slice adds another separate Class 0 policy
+information point (PIP), not a policy decision point (PDP) or policy enforcement
+point (PEP):
+`ordomata.repository_executable_native_loader_nested_target_chain_guard`. It
+accepts the exact depth-two native-loader resolution and its exact target
+requirements/runtime/staging/resolution, source-staging, active same-PID lease,
+and ordered-path evidence. A captured private resolver reproduces that receipt
+under a controller-owned combined guard, while exact source/target lease
+snapshots bracket receipt construction and a closing source anchor follows the
+final target-stage validation.
+
+The combined guard adds original and detached staged source-executable identity
+references plus the source staging-root identity to the original/staged target
+identity references and target staging-root identity already enforced. Exact
+source identities, hardlink aliases, detached staged-copy identities, and
+source-stage-root descendants therefore fail before candidate leaf reads.
+Shared declarations deduplicate without collapsing requirement, lineage, or
+command bindings; absent, unsupported/fat, non-native, and no-target outcomes
+avoid unnecessary lookup. Only digest-bound identity-set, root-set,
+measurement, requirement, lineage, binding, count, and byte-total evidence
+leaves the PIP. Raw paths, bytes, identity numbers, names, and descriptors stay
+private, though deterministic digests remain correlatable and potentially
+guessable.
+
+This evidence grants no authority, makes no authorization decision, and is not
+an action receipt. Resolution still stops at depth two; newly measured bytes
+remain opaque and are not parsed, staged, followed, invoked, or executed.
+General cycle closure, source path-spelling re-entry beyond anchored identities,
+broader protected-root closure, loader identity/authenticity/compatibility/
+invocability, dependency/shared-library closure, freshness, and future
+correspondence remain unproved. No lease mutation/cleanup, persistence,
+proposal/worktree integration, routing, billing, network, worker, subprocess,
+harness, model, loader invocation, or execution is enabled. The current Class
+0/1 ceiling is unchanged.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -1223,6 +1258,14 @@ measurements, and immediate target/hardlink/staged-target/staging-root re-entry
 exclusions remain descriptive PIP evidence, not a PDP decision or PEP receipt,
 and grant no recursive, loader, dependency, shared-library, or execution
 authority.
+
+The twenty-eighth slice adds a matching Class 0 known-chain guard over that
+depth-two receipt. It reproduces the same measurement with original/staged
+source identities and the source staging-root identity added to the existing
+target protections, then closes on exact source/target lease anchors. The
+digest-only result remains descriptive PIP evidence, not a PDP decision or PEP
+receipt, and grants no recursive, loader, dependency, shared-library, or
+execution authority.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and

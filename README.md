@@ -1002,6 +1002,40 @@ unproved. The PIP mutates no lease, persists no state, creates no proposal,
 worktree, route, worker, or subprocess, calls no network or model, invokes no
 loader, and executes nothing. Only Class 0/1 effects remain enabled.
 
+The twenty-eighth bounded Phase 3 slice adds the separate library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_loader_nested_target_chain_guard` PIP.
+`inspect_staged_executable_native_loader_nested_target_chain_guard(...)`
+consumes the exact depth-two native-loader resolution plus its complete target-
+resolution, target-runtime, target-staging, source-staging, active-lease, and
+ordered-path proof chain. It reproduces the nested resolution under a stronger
+controller-owned guard, brackets receipt construction with exact source/target
+stage snapshots, and finishes with another exact reproduction whose closing
+source anchor makes guarded namespace validation the final proof action.
+
+The stronger guard adds every original and detached staged source-executable
+identity plus the anchored source staging-root identity to the original and
+staged target identities and target staging-root identity already protected by
+the depth-two resolver. An exact source identity, any hardlink alias, or any
+candidate below the source staging-root identity is rejected before leaf bytes
+are read. Shared declarations remain measured once, fixed absent/unsupported/
+non-native outcomes add no lookup, and a no-target chain retains source lineage
+with zero nested reads. Public evidence contains only digest-bound identity-set,
+root-set, measurement, requirement, lineage, binding, count, and byte-total
+facts; raw paths, content, identity numbers, temporary names, and descriptors
+remain private, while deterministic digests remain correlatable and potentially
+guessable.
+
+The boundary remains historical depth-two evidence. Newly measured bytes stay
+opaque and are not parsed, staged, followed, invoked, or executed. General
+cycles, source path-spelling re-entry beyond exact anchored identities, broader
+protected-root closure, loader identity/authenticity/compatibility/invocability,
+dependency/shared-library closure, current freshness, authorization, and future
+execution correspondence remain unproved. It mutates or cleans up no lease,
+persists no state, creates no proposal/worktree/route/worker or subprocess,
+calls no network, harness, or model, invokes no loader, and executes nothing.
+Only Class 0/1 effects remain enabled.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -1337,6 +1371,14 @@ guarded no-follow measurements, and immediate current-target, hardlink, staged-
 target, and target-staging-root re-entry exclusions extend digest-only lineage
 to depth two without parsing the new bytes, invoking a loader, or executing
 anything.
+
+The twenty-eighth slice adds a separate Class 0 known-chain guard over that
+depth-two receipt. It reproduces the same measurement with original/staged
+source identities and the source staging-root identity added to the existing
+target protections, then closes on the exact source and target leases. Source
+identity, hardlink, staged-copy, and source-stage-root re-entry now fail before
+leaf reads without parsing the measured bytes or adding staging, loader,
+subprocess, model, or execution capability.
 
 ## Quick start
 

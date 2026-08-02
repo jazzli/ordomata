@@ -796,6 +796,30 @@ parallel because it cannot exercise worker authority.
   It adds no lease mutation, persistence, proposal/worktree, routing, billing,
   network, worker, subprocess, harness, model, loader invocation, or execution.
   Only Class 0/1 effects remain enabled.
+- The twenty-eighth bounded Phase 3 slice implements the separate library-only
+  schema-v1 Class 0
+  `ordomata.repository_executable_native_loader_nested_target_chain_guard`
+  PIP. It consumes the exact depth-two native-loader receipt and complete
+  target/source staging proof chain, reproduces the receipt under a combined
+  identity/root guard, brackets construction with exact lease snapshots, and
+  finishes with a canonical reproduction plus closing source anchor.
+  Original and detached staged source-executable identities and the source
+  staging-root identity join the existing original/staged target and target-
+  staging-root protections. Exact source identity, hardlink, staged-copy, and
+  source-stage-root re-entry reject before leaf reads. Shared declarations
+  deduplicate without collapsing requirement, lineage, or command bindings;
+  absent, unsupported/fat, non-native, and no-target outcomes avoid unnecessary
+  lookup. Public records contain digest-only identity/root sets,
+  measurements, requirements, lineages, bindings, counts, and byte totals;
+  raw paths, bytes, identity numbers, names, and descriptors remain private.
+  Resolution still stops at depth two and newly measured bytes remain opaque.
+  General cycles, source path-spelling re-entry beyond anchored identities,
+  broader protected-root closure, loader authenticity/compatibility/
+  invocability, dependency/shared-library closure, freshness, authority, and
+  future correspondence remain deferred. It adds no lease mutation/cleanup,
+  persistence, proposal/worktree, routing, billing, network, worker,
+  subprocess, harness, model, loader invocation, or execution. Only Class 0/1
+  effects remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

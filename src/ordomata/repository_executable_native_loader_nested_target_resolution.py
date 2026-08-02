@@ -14,7 +14,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Callable
 
 from .authorization import canonical_json
 from .errors import ValidationError
@@ -43,7 +43,11 @@ from .repository_executable_native_loader_target_staging import (
 from .repository_executable_shebang_nested_target_resolution import (
     _MeasuredNestedTarget,
     _NestedTargetGuardContext,
+    _UniqueNestedTargetConsumer,
     _measure_guarded_target_set,
+    _measure_guarded_target_set_with_consumer,
+    _nested_target_guard_context_projection,
+    _nested_target_namespace_matches,
     _require_supported_platform,
 )
 
@@ -185,6 +189,15 @@ _BUILTIN_FIRST_LOADER_PATH_CONTEXT_DIGEST = (
 )
 _BUILTIN_REQUIRE_SUPPORTED_PLATFORM = _require_supported_platform
 _BUILTIN_MEASURE_GUARDED_TARGET_SET = _measure_guarded_target_set
+_BUILTIN_MEASURE_GUARDED_TARGET_SET_WITH_CONSUMER = (
+    _measure_guarded_target_set_with_consumer
+)
+_BUILTIN_GUARD_CONTEXT_PROJECTION = (
+    _nested_target_guard_context_projection
+)
+_BUILTIN_NESTED_TARGET_NAMESPACE_MATCHES = (
+    _nested_target_namespace_matches
+)
 _FIXED_LOADER_REQUIREMENTS_TYPE = (
     RepositoryExecutableNativeLoaderTargetLoaderRequirementsReceipt
 )
@@ -203,6 +216,7 @@ _FIXED_TARGET_STAGE_LEASE_TYPE = (
 _FIXED_MEASURED_TARGET_TYPE = _MeasuredNestedTarget
 _FIXED_GUARD_CONTEXT_TYPE = _NestedTargetGuardContext
 _FIXED_VALIDATION_ERROR = ValidationError
+_FIXED_FUNCTION_TYPE = type(lambda: None)
 
 
 class _InvalidNestedNativeLoaderResolution(ValueError):
@@ -1739,7 +1753,33 @@ def _public_lineage(
 _BUILTIN_PUBLIC_LINEAGE = _public_lineage
 
 
-def inspect_staged_executable_native_loader_nested_targets(
+def _effective_guard_context(
+    internal: _NestedTargetGuardContext,
+    stronger: _NestedTargetGuardContext | None,
+) -> _NestedTargetGuardContext:
+    _BUILTIN_GUARD_CONTEXT_PROJECTION(internal)
+    if stronger is None:
+        return internal
+    _BUILTIN_GUARD_CONTEXT_PROJECTION(stronger)
+    if (
+        stronger.known_target_identity_refs
+        != internal.known_target_identity_refs
+        or not internal.protected_root_identities.issubset(
+            stronger.protected_root_identities
+        )
+        or len(stronger.protected_root_identities) not in {1, 2}
+        or not stronger.known_source_identity_refs
+        or stronger.known_source_identity_refs
+        & stronger.known_target_identity_refs
+    ):
+        raise _InvalidNestedNativeLoaderResolution
+    return stronger
+
+
+_BUILTIN_EFFECTIVE_GUARD_CONTEXT = _effective_guard_context
+
+
+def _inspect_staged_executable_native_loader_nested_targets(
     expected_loader_requirements: (
         RepositoryExecutableNativeLoaderTargetLoaderRequirementsReceipt
     ),
@@ -1756,10 +1796,34 @@ def inspect_staged_executable_native_loader_nested_targets(
     lease: RepositoryExecutableNativeLoaderTargetStageLease,
     expected_loader_paths: tuple[Path, ...],
     expected_nested_loader_paths: tuple[Path, ...],
+    guard_context: _NestedTargetGuardContext | None = None,
+    expected_receipt_canonical: dict[str, Any] | None = None,
+    closing_guard_anchor: Callable[[], None] | None = None,
+    unique_nested_target_consumer: (
+        _UniqueNestedTargetConsumer | None
+    ) = None,
 ) -> RepositoryExecutableNativeLoaderNestedTargetResolutionReceipt:
-    """Measure exactly one newly declared native-loader target hop."""
+    """Frozen resolver with optional stronger controller exclusions."""
 
     try:
+        if guard_context is not None:
+            _BUILTIN_GUARD_CONTEXT_PROJECTION(guard_context)
+        if (
+            expected_receipt_canonical is not None
+            and type(expected_receipt_canonical) is not dict
+        ):
+            raise _InvalidNestedNativeLoaderResolution
+        if (
+            closing_guard_anchor is not None
+            and (
+                guard_context is None
+                or expected_receipt_canonical is None
+                or type(closing_guard_anchor) is not _FIXED_FUNCTION_TYPE
+            )
+        ):
+            raise _InvalidNestedNativeLoaderResolution
+        if unique_nested_target_consumer is not None and guard_context is None:
+            raise _InvalidNestedNativeLoaderResolution
         _BUILTIN_REQUIRE_SUPPORTED_PLATFORM()
         first = _BUILTIN_VALIDATED_CHAIN_SNAPSHOT(
             expected_loader_requirements,
@@ -1778,16 +1842,32 @@ def inspect_staged_executable_native_loader_nested_targets(
             staging_canonical,
             resolution_canonical,
             retained_files,
-            guard_context,
+            internal_guard_context,
             root_identity,
             guard_digest,
         ) = first
-        first_measurement = _BUILTIN_MEASURE_GUARDED_TARGET_SET(
-            tuple(os.fspath(path) for path in nested_paths),
-            protected_root_identity=root_identity,
-            known_first_hop_identities=frozenset(),
-            guard_context=guard_context,
+        measurement_guard_context = _BUILTIN_EFFECTIVE_GUARD_CONTEXT(
+            internal_guard_context,
+            guard_context,
         )
+        measurement_paths = tuple(os.fspath(path) for path in nested_paths)
+        if unique_nested_target_consumer is None:
+            first_measurement = _BUILTIN_MEASURE_GUARDED_TARGET_SET(
+                measurement_paths,
+                protected_root_identity=root_identity,
+                known_first_hop_identities=frozenset(),
+                guard_context=measurement_guard_context,
+            )
+        else:
+            first_measurement = (
+                _BUILTIN_MEASURE_GUARDED_TARGET_SET_WITH_CONSUMER(
+                    measurement_paths,
+                    protected_root_identity=root_identity,
+                    known_first_hop_identities=frozenset(),
+                    guard_context=measurement_guard_context,
+                    consumer=unique_nested_target_consumer,
+                )
+            )
 
         middle = _BUILTIN_VALIDATED_CHAIN_SNAPSHOT(
             expected_loader_requirements,
@@ -1806,16 +1886,16 @@ def inspect_staged_executable_native_loader_nested_targets(
             or middle[4] != staging_canonical
             or middle[5] != resolution_canonical
             or middle[6] is not retained_files
-            or middle[7] != guard_context
+            or middle[7] != internal_guard_context
             or middle[8] != root_identity
             or middle[9] != guard_digest
         ):
             raise _InvalidNestedNativeLoaderResolution
         second_measurement = _BUILTIN_MEASURE_GUARDED_TARGET_SET(
-            tuple(os.fspath(path) for path in nested_paths),
+            measurement_paths,
             protected_root_identity=root_identity,
             known_first_hop_identities=frozenset(),
-            guard_context=guard_context,
+            guard_context=measurement_guard_context,
         )
         if second_measurement != first_measurement:
             raise _InvalidNestedNativeLoaderResolution
@@ -1837,7 +1917,7 @@ def inspect_staged_executable_native_loader_nested_targets(
             or final[4] != staging_canonical
             or final[5] != resolution_canonical
             or final[6] is not retained_files
-            or final[7] != guard_context
+            or final[7] != internal_guard_context
             or final[8] != root_identity
             or final[9] != guard_digest
         ):
@@ -2005,7 +2085,12 @@ def inspect_staged_executable_native_loader_nested_targets(
                 item.content_bytes for item in measurements
             ),
         )
-        _BUILTIN_RECEIPT_PROJECTION(receipt)
+        receipt_canonical = _BUILTIN_RECEIPT_PROJECTION(receipt)
+        if (
+            expected_receipt_canonical is not None
+            and receipt_canonical != expected_receipt_canonical
+        ):
+            raise _InvalidNestedNativeLoaderResolution
         closing_canonical, closing_files = (
             _BUILTIN_ACTIVE_TARGET_STAGE_SNAPSHOT(
                 expected_target_staging,
@@ -2017,11 +2102,62 @@ def inspect_staged_executable_native_loader_nested_targets(
             or closing_files is not retained_files
         ):
             raise _InvalidNestedNativeLoaderResolution
+        if (
+            closing_guard_anchor is not None
+            and closing_guard_anchor() is not None
+        ):
+            raise _InvalidNestedNativeLoaderResolution
+        if any(
+            not _BUILTIN_NESTED_TARGET_NAMESPACE_MATCHES(
+                item,
+                protected_root_identity=root_identity,
+                known_first_hop_identities=frozenset(),
+                guard_context=measurement_guard_context,
+            )
+            for item in first_measurement
+        ):
+            raise _InvalidNestedNativeLoaderResolution
         return receipt
     except BaseException as exc:
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise
         raise _FIXED_VALIDATION_ERROR(_INVALID_MESSAGE) from None
+
+
+_BUILTIN_INSPECT_NATIVE_LOADER_NESTED_TARGETS = (
+    _inspect_staged_executable_native_loader_nested_targets
+)
+
+
+def inspect_staged_executable_native_loader_nested_targets(
+    expected_loader_requirements: (
+        RepositoryExecutableNativeLoaderTargetLoaderRequirementsReceipt
+    ),
+    *,
+    expected_target_runtime: (
+        RepositoryExecutableNativeLoaderTargetRuntimeManifestReceipt
+    ),
+    expected_target_staging: (
+        RepositoryExecutableNativeLoaderTargetStagingReceipt
+    ),
+    expected_target_resolution: (
+        RepositoryExecutableNativeLoaderTargetResolutionReceipt
+    ),
+    lease: RepositoryExecutableNativeLoaderTargetStageLease,
+    expected_loader_paths: tuple[Path, ...],
+    expected_nested_loader_paths: tuple[Path, ...],
+) -> RepositoryExecutableNativeLoaderNestedTargetResolutionReceipt:
+    """Measure one bounded native-loader target depth without following it."""
+
+    return _BUILTIN_INSPECT_NATIVE_LOADER_NESTED_TARGETS(
+        expected_loader_requirements,
+        expected_target_runtime=expected_target_runtime,
+        expected_target_staging=expected_target_staging,
+        expected_target_resolution=expected_target_resolution,
+        lease=lease,
+        expected_loader_paths=expected_loader_paths,
+        expected_nested_loader_paths=expected_nested_loader_paths,
+    )
 
 
 __all__ = [

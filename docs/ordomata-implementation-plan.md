@@ -912,6 +912,38 @@ deferred. It adds no lease mutation/cleanup, persistence, proposal/worktree,
 routing, billing, network, worker, subprocess, harness, model, loader
 invocation, or execution. Only Class 0/1 effects remain enabled.
 
+The twenty-eighth bounded Phase 3 slice adds the separate library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_loader_nested_target_chain_guard` PIP.
+It accepts the exact depth-two native-loader receipt and exact target loader-
+requirements, target-runtime, target-staging, first-hop-resolution, source-
+staging, active same-PID lease, and ordered current/nested-path evidence. A
+captured private resolver reproduces that receipt under a combined
+controller-owned guard; source and target lease snapshots bracket receipt
+construction, and the final exact reproduction closes on the source anchor
+after target-stage validation.
+
+The combined guard adds original/staged source-executable identity references
+and the source staging-root identity to the original/staged target identity
+references and target staging-root identity already protected. Exact source
+identity, hardlink, staged-copy, and source-stage-root descendant re-entry fail
+before candidate bytes are read. Shared declarations deduplicate measurement
+without collapsing requirements, source lineages, or command bindings. Fixed
+absent, unsupported/fat, non-native, and no-target outcomes avoid unnecessary
+lookup. The digest-only receipt excludes raw paths, bytes, device/inode values,
+temporary names, and descriptors; deterministic digests remain correlatable and
+potentially guessable.
+
+Resolution remains bounded at depth two and newly measured bytes remain opaque:
+they are not parsed, staged, followed, invoked, or executed. General cycles,
+source path-spelling re-entry beyond exact anchored identities, broader
+protected-root closure, loader authenticity/compatibility/invocability,
+dependency/shared-library closure, freshness, authority, authorization, and
+future correspondence remain deferred. This deliverable adds no lease
+mutation/cleanup, persistence, proposal/worktree, routing, billing, network,
+worker, subprocess, harness, model, loader invocation, or execution. Only
+Class 0/1 effects remain enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
