@@ -1036,6 +1036,33 @@ persists no state, creates no proposal/worktree/route/worker or subprocess,
 calls no network, harness, or model, invokes no loader, and executes nothing.
 Only Class 0/1 effects remain enabled.
 
+The twenty-ninth bounded Phase 3 slice adds the matching library-only schema-v1
+Class 1
+`ordomata.repository_executable_native_loader_nested_target_staging`
+primitive. It requires the exact depth-two resolution, known-chain guard,
+complete source and target proof chain, both active same-PID leases, both
+ordered loader-path sets, and a caller-selected private mode-`0700` staging
+directory. At the action boundary it reproduces the known-chain guard while a
+private consumer copies every unique guarded target through the same pinned
+measurement descriptor. Each copy is fully read back, changed to mode `0400`,
+reopened read-only and non-inheritable, unlinked from its temporary name, and
+retained by a process-bound noncopyable lease. A second exact guard reproduction
+must match the expected and action receipts before activation.
+
+Shared targets produce one detached file while requirements, source lineages,
+and commands remain distinct. Absent, unsupported/fat, non-native, and no-
+target outcomes retain exact disposition and command lineage without opening a
+staging directory. Public receipts are digest-only; raw paths, bytes,
+filesystem numbers, temporary names, and descriptors remain private. Cleanup
+uncertainty is explicit and fails closed. This primitive does not authorize its
+own Class 1 effect: separate controller authorization remains required. The
+copied bytes are not parsed, recursively followed, invoked, executed, or
+persisted. General cycles, broader protected-root closure, dependency/shared-
+library closure, freshness, future correspondence, crash cleanup, secure
+erasure, and external descriptor absence remain deferred. No proposal,
+worktree, route, billing, network, worker, subprocess, harness, model, loader,
+or permission widening is added. Only Class 0/1 effects remain enabled.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -1379,6 +1406,14 @@ target protections, then closes on the exact source and target leases. Source
 identity, hardlink, staged-copy, and source-stage-root re-entry now fail before
 leaf reads without parsing the measured bytes or adding staging, loader,
 subprocess, model, or execution capability.
+
+The twenty-ninth slice adds matching Class 1 descriptor staging for the exact
+guarded depth-two bytes. Each unique target is copied through its pinned action-
+measurement descriptor into an unlinked mode-`0400`, read-only, non-inheritable
+process-bound lease, followed by exact post-stage guard replay. Empty outcomes
+retain command lineage without touching a staging root. Separate authorization
+is still required, and no parsing, recursion, loader invocation, execution,
+persistence, routing, or permission widening is added.
 
 ## Quick start
 

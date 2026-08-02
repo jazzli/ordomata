@@ -1423,6 +1423,33 @@ mutation/cleanup, persistence, proposal/worktree/route/worker integration,
 network, subprocess, harness, model, loader invocation, or execution is added.
 The Class 0/1 ceiling is unchanged.
 
+The twenty-ninth bounded Phase 3 slice is the matching library-only schema-v1
+Class 1 native-loader nested-target staging boundary. Its conceptual flow is
+`exact guarded chain -> action-bound guarded remeasurement -> pinned-descriptor
+copy -> read-only unlink -> post-stage guard replay -> active process-bound
+lease`. It requires the exact depth-two and known-chain receipts, complete
+source/target proof chain, both active same-PID leases, both ordered path sets,
+and a caller-selected private mode-`0700` directory.
+
+Each unique target is copied through the exact descriptor used for its guarded
+measurement. The bounded copy is read back, changed to mode `0400`, reopened
+read-only and non-inheritable, unlinked, and retained only by descriptor. Shared
+targets deduplicate storage without collapsing requirements, source lineages,
+or commands. Empty outcomes preserve explicit lineage without opening a
+staging root. Root containment covers repository/search roots, source and
+target staging roots, and both supplied loader-path sets. Exact source/target
+leases and protected directory anchors must remain unchanged throughout.
+
+Canonical output is digest-only; raw paths, bytes, filesystem numbers,
+temporary names, and descriptors remain private. Cleanup uncertainty is
+explicit and fails closed. This is staging, not authorization: a separate
+controller decision must authorize the Class 1 local effect. The primitive
+does not parse, recurse, follow, invoke, execute, persist, route, or widen
+authority. General cycles, broader protected-root closure, dependency/shared-
+library closure, freshness, future correspondence, crash cleanup, secure
+erasure, and external descriptor absence remain deferred. The Class 0/1
+ceiling is unchanged.
+
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
 It freshly revalidates a `RepositoryRegistration`, requires an existing
@@ -1739,6 +1766,14 @@ the existing target protections, with closing source/target lease anchors. It
 rejects source identity, hardlink, staged-copy, and source-stage-root re-entry
 before leaf reads without parsing the measured bytes or adding staging, loader,
 subprocess, model, or execution capability.
+
+The twenty-ninth slice adds the matching Class 1 descriptor-staging boundary.
+It copies each unique guarded target through its pinned action-measurement
+descriptor into an unlinked mode-`0400`, read-only, non-inheritable process-
+bound lease and replays the exact guard after staging. Empty outcomes preserve
+command lineage without opening a staging root. Separate authorization remains
+required; no parsing, recursion, loader invocation, execution, persistence,
+routing, or permission widening is added.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor

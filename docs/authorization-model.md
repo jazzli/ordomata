@@ -950,6 +950,29 @@ proposal/worktree integration, routing, billing, network, worker, subprocess,
 harness, model, loader invocation, or execution is enabled. The current Class
 0/1 ceiling is unchanged.
 
+The twenty-ninth bounded Phase 3 slice adds a separate Class 1 local-draft
+staging primitive, not a policy decision point (PDP) and not a general policy
+enforcement point (PEP):
+`ordomata.repository_executable_native_loader_nested_target_staging`. It
+requires exact Class 0 depth-two resolution and known-chain-guard evidence plus
+the complete active source/target lease chain. At the action boundary it
+reproduces the guard and copies each unique target only through the guarded
+measurement's pinned descriptor into an unlinked mode-`0400`, read-only,
+non-inheritable same-process lease. Exact guard reproduction is required again
+after staging.
+
+The Class 1 classification describes the local filesystem effect; it does not
+authorize it. Controller-owned attribute-based access control (ABAC) must still
+authorize the exact private staging root and inputs. Shared targets deduplicate
+storage without collapsing requirements, source lineages, or commands; empty
+outcomes preserve exact lineage without opening a staging root. Public evidence
+is digest-only, and cleanup uncertainty fails closed. The lease grants no
+recursive-resolution, loader, dependency, shared-library, subprocess, model,
+network, persistence, routing, or execution authority. Freshness, general
+cycles, broader protected-root closure, future correspondence, crash cleanup,
+secure erasure, and external descriptor absence remain unproved. The current
+Class 0/1 ceiling is unchanged.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -1266,6 +1289,13 @@ target protections, then closes on exact source/target lease anchors. The
 digest-only result remains descriptive PIP evidence, not a PDP decision or PEP
 receipt, and grants no recursive, loader, dependency, shared-library, or
 execution authority.
+
+The twenty-ninth slice adds matching Class 1 local descriptor staging. Exact
+known-chain guard replay surrounds copies made through pinned action-
+measurement descriptors; retained copies are unlinked, mode-`0400`, read-only,
+non-inheritable, and same-process. This primitive requires separate ABAC
+authorization and grants no parsing, recursion, loader, dependency,
+shared-library, persistence, routing, model, subprocess, or execution authority.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
