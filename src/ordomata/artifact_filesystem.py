@@ -216,22 +216,6 @@ def stage_artifact(
                 pass
 
 
-def _ensure_artifact_parent(parent: Path) -> None:
-    """Create a private directory chain without following any path component."""
-
-    descriptor = _open_artifact_directory(parent, create=True)
-    try:
-        if not _fsync_open_directory(descriptor):
-            raise ConfigurationError(
-                "artifact parent namespace sync failed"
-            )
-    finally:
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
-
-
 def publish_staged_artifact(
     path: Path,
     *,

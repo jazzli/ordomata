@@ -599,8 +599,12 @@ class RepositoryExecutableShebangTargetStagingTests(unittest.TestCase):
                     staged_file.content_digest,
                 ):
                     self.assertNotIn(private_value, aggregate)
-                with self.assertRaises(FrozenInstanceError):
+                self.assertFalse(hasattr(receipt, "unique_file_count"))
+                # Python 3.12 reports a new frozen-slot assignment as
+                # TypeError; newer interpreters report FrozenInstanceError.
+                with self.assertRaises((FrozenInstanceError, TypeError)):
                     receipt.unique_file_count = 0
+                self.assertFalse(hasattr(receipt, "unique_file_count"))
                 with self.assertRaises(FrozenInstanceError):
                     staged_file.content_bytes = 0
             finally:

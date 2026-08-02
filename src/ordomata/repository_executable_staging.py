@@ -917,6 +917,32 @@ def _prepare_staging_root(
     try:
         pinned = _open_absolute_directory(lease.staging_root)
         metadata = os.fstat(pinned.descriptor)
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or stat.S_IMODE(metadata.st_mode) != _STAGING_ROOT_MODE
+            or metadata.st_nlink <= 0
+            or os.get_inheritable(pinned.descriptor)
+            or not _directory_is_empty(pinned.descriptor)
+        ):
+            raise _InvalidStaging
+
+        for path in protected_paths:
+            other = _open_absolute_directory(path)
+            try:
+                if _same_directory_identity(
+                    metadata,
+                    os.fstat(other.descriptor),
+                ):
+                    raise _InvalidStaging
+            finally:
+                try:
+                    os.close(other.descriptor)
+                except OSError:
+                    pass
+
+        # Invalid pre-existing roots remain locally owned and are closed by
+        # this frame; the lease adopts only a fully validated empty root.
         lease._root_metadata = _metadata_signature(metadata)
         lease._root_descriptor = pinned.descriptor
     except BaseException:
@@ -930,26 +956,6 @@ def _prepare_staging_root(
                 raise _CleanupUncertain from None
             lease._root_metadata = None
         raise
-    if (
-        not stat.S_ISDIR(metadata.st_mode)
-        or metadata.st_uid != os.geteuid()
-        or stat.S_IMODE(metadata.st_mode) != _STAGING_ROOT_MODE
-        or metadata.st_nlink <= 0
-        or os.get_inheritable(pinned.descriptor)
-        or not _directory_is_empty(pinned.descriptor)
-    ):
-        raise _InvalidStaging
-
-    for path in protected_paths:
-        other = _open_absolute_directory(path)
-        try:
-            if _same_directory_identity(metadata, os.fstat(other.descriptor)):
-                raise _InvalidStaging
-        finally:
-            try:
-                os.close(other.descriptor)
-            except OSError:
-                pass
 
     return canonical_digest(
         {

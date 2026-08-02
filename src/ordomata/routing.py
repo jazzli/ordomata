@@ -430,31 +430,6 @@ class ProfileRouter:
                 del buckets[selected_key]
         return ranked
 
-    @classmethod
-    def _ineligible_reasons(
-        cls,
-        task: TaskRoutingFeatures,
-        state: RuntimeProfileState,
-        *,
-        evaluated_at: float | None = None,
-        required_valid_until: float | None = None,
-    ) -> list[str]:
-        policy_time = time.time() if evaluated_at is None else evaluated_at
-        validity_horizon = (
-            policy_time
-            if required_valid_until is None
-            else required_valid_until
-        )
-        return [
-            message
-            for _, message in cls._ineligible_reason_pairs(
-                task,
-                state,
-                evaluated_at=policy_time,
-                required_valid_until=validity_horizon,
-            )
-        ]
-
     @staticmethod
     def _ineligible_reason_pairs(
         task: TaskRoutingFeatures,

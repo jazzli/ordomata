@@ -41,7 +41,6 @@ from .errors import (
 )
 from .evaluation import EvaluationResult, evaluate_chief_of_staff
 from .models import (
-    AgentEvent,
     BillingRoute,
     BillingRouteAssessment,
     CapacityState,
