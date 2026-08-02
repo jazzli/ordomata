@@ -1014,6 +1014,27 @@ recursive, dependency, shared-library, freshness, execution, persistence,
 routing, network, subprocess, harness, model, or wider-permission eligibility.
 The current Class 0/1 ceiling is unchanged.
 
+The thirty-second bounded Phase 3 slice adds a separate Class 0 PIP, not a PDP
+or PEP: `ordomata.repository_executable_native_dependency_requirements`. It
+accepts only the exact direct native-loader, runtime, and staging receipts plus
+their active same-PID lease, freshly reproduces native-loader evidence before
+and after extraction, and requires two matching complete descriptor/parser
+passes.
+
+Its fixed outputs describe bounded ordered ELF `DT_NEEDED` entries and thin
+Mach-O required, weak, re-export, upward, and lazy dylib load commands. Raw
+dependency names are not policy attributes: only runtime-file- and format-bound
+digest references, byte counts, fixed path-style/load-kind labels, Mach-O
+version integers, aggregate counts, and exact command lineage leave the parser.
+Unsupported layouts and non-native inputs have fixed dispositions.
+
+This descriptive evidence grants no authority, satisfies no fresh
+authorization, and is not an action receipt. It performs no dependency path
+lookup, resolution, staging, or execution; mutates no lease; invokes no loader;
+and establishes no dependency, shared-library, recursive, runtime, toolchain,
+freshness, persistence, routing, network, subprocess, harness, model, or wider-
+permission eligibility. The current Class 0/1 ceiling is unchanged.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -1351,6 +1372,13 @@ two matching complete descriptor/parser passes produce digest-only ELF
 does not resolve or follow the declaration and grants no authorization,
 recursive/dependency/shared-library closure, loader invocation, persistence,
 routing, model, subprocess, or execution authority.
+
+The thirty-second slice adds separate Class 0 direct-native dependency-
+declaration inspection. Exact direct native-loader/runtime/staging/lease
+lineage and two matching descriptor/parser passes emit only digest-bound ELF
+`DT_NEEDED` and thin Mach-O dylib-load metadata. The PIP performs no dependency
+lookup, resolution, staging, loader invocation, or execution and grants no
+shared-library or recursive dependency closure.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping
 shadows for mock-flow admission and claim, operator control transitions, and
