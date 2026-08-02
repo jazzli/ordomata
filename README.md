@@ -1169,6 +1169,18 @@ collapsing declaration or command lineage. It still consults no host loader
 state, expands no token, stages no target, invokes no loader, and proves no
 dependency closure or execution eligibility.
 
+The thirty-sixth bounded Phase 3 slice adds the separate library-only schema-v1
+Class 1
+`ordomata.repository_executable_native_dependency_manifest_target_staging`
+primitive. It re-proves the upstream manifest-target receipt, copies only from
+the still-pinned no-follow descriptor, and requires action measurement plus
+post-stage reinspection equality. Its caller supplies a pre-existing, empty,
+owner-owned mode-`0700` root outside every target; each randomized no-follow
+name is unlinked before data is written, and only a read-only descriptor
+remains on a one-shot same-PID lease. Evidence is digest-only. It neither
+authorizes nor performs search, loading, execution, persistence, network,
+subprocess, model, or higher-class effects.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1

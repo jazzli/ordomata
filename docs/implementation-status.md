@@ -1093,6 +1093,18 @@ the already manifest-bound canonical targets, keeps target and source details
 digest-only, and adds no host loader search, token expansion, staging, loading,
 or dependency closure.
 
+Implemented as the thirty-sixth bounded Phase 3 slice, the library-only
+schema-v1 Class 1
+`ordomata.repository_executable_native_dependency_manifest_target_staging`
+API re-proves that exact target receipt, copies only through still-pinned
+no-follow source descriptors, and requires action measurements and post-stage
+reinspection to equal the expected receipt. A caller must supply a
+pre-existing, empty, owner-owned `0700` directory outside every target; every
+randomized no-follow name is unlinked before its bytes are written, and only a
+read-only descriptor remains under a one-shot same-PID lease. Receipts are
+digest-only. It adds no loader search, token expansion, loading, execution,
+authority, persistence, networking, subprocess, model, or Class 2/3 effect.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
