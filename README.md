@@ -228,8 +228,9 @@ PYTHONPATH=src python3 -m compileall -q src tests
 git diff --check
 ```
 
-CI runs the compile and test commands on Python 3.12 and 3.14. The suite uses
-only deterministic mocks; never enable the live-run gate in tests.
+CI compiles, builds the distribution without dependencies, and runs the test
+suite on Python 3.12 and 3.14. The suite uses only deterministic mocks; never
+enable the live-run gate in tests.
 
 Start with the [documentation map](docs/README.md) to find the canonical
 architecture, status, policy, routing, roadmap, plan, and research sources.

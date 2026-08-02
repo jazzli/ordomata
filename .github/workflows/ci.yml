@@ -36,5 +36,10 @@ jobs:
       - name: Compile source and tests
         run: PYTHONPATH=src python -m compileall -q src tests
 
+      - name: Build distribution
+        run: >-
+          python -m pip wheel --disable-pip-version-check --no-deps
+          --wheel-dir /tmp/ordomata-dist .
+
       - name: Run unit tests
         run: PYTHONPATH=src python -m unittest discover -s tests -v
