@@ -1075,6 +1075,15 @@ persistence, proposal/worktree integration, routing, billing, network,
 subprocess, harness, model, or permission widening. Only Class 0/1 effects
 remain enabled.
 
+Implemented as the thirty-fourth bounded Phase 3 slice, the library-only
+schema-v1 Class 0 `ordomata.repository_executable_native_dependency_manifest`
+API consumes the exact direct dependency/runtime/staging receipt chain and
+active same-PID lease with an exact ordered private mapping for every
+non-absolute declaration. It reproduces the direct chain three times before
+emitting only declaration- and canonical-target-reference digests. It opens no
+mapped target and applies no host loader environment, cache, RPATH/RUNPATH, or
+Mach-O token semantics; dependency staging and closure remain deferred.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -1425,6 +1434,13 @@ chain snapshots, two matching no-follow measurements, and closing namespace
 checks emit digest-only evidence. Non-absolute declarations remain unresolved
 and zero-read; no loader search semantics, dependency staging, or recursive/
 shared-library closure is added.
+
+The thirty-fourth slice adds separate Class 0 explicit controller-manifest
+binding for non-absolute direct dependencies. Three fresh direct-chain
+snapshots verify an ordered private spelling-to-canonical-path mapping and
+retain only digest-bound references. Ambient loader search and token expansion
+remain prohibited, mapped targets are not opened or staged, and closure remains
+unverified.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly
 one content-addressed `task_execution_selection` event between `created` and
