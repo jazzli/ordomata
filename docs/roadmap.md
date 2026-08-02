@@ -99,6 +99,12 @@ The enforcing decision-event and action-receipt schemas remain unchanged:
 dispatch remains limited to Class 0/1 requests for the exact profile-backed
 controller-owned `MockRunner`, new attempts still require Class 1 admission,
 and publication remains an owner-private Class 1 local effect.
+Separately, a fourth fixed PEP authorizes only reversible local supervisor
+control transitions. It persists and exactly rereads an exact Class 1 permit
+before the control event, then appends and rereads its action receipt in the
+same SQLite transaction. It grants no authority for flow admission, claims,
+cancellation, worker dispatch, repository work, network access, or Class 2/3
+effects.
 General runtime ABAC enforcement is not implemented. This phase remains a
 prerequisite for adding a worker-dispatch path or repository worker with new
 mediated capabilities. A
@@ -1028,17 +1034,18 @@ control/flow/attempt state, sticky cancellation, fenced multi-resource claim
 library APIs, an internal local completion outbox and receipts, read-only
 status/audit, digest-bound reconciliation, operator control commands, and a
 foreground `ordomata supervise` loop. Flow admission, the otherwise
-library-only attempt-claim boundary, operator control transitions, and sticky
-cancellation now append typed, non-enforcing ABAC shadow observations with
-an explicit legacy-parity comparison. Worker dispatch is deliberately disabled
-until the exact worker boundary has authoritative ABAC coverage and verified
-repository containment; the narrow ordinary mock PEPs do not supply either.
-The read-only supervisor audit independently recomputes
-those observations and checks coverage, order, exact schema guards, and
-migration provenance without altering reconciliation plan digests. Ordinary
-state opens now validate the exact baseline and run history plus a frozen,
-contiguous v1-v4 migration prefix before use; creation and exact legacy
-adoption are transactional, while partial or tampered state fails closed
+library-only attempt-claim boundary, and sticky cancellation append typed,
+non-enforcing ABAC shadow observations with an explicit legacy-parity
+comparison. Reversible operator control transitions retain their compatibility
+shadow but first pass an authoritative fixed Class 1 PEP. Worker dispatch is
+deliberately disabled until the exact worker boundary has authoritative ABAC
+coverage and verified repository containment; the narrow ordinary mock PEPs do
+not supply either. The read-only supervisor audit independently recomputes the
+shadows and post-v5 control decision/receipt pairs, checking coverage, order,
+exact schema guards, and migration provenance without altering reconciliation
+plan digests. Ordinary state opens now validate the exact baseline and run
+history plus a frozen, contiguous v1-v5 migration prefix before use; creation
+and exact legacy adoption are transactional, while partial or tampered state fails closed
 without repair. This does
 not implement a repository
 worker, live model loop, subprocess execution, network access, Class 2/3

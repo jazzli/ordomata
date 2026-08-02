@@ -29,7 +29,12 @@ from typing import Any, Iterator
 from urllib.parse import quote
 from uuid import uuid4
 
-from .errors import OrdomataError, ConfigurationError, ValidationError
+from .errors import (
+    AuthorizationBlocked,
+    ConfigurationError,
+    OrdomataError,
+    ValidationError,
+)
 from .environment import is_sensitive_environment_value
 from .authorization import (
     ActionAttributes,
@@ -70,6 +75,13 @@ from .state import (
     _verify_migration_schema,
 )
 from .schema import parse_json_document
+from .supervisor_control_authorization import (
+    SupervisorControlAuthorization,
+    SupervisorControlTransition,
+    assert_supervisor_control_transition_authorized,
+    build_supervisor_control_action_receipt,
+    evaluate_supervisor_control_authorization,
+)
 
 
 class SupervisorError(OrdomataError):
@@ -187,7 +199,7 @@ _REASON_CODE = re.compile(r"[a-z0-9_]{1,100}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _RESOURCE_KEY = re.compile(r"[a-z0-9][a-z0-9._:/-]{0,199}")
 _MAX_JSON_BYTES = 262_144
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 _FOREGROUND_LEASE_KEY = "supervisor:foreground"
 SUPERVISOR_DISPATCH_BLOCKERS = (
     "runtime_abac_enforcement_not_implemented",
@@ -316,6 +328,8 @@ class SupervisorAuthorizationAudit:
     observation_count: int
     expected_observation_count: int
     findings: tuple[SupervisorAuthorizationFinding, ...]
+    control_enforcement_record_count: int = 0
+    expected_control_enforcement_record_count: int = 0
 
     @property
     def clean(self) -> bool:
@@ -327,10 +341,26 @@ class SupervisorAuthorizationAudit:
             "schema_present": self.schema_present,
             "observation_count": self.observation_count,
             "expected_observation_count": self.expected_observation_count,
+            "control_enforcement_record_count": (
+                self.control_enforcement_record_count
+            ),
+            "expected_control_enforcement_record_count": (
+                self.expected_control_enforcement_record_count
+            ),
             "finding_count": len(self.findings),
             "clean": self.clean,
             "findings": [finding.to_mapping() for finding in self.findings],
         }
+
+
+@dataclass(frozen=True, slots=True)
+class _SupervisorControlEnforcementAudit:
+    """Internal read-only replay summary for the control-transition PEP."""
+
+    schema_present: bool
+    record_count: int
+    expected_record_count: int
+    findings: tuple[SupervisorAuthorizationFinding, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -940,6 +970,79 @@ END;
 """
 
 
+_SCHEMA_V5 = """
+CREATE TABLE supervisor_control_authorization_baseline (
+    control_event_id TEXT PRIMARY KEY
+        REFERENCES supervisor_control_events(event_id)
+);
+INSERT INTO supervisor_control_authorization_baseline (control_event_id)
+    SELECT event_id FROM supervisor_control_events;
+
+CREATE TABLE supervisor_control_authorization_decisions (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_event_id TEXT NOT NULL UNIQUE CHECK (length(decision_event_id) = 71),
+    control_event_id TEXT NOT NULL UNIQUE,
+    previous_control_event_id TEXT NOT NULL,
+    previous_revision INTEGER NOT NULL CHECK (previous_revision >= 0),
+    target_revision INTEGER NOT NULL CHECK (
+        target_revision = previous_revision + 1
+    ),
+    target_mode TEXT NOT NULL CHECK (
+        target_mode IN ('stopped', 'running', 'paused', 'draining', 'stop_requested')
+    ),
+    request_digest TEXT NOT NULL CHECK (length(request_digest) = 71),
+    decision_digest TEXT NOT NULL CHECK (length(decision_digest) = 71),
+    payload_json TEXT NOT NULL CHECK (length(payload_json) <= 262144),
+    evaluated_at REAL NOT NULL CHECK (evaluated_at >= 0)
+);
+CREATE INDEX supervisor_control_authorization_decisions_control
+    ON supervisor_control_authorization_decisions(control_event_id, sequence);
+
+CREATE TABLE supervisor_control_authorization_action_receipts (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    receipt_event_id TEXT NOT NULL UNIQUE CHECK (length(receipt_event_id) = 71),
+    control_event_id TEXT NOT NULL UNIQUE
+        REFERENCES supervisor_control_events(event_id),
+    decision_event_id TEXT NOT NULL UNIQUE
+        REFERENCES supervisor_control_authorization_decisions(decision_event_id),
+    receipt_digest TEXT NOT NULL CHECK (length(receipt_digest) = 71),
+    payload_json TEXT NOT NULL CHECK (length(payload_json) <= 262144),
+    completed_at REAL NOT NULL CHECK (completed_at >= 0)
+);
+CREATE INDEX supervisor_control_authorization_receipts_control
+    ON supervisor_control_authorization_action_receipts(control_event_id, sequence);
+
+CREATE TRIGGER supervisor_control_authorization_baseline_no_update
+BEFORE UPDATE ON supervisor_control_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor control authorization baseline is append-only');
+END;
+CREATE TRIGGER supervisor_control_authorization_baseline_no_delete
+BEFORE DELETE ON supervisor_control_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor control authorization baseline is append-only');
+END;
+CREATE TRIGGER supervisor_control_authorization_baseline_no_insert
+BEFORE INSERT ON supervisor_control_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor control authorization baseline is frozen');
+END;
+CREATE TRIGGER supervisor_control_authorization_decisions_no_update
+BEFORE UPDATE ON supervisor_control_authorization_decisions BEGIN
+    SELECT RAISE(ABORT, 'supervisor control authorization decisions are append-only');
+END;
+CREATE TRIGGER supervisor_control_authorization_decisions_no_delete
+BEFORE DELETE ON supervisor_control_authorization_decisions BEGIN
+    SELECT RAISE(ABORT, 'supervisor control authorization decisions are append-only');
+END;
+CREATE TRIGGER supervisor_control_authorization_action_receipts_no_update
+BEFORE UPDATE ON supervisor_control_authorization_action_receipts BEGIN
+    SELECT RAISE(ABORT, 'supervisor control authorization receipts are append-only');
+END;
+CREATE TRIGGER supervisor_control_authorization_action_receipts_no_delete
+BEFORE DELETE ON supervisor_control_authorization_action_receipts BEGIN
+    SELECT RAISE(ABORT, 'supervisor control authorization receipts are append-only');
+END;
+"""
+
+
 class SQLiteSupervisorStore:
     """Supervisor-specific event store sharing the existing local SQLite file."""
 
@@ -1041,6 +1144,7 @@ class SQLiteSupervisorStore:
                     2: _SCHEMA_V2,
                     3: _SCHEMA_V3,
                     4: _SCHEMA_V4,
+                    5: _SCHEMA_V5,
                 }
                 for version, script in migration_scripts.items():
                     if _sha256_text(script) != _KNOWN_STATE_MIGRATIONS[version][1]:
@@ -1056,6 +1160,9 @@ class SQLiteSupervisorStore:
                     if version == 4:
                         _verify_pre_v4_supervisor_schema(self._connection)
                         _verify_pre_v4_bookkeeping_history(self._connection)
+                    if version == 5:
+                        _verify_pre_v5_supervisor_schema(self._connection)
+                        _verify_pre_v5_control_history(self._connection)
                     _execute_schema_script(
                         self._connection,
                         migration_scripts[version],
@@ -1122,6 +1229,33 @@ class SQLiteSupervisorStore:
                 )
             event_id = self._new_id("control_event")
             revision = current.revision + 1
+            transition = SupervisorControlTransition(
+                previous_control_event_id=current.event_id,
+                previous_revision=current.revision,
+                previous_mode=current.mode.value,
+                control_event_id=event_id,
+                target_revision=revision,
+                target_mode=mode.value,
+                actor_ref=canonical_digest({"actor_id": actor_id}),
+                reason_code=reason_code,
+                occurred_at=timestamp,
+            )
+            authorization = evaluate_supervisor_control_authorization(
+                transition=transition,
+                legacy_executable=True,
+            )
+            decision_payload = authorization.to_event_payload()
+            persisted_decision_payload = self._append_control_authorization_decision(
+                connection,
+                authorization=authorization,
+                payload=decision_payload,
+            )
+            assert_supervisor_control_transition_authorized(
+                authorization,
+                transition=transition,
+                action_started_at=timestamp,
+                persisted_payload=persisted_decision_payload,
+            )
             cursor = connection.execute(
                 """
                 INSERT INTO supervisor_control_events (
@@ -1134,6 +1268,21 @@ class SQLiteSupervisorStore:
             updated = SupervisorControlRevision(
                 sequence, event_id, revision, mode, actor_id, reason_code, timestamp
             )
+            receipt_payload = build_supervisor_control_action_receipt(
+                authorization=authorization,
+                action_started_at=timestamp,
+                completed_at=timestamp,
+            )
+            persisted_receipt_payload = self._append_control_authorization_receipt(
+                connection,
+                authorization=authorization,
+                payload=receipt_payload,
+                completed_at=timestamp,
+            )
+            if persisted_receipt_payload != receipt_payload:
+                raise SupervisorError(
+                    "supervisor control authorization receipt persistence is uncertain"
+                )
             try:
                 self._append_bookkeeping_authorization_observation(
                     connection,
@@ -1570,6 +1719,155 @@ class SQLiteSupervisorStore:
                 observed_at,
             ),
         )
+
+    def _append_control_authorization_decision(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        authorization: SupervisorControlAuthorization,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Durably bind an exact PEP decision before its control mutation."""
+
+        if (
+            not isinstance(authorization, SupervisorControlAuthorization)
+            or dict(payload) != authorization.to_event_payload()
+        ):
+            raise AuthorizationBlocked(
+                "supervisor control authorization decision is inconsistent"
+            )
+        transition = authorization.transition
+        payload_json = _bounded_json(
+            dict(payload),
+            "supervisor control authorization decision payload",
+        )
+        values = (
+            authorization.decision.digest,
+            transition.control_event_id,
+            transition.previous_control_event_id,
+            transition.previous_revision,
+            transition.target_revision,
+            transition.target_mode,
+            authorization.request.digest,
+            authorization.decision.digest,
+            payload_json,
+            transition.occurred_at,
+        )
+        connection.execute(
+            """
+            INSERT INTO supervisor_control_authorization_decisions (
+                decision_event_id, control_event_id, previous_control_event_id,
+                previous_revision, target_revision, target_mode, request_digest,
+                decision_digest, payload_json, evaluated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+        row = connection.execute(
+            """
+            SELECT decision_event_id, control_event_id, previous_control_event_id,
+                   previous_revision, target_revision, target_mode, request_digest,
+                   decision_digest, payload_json, evaluated_at
+            FROM supervisor_control_authorization_decisions
+            WHERE control_event_id = ?
+            """,
+            (transition.control_event_id,),
+        ).fetchone()
+        if row is None or tuple(row) != values:
+            raise SupervisorError(
+                "supervisor control authorization decision persistence is uncertain"
+            )
+        try:
+            persisted_payload = json.loads(row["payload_json"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise SupervisorError(
+                "supervisor control authorization decision persistence is uncertain"
+            ) from error
+        if type(persisted_payload) is not dict:
+            raise SupervisorError(
+                "supervisor control authorization decision persistence is uncertain"
+            )
+        return persisted_payload
+
+    def _append_control_authorization_receipt(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        authorization: SupervisorControlAuthorization,
+        payload: Mapping[str, Any],
+        completed_at: float,
+    ) -> dict[str, Any]:
+        """Append and exactly reread the receipt after the local state change."""
+
+        if (
+            not isinstance(authorization, SupervisorControlAuthorization)
+            or type(completed_at) not in (int, float)
+            or isinstance(completed_at, bool)
+            or not math.isfinite(float(completed_at))
+            or completed_at < 0
+        ):
+            raise AuthorizationBlocked(
+                "supervisor control authorization receipt is inconsistent"
+            )
+        expected_payload = build_supervisor_control_action_receipt(
+            authorization=authorization,
+            action_started_at=authorization.transition.occurred_at,
+            completed_at=float(completed_at),
+        )
+        if dict(payload) != expected_payload:
+            raise AuthorizationBlocked(
+                "supervisor control authorization receipt is inconsistent"
+            )
+        receipt_digest = payload.get("receipt_digest")
+        if type(receipt_digest) is not str:
+            raise AuthorizationBlocked(
+                "supervisor control authorization receipt is inconsistent"
+            )
+        payload_json = _bounded_json(
+            dict(payload),
+            "supervisor control authorization receipt payload",
+        )
+        values = (
+            receipt_digest,
+            authorization.transition.control_event_id,
+            authorization.decision.digest,
+            receipt_digest,
+            payload_json,
+            float(completed_at),
+        )
+        connection.execute(
+            """
+            INSERT INTO supervisor_control_authorization_action_receipts (
+                receipt_event_id, control_event_id, decision_event_id,
+                receipt_digest, payload_json, completed_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+        row = connection.execute(
+            """
+            SELECT receipt_event_id, control_event_id, decision_event_id,
+                   receipt_digest, payload_json, completed_at
+            FROM supervisor_control_authorization_action_receipts
+            WHERE control_event_id = ?
+            """,
+            (authorization.transition.control_event_id,),
+        ).fetchone()
+        if row is None or tuple(row) != values:
+            raise SupervisorError(
+                "supervisor control authorization receipt persistence is uncertain"
+            )
+        try:
+            persisted_payload = json.loads(row["payload_json"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise SupervisorError(
+                "supervisor control authorization receipt persistence is uncertain"
+            ) from error
+        if type(persisted_payload) is not dict:
+            raise SupervisorError(
+                "supervisor control authorization receipt persistence is uncertain"
+            )
+        return persisted_payload
 
     def _append_bookkeeping_authorization_observation(
         self,
@@ -2609,9 +2907,11 @@ def _inspect_supervisor_authorization_connection(
         )
     flow = _inspect_flow_authorization_connection(connection)
     bookkeeping = _inspect_bookkeeping_authorization_connection(connection)
+    control_enforcement = _inspect_control_enforcement_connection(connection)
     findings = (
         *flow.findings,
         *bookkeeping.findings,
+        *control_enforcement.findings,
         *guard_findings,
     )
     return SupervisorAuthorizationAudit(
@@ -2619,6 +2919,7 @@ def _inspect_supervisor_authorization_connection(
         schema_present=(
             flow.schema_present
             and bookkeeping.schema_present
+            and control_enforcement.schema_present
             and not guard_findings
         ),
         observation_count=flow.observation_count + bookkeeping.observation_count,
@@ -2627,6 +2928,10 @@ def _inspect_supervisor_authorization_connection(
             + bookkeeping.expected_observation_count
         ),
         findings=findings,
+        control_enforcement_record_count=control_enforcement.record_count,
+        expected_control_enforcement_record_count=(
+            control_enforcement.expected_record_count
+        ),
     )
 
 
@@ -3078,6 +3383,286 @@ def _inspect_bookkeeping_authorization_connection(
     )
 
 
+def _inspect_control_enforcement_connection(
+    connection: sqlite3.Connection,
+) -> _SupervisorControlEnforcementAudit:
+    """Replay only post-v5 reversible control transitions without repairing."""
+
+    tables = _table_names(connection)
+    required = {
+        "supervisor_control_events",
+        "supervisor_control_authorization_baseline",
+        "supervisor_control_authorization_decisions",
+        "supervisor_control_authorization_action_receipts",
+    }
+    if not required.issubset(tables):
+        return _SupervisorControlEnforcementAudit(
+            False,
+            0,
+            0,
+            (
+                SupervisorAuthorizationFinding(
+                    "control_authorization_schema_missing",
+                    None,
+                    "control_transition",
+                    None,
+                ),
+            ),
+        )
+    try:
+        control_rows = connection.execute(
+            "SELECT * FROM supervisor_control_events ORDER BY revision"
+        ).fetchall()
+        control_ids = {row["event_id"] for row in control_rows}
+        baseline = {
+            row["control_event_id"]
+            for row in connection.execute(
+                """
+                SELECT control_event_id
+                FROM supervisor_control_authorization_baseline
+                """
+            ).fetchall()
+        }
+        decision_rows = connection.execute(
+            """
+            SELECT * FROM supervisor_control_authorization_decisions
+            ORDER BY sequence
+            """
+        ).fetchall()
+        receipt_rows = connection.execute(
+            """
+            SELECT * FROM supervisor_control_authorization_action_receipts
+            ORDER BY sequence
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        return _SupervisorControlEnforcementAudit(
+            False,
+            0,
+            0,
+            (
+                SupervisorAuthorizationFinding(
+                    "control_authorization_schema_unreadable",
+                    None,
+                    "control_transition",
+                    None,
+                ),
+            ),
+        )
+
+    findings: list[SupervisorAuthorizationFinding] = []
+    if not baseline.issubset(control_ids):
+        findings.append(
+            SupervisorAuthorizationFinding(
+                "control_authorization_baseline_invalid",
+                None,
+                "control_transition",
+                None,
+            )
+        )
+    expected_ids = tuple(
+        row["event_id"] for row in control_rows if row["event_id"] not in baseline
+    )
+    expected_set = set(expected_ids)
+    decision_by_control: dict[str, list[sqlite3.Row]] = {}
+    for row in decision_rows:
+        decision_by_control.setdefault(row["control_event_id"], []).append(row)
+    receipt_by_control: dict[str, list[sqlite3.Row]] = {}
+    for row in receipt_rows:
+        receipt_by_control.setdefault(row["control_event_id"], []).append(row)
+
+    previous = _initial_control_revision()
+    for control_row in control_rows:
+        try:
+            control = _control_from_row(control_row)
+        except (KeyError, TypeError, ValueError):
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "control_authorization_control_history_invalid",
+                    None,
+                    "control_transition",
+                    None,
+                )
+            )
+            continue
+        if control.event_id in baseline:
+            previous = control
+            continue
+        target_ref = canonical_digest({"control_event_id": control.event_id})
+        decisions = decision_by_control.get(control.event_id, [])
+        receipts = receipt_by_control.get(control.event_id, [])
+        if len(decisions) != 1:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    (
+                        "control_authorization_decision_missing"
+                        if not decisions
+                        else "control_authorization_decision_duplicated"
+                    ),
+                    None,
+                    "control_transition",
+                    None,
+                    target_ref,
+                )
+            )
+        if len(receipts) != 1:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    (
+                        "control_authorization_receipt_missing"
+                        if not receipts
+                        else "control_authorization_receipt_duplicated"
+                    ),
+                    None,
+                    "control_transition",
+                    None,
+                    target_ref,
+                )
+            )
+        try:
+            transition = SupervisorControlTransition(
+                previous_control_event_id=previous.event_id,
+                previous_revision=previous.revision,
+                previous_mode=previous.mode.value,
+                control_event_id=control.event_id,
+                target_revision=control.revision,
+                target_mode=control.mode.value,
+                actor_ref=canonical_digest({"actor_id": control.actor_id}),
+                reason_code=control.reason_code,
+                occurred_at=control.occurred_at,
+            )
+            authorization = evaluate_supervisor_control_authorization(
+                transition=transition,
+                legacy_executable=True,
+            )
+            decision_payload = authorization.to_event_payload()
+            decision_values = (
+                authorization.decision.digest,
+                transition.control_event_id,
+                transition.previous_control_event_id,
+                transition.previous_revision,
+                transition.target_revision,
+                transition.target_mode,
+                authorization.request.digest,
+                authorization.decision.digest,
+                _bounded_json(
+                    decision_payload,
+                    "supervisor control authorization audit decision payload",
+                ),
+                transition.occurred_at,
+            )
+            receipt_payload = build_supervisor_control_action_receipt(
+                authorization=authorization,
+                action_started_at=transition.occurred_at,
+                completed_at=transition.occurred_at,
+            )
+            receipt_digest = receipt_payload["receipt_digest"]
+            receipt_values = (
+                receipt_digest,
+                transition.control_event_id,
+                authorization.decision.digest,
+                receipt_digest,
+                _bounded_json(
+                    receipt_payload,
+                    "supervisor control authorization audit receipt payload",
+                ),
+                transition.occurred_at,
+            )
+        except Exception:
+            decision_values = None
+            receipt_values = None
+        if (
+            len(decisions) == 1
+            and (
+                decision_values is None
+                or tuple(
+                    decisions[0][
+                        field
+                    ]
+                    for field in (
+                        "decision_event_id",
+                        "control_event_id",
+                        "previous_control_event_id",
+                        "previous_revision",
+                        "target_revision",
+                        "target_mode",
+                        "request_digest",
+                        "decision_digest",
+                        "payload_json",
+                        "evaluated_at",
+                    )
+                )
+                != decision_values
+            )
+        ):
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "control_authorization_decision_invalid",
+                    None,
+                    "control_transition",
+                    None,
+                    target_ref,
+                )
+            )
+        if (
+            len(receipts) == 1
+            and (
+                receipt_values is None
+                or tuple(
+                    receipts[0][field]
+                    for field in (
+                        "receipt_event_id",
+                        "control_event_id",
+                        "decision_event_id",
+                        "receipt_digest",
+                        "payload_json",
+                        "completed_at",
+                    )
+                )
+                != receipt_values
+            )
+        ):
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "control_authorization_receipt_invalid",
+                    None,
+                    "control_transition",
+                    None,
+                    target_ref,
+                )
+            )
+        previous = control
+
+    for control_event_id in decision_by_control:
+        if control_event_id not in expected_set:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "control_authorization_decision_unexpected",
+                    None,
+                    "control_transition",
+                    None,
+                    canonical_digest({"control_event_id": control_event_id}),
+                )
+            )
+    for control_event_id in receipt_by_control:
+        if control_event_id not in expected_set:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "control_authorization_receipt_unexpected",
+                    None,
+                    "control_transition",
+                    None,
+                    canonical_digest({"control_event_id": control_event_id}),
+                )
+            )
+    return _SupervisorControlEnforcementAudit(
+        True,
+        len(decision_rows) + len(receipt_rows),
+        len(expected_ids) * 2,
+        tuple(findings),
+    )
+
+
 def inspect_pending_completions(
     database_path: str | Path,
 ) -> tuple[CompletionIntent, ...]:
@@ -3140,6 +3725,7 @@ def _authorization_guard_findings(
             "supervisor_migration_ledger_mismatch",
             "authorization_migration_ledger_mismatch",
             "bookkeeping_authorization_migration_ledger_mismatch",
+            "control_authorization_migration_ledger_mismatch",
         ):
             findings.append(
                 SupervisorAuthorizationFinding(code, None, None, None)
@@ -3203,6 +3789,21 @@ def _authorization_guard_findings(
         findings.append(
             SupervisorAuthorizationFinding(
                 "bookkeeping_authorization_migration_ledger_mismatch",
+                None,
+                None,
+                None,
+            )
+        )
+    control_migration = ledger.get(5)
+    if (
+        control_migration is None
+        or control_migration["name"]
+        != "supervisor_control_authorization_enforcement"
+        or control_migration["script_sha256"] != _sha256_text(_SCHEMA_V5)
+    ):
+        findings.append(
+            SupervisorAuthorizationFinding(
+                "control_authorization_migration_ledger_mismatch",
                 None,
                 None,
                 None,
@@ -3745,6 +4346,58 @@ def _execute_schema_script(connection: sqlite3.Connection, script: str) -> None:
         raise ConfigurationError("schema migration script is incomplete")
 
 
+def _verify_pre_v5_control_history(connection: sqlite3.Connection) -> None:
+    try:
+        foreign_key_errors = tuple(
+            row
+            for table in (
+                "supervisor_control_events",
+                "supervisor_flows",
+                "supervisor_flow_revisions",
+                "supervisor_cancellation_requests",
+                "supervisor_attempts",
+                "supervisor_attempt_events",
+                "supervisor_completion_outbox",
+                "supervisor_completion_delivery_events",
+                "supervisor_completion_receipts",
+                "supervisor_authorization_observations",
+                "supervisor_bookkeeping_authorization_sources",
+                "supervisor_bookkeeping_authorization_observations",
+            )
+            for row in connection.execute(f'PRAGMA foreign_key_check("{table}")')
+        )
+        if foreign_key_errors:
+            raise ValidationError("supervisor history has invalid references")
+        previous = _initial_control_revision()
+        rows = connection.execute(
+            "SELECT * FROM supervisor_control_events ORDER BY revision"
+        ).fetchall()
+        for expected_revision, row in enumerate(rows, start=1):
+            control = _control_from_row(row)
+            _validate_text(
+                control.event_id,
+                "control event identifier",
+                maximum=256,
+            )
+            _validate_text(
+                control.actor_id,
+                "control actor identifier",
+                maximum=256,
+            )
+            _validate_reason(control.reason_code)
+            _timestamp(control.occurred_at, "control event timestamp")
+            if (
+                control.revision != expected_revision
+                or control.mode not in _CONTROL_TRANSITIONS[previous.mode]
+            ):
+                raise ValidationError("control history is not contiguous and valid")
+            previous = control
+    except (KeyError, TypeError, ValueError, ValidationError, sqlite3.Error) as error:
+        raise ConfigurationError(
+            "pre-v5 supervisor control history is invalid"
+        ) from error
+
+
 def _verify_pre_v4_bookkeeping_history(connection: sqlite3.Connection) -> None:
     foreign_key_tables = (
         "supervisor_attempt_events",
@@ -3907,7 +4560,7 @@ def _expected_supervisor_schema() -> dict[
     connection.row_factory = sqlite3.Row
     try:
         connection.executescript(
-            _SCHEMA_V2 + "\n" + _SCHEMA_V3 + "\n" + _SCHEMA_V4
+            _SCHEMA_V2 + "\n" + _SCHEMA_V3 + "\n" + _SCHEMA_V4 + "\n" + _SCHEMA_V5
         )
         objects = _schema_objects(connection)
         return {
@@ -3939,6 +4592,25 @@ def _expected_pre_v4_supervisor_schema() -> dict[
         connection.close()
 
 
+@cache
+def _expected_pre_v5_supervisor_schema() -> dict[
+    tuple[str, str], tuple[str, str, str]
+]:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.executescript(_SCHEMA_V2 + "\n" + _SCHEMA_V3 + "\n" + _SCHEMA_V4)
+        objects = _schema_objects(connection)
+        return {
+            key: value
+            for key, value in objects.items()
+            if key[1].startswith("supervisor_")
+            or value[1].startswith("supervisor_")
+        }
+    finally:
+        connection.close()
+
+
 def _verify_pre_v4_supervisor_schema(connection: sqlite3.Connection) -> None:
     objects = _schema_objects(connection)
     actual = {
@@ -3949,6 +4621,18 @@ def _verify_pre_v4_supervisor_schema(connection: sqlite3.Connection) -> None:
     }
     if actual != _expected_pre_v4_supervisor_schema():
         raise ConfigurationError("pre-v4 supervisor schema is invalid")
+
+
+def _verify_pre_v5_supervisor_schema(connection: sqlite3.Connection) -> None:
+    objects = _schema_objects(connection)
+    actual = {
+        key: value
+        for key, value in objects.items()
+        if key[1].startswith("supervisor_")
+        or value[1].startswith("supervisor_")
+    }
+    if actual != _expected_pre_v5_supervisor_schema():
+        raise ConfigurationError("pre-v5 supervisor schema is invalid")
 
 
 def _verify_supervisor_schema(connection: sqlite3.Connection) -> None:

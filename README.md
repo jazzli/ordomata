@@ -55,7 +55,8 @@ disabled.
   TERM/KILL cleanup, and fail-closed cleanup evidence.
 - Authoritative Class 1 policy-enforcement points for new profile-backed exact
   built-in mock admission, mock execution, and private local-candidate
-  publication. Other paths remain shadow-only or disabled.
+  publication, plus reversible local supervisor control transitions. Other
+  paths remain shadow-only or disabled.
 - Read-only authorization and supervisor inspection that reports fixed,
   privacy-bounded findings without repairing history.
 - A foreground, dispatch-disabled supervisor control-plane tracer with

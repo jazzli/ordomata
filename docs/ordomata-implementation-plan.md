@@ -145,6 +145,12 @@ record. Immediately before staging, it exactly rereads the binding, decision,
 and pre-effect record, rebuilds the permit, and checks a new post-replay action
 time for freshness; its reconciled filesystem receipt is the canonical action
 receipt.
+Separately, a fourth fixed PEP covers only a reversible local supervisor
+control transition. It persists and exactly rereads its exact Class 1 permit
+before the append-only control event, then appends and rereads an action receipt
+in the same SQLite transaction. It cannot authorize flow admission, claims,
+cancellation, worker dispatch, repository work, network access, or Class 2/3
+effects.
 General runtime ABAC enforcement is still **planned**. `PermissionClass`
 remains authoritative across contracts, approval, routing, runner validation,
 persistence, evaluation, and comparison, alongside the distributed billing,
@@ -1460,7 +1466,7 @@ Extend the existing SQLite state rather than replacing it. Migrations must be ve
 exact pre-ledger baseline execute statement-by-statement in one explicit
 transaction. Every ordinary state open verifies the exact baseline schema,
 baseline foreign-key and run-status lineage, append-only migration guards, a
-contiguous frozen v1-v4 identity prefix, and agreement between the recorded
+contiguous frozen v1-v5 identity prefix, and agreement between the recorded
 version and installed supervisor tables before use. Partial schemas, missing
 guards, gaps, future versions, or changed identities fail closed without
 automatic repair. Read-only authorization inspection exposes only bounded
@@ -1648,12 +1654,14 @@ admission, append-only optimistic control/flow/attempt state, sticky
 cancellation, fenced multi-resource claim library APIs, internal local
 completion outbox and receipts, read-only status/audit, digest-bound
 reconciliation, operator control commands, and foreground `ordomata supervise`
-loop are implemented. Admission, library-only claim, operator control
-transitions, and sticky cancellation now emit append-only authorization
-shadows, and the read-only audit independently verifies their digests, parity,
-coverage/order, schema guards, and migration provenance. The loop deliberately
-uses the shared verified migration ledger; missing v2-v4 schema statements and
-their immutable ledger rows commit atomically or roll back together. It
+loop are implemented. Admission, library-only claim, and sticky cancellation
+emit append-only authorization shadows; reversible operator control transitions
+retain their compatibility shadow but first pass an authoritative fixed Class 1
+PEP. The read-only audit independently verifies the shadow digests/parity and
+post-v5 control decision/receipt coverage, alongside order, schema guards, and
+migration provenance. The loop deliberately uses the shared verified migration
+ledger; missing v2-v5 schema statements and their immutable ledger rows commit
+atomically or roll back together. It
 deliberately
 does not call the claim API or any
 runner. Authoritative coverage at the exact worker dispatch/tool boundaries

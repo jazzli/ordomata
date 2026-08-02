@@ -14,8 +14,9 @@ import ordomata.supervisor as supervisor_module
 from ordomata.authorization import (
     AuthorizationEffect,
     ShadowAuthorizationEvaluator,
+    canonical_digest,
 )
-from ordomata.errors import ConfigurationError
+from ordomata.errors import AuthorizationBlocked, ConfigurationError
 from ordomata.models import PermissionClass
 from ordomata.state import SQLiteStateStore
 from ordomata.supervisor import (
@@ -27,6 +28,7 @@ from ordomata.supervisor import (
     SQLiteSupervisorStore,
     StaleReconciliationPlanError,
     StaleRevisionError,
+    SupervisorError,
     SupervisorMode,
     inspect_pending_completions,
     inspect_reconciliation,
@@ -60,7 +62,31 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         self.store = self._open_store()
 
     @staticmethod
-    def _remove_v4_schema(connection: sqlite3.Connection) -> None:
+    def _remove_v5_schema(connection: sqlite3.Connection) -> None:
+        connection.executescript(
+            """
+            DROP TRIGGER supervisor_control_authorization_action_receipts_no_update;
+            DROP TRIGGER supervisor_control_authorization_action_receipts_no_delete;
+            DROP TRIGGER supervisor_control_authorization_decisions_no_update;
+            DROP TRIGGER supervisor_control_authorization_decisions_no_delete;
+            DROP TRIGGER supervisor_control_authorization_baseline_no_update;
+            DROP TRIGGER supervisor_control_authorization_baseline_no_delete;
+            DROP TRIGGER supervisor_control_authorization_baseline_no_insert;
+            DROP TABLE supervisor_control_authorization_action_receipts;
+            DROP TABLE supervisor_control_authorization_decisions;
+            DROP TABLE supervisor_control_authorization_baseline;
+            DROP TRIGGER state_schema_migrations_no_delete;
+            DELETE FROM state_schema_migrations WHERE version = 5;
+            CREATE TRIGGER state_schema_migrations_no_delete
+            BEFORE DELETE ON state_schema_migrations BEGIN
+                SELECT RAISE(ABORT, 'schema migrations are append-only');
+            END;
+            """
+        )
+
+    @classmethod
+    def _remove_v4_schema(cls, connection: sqlite3.Connection) -> None:
+        cls._remove_v5_schema(connection)
         connection.executescript(
             """
             DROP TRIGGER supervisor_bookkeeping_authorization_observations_no_update;
@@ -160,6 +186,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
                 (2, "supervisor_control_plane"),
                 (3, "supervisor_authorization_shadow"),
                 (4, "supervisor_bookkeeping_authorization_shadow"),
+                (5, "supervisor_control_authorization_enforcement"),
             ],
         )
         self.assertEqual(
@@ -263,6 +290,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         assert cancellation_request_id is not None
         self.store.close()
         with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v5_schema(connection)
             connection.executescript(
                 """
                 DROP TRIGGER supervisor_bookkeeping_authorization_observations_no_update;
@@ -339,12 +367,13 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
             value = connection.execute(
                 "SELECT parent_id FROM private_child"
             ).fetchone()[0]
-        self.assertEqual(version, 4)
+        self.assertEqual(version, 5)
         self.assertEqual(value, "private-value")
 
     def test_missing_v3_schema_is_a_finding_even_without_flows(self) -> None:
         self.store.close()
         with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v5_schema(connection)
             connection.executescript(
                 """
                 DROP TRIGGER supervisor_authorization_observations_no_update;
@@ -374,6 +403,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
     def test_missing_v4_schema_is_a_finding_without_bookkeeping_events(self) -> None:
         self.store.close()
         with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v5_schema(connection)
             connection.executescript(
                 """
                 DROP TRIGGER supervisor_bookkeeping_authorization_observations_no_update;
@@ -818,6 +848,264 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
                     """
                 )
 
+    def test_control_pep_persists_exact_decisions_and_receipts(self) -> None:
+        running = self.store.update_control(
+            expected_revision=0,
+            mode=SupervisorMode.RUNNING,
+            actor_id="operator/private-control-session",
+            reason_code="operator_started",
+            occurred_at=100.0,
+        )
+        paused = self.store.update_control(
+            expected_revision=running.revision,
+            mode=SupervisorMode.PAUSED,
+            actor_id="operator/private-control-session",
+            reason_code="operator_paused",
+            occurred_at=101.0,
+        )
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            decisions = connection.execute(
+                """
+                SELECT control_event_id, decision_event_id, request_digest,
+                       decision_digest, payload_json
+                FROM supervisor_control_authorization_decisions
+                ORDER BY sequence
+                """
+            ).fetchall()
+            receipts = connection.execute(
+                """
+                SELECT control_event_id, decision_event_id, receipt_digest,
+                       payload_json
+                FROM supervisor_control_authorization_action_receipts
+                ORDER BY sequence
+                """
+            ).fetchall()
+        self.assertEqual(
+            [row[0] for row in decisions],
+            [running.event_id, paused.event_id],
+        )
+        self.assertEqual(
+            [row[0] for row in receipts],
+            [running.event_id, paused.event_id],
+        )
+        self.assertTrue(
+            all(row[1] == row[3] for row in decisions)
+        )
+        self.assertTrue(
+            all(row[1] == decision[1] for row, decision in zip(receipts, decisions))
+        )
+        serialized = json.dumps(
+            [*(tuple(row) for row in decisions), *(tuple(row) for row in receipts)],
+            sort_keys=True,
+        )
+        self.assertNotIn("operator/private-control-session", serialized)
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean)
+        self.assertEqual(audit.control_enforcement_record_count, 4)
+        self.assertEqual(audit.expected_control_enforcement_record_count, 4)
+
+    def test_control_pep_receipt_failure_rolls_back_the_control_change(self) -> None:
+        with patch.object(
+            self.store,
+            "_append_control_authorization_receipt",
+            side_effect=RuntimeError("private receipt failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "private receipt failure"):
+                self.store.update_control(
+                    expected_revision=0,
+                    mode=SupervisorMode.RUNNING,
+                    actor_id="operator/session-000000000001",
+                    reason_code="operator_started",
+                    occurred_at=100.0,
+                )
+
+        self.assertEqual(self.store.current_control().revision, 0)
+        with closing(sqlite3.connect(self.database)) as connection:
+            control_count = connection.execute(
+                "SELECT COUNT(*) FROM supervisor_control_events"
+            ).fetchone()[0]
+            decision_count = connection.execute(
+                """
+                SELECT COUNT(*) FROM supervisor_control_authorization_decisions
+                """
+            ).fetchone()[0]
+            receipt_count = connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM supervisor_control_authorization_action_receipts
+                """
+            ).fetchone()[0]
+        self.assertEqual((control_count, decision_count, receipt_count), (0, 0, 0))
+
+    def test_control_pep_requires_exact_receipt_readback(self) -> None:
+        with patch.object(
+            self.store,
+            "_append_control_authorization_receipt",
+            return_value={},
+        ):
+            with self.assertRaisesRegex(
+                SupervisorError,
+                "receipt persistence is uncertain",
+            ):
+                self.store.update_control(
+                    expected_revision=0,
+                    mode=SupervisorMode.RUNNING,
+                    actor_id="operator/session-000000000001",
+                    reason_code="operator_started",
+                    occurred_at=100.0,
+                )
+
+        self.assertEqual(self.store.current_control().revision, 0)
+        with closing(sqlite3.connect(self.database)) as connection:
+            counts = tuple(
+                connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in (
+                    "supervisor_control_events",
+                    "supervisor_control_authorization_decisions",
+                    "supervisor_control_authorization_action_receipts",
+                )
+            )
+        self.assertEqual(counts, (0, 0, 0))
+
+    def test_control_pep_requires_exact_decision_readback(self) -> None:
+        with patch.object(
+            self.store,
+            "_append_control_authorization_decision",
+            return_value={},
+        ):
+            with self.assertRaises(AuthorizationBlocked):
+                self.store.update_control(
+                    expected_revision=0,
+                    mode=SupervisorMode.RUNNING,
+                    actor_id="operator/session-000000000001",
+                    reason_code="operator_started",
+                    occurred_at=100.0,
+                )
+
+        self.assertEqual(self.store.current_control().revision, 0)
+        with closing(sqlite3.connect(self.database)) as connection:
+            counts = tuple(
+                connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in (
+                    "supervisor_control_events",
+                    "supervisor_control_authorization_decisions",
+                    "supervisor_control_authorization_action_receipts",
+                )
+            )
+        self.assertEqual(counts, (0, 0, 0))
+
+    def test_control_pep_rebuild_rejects_a_replaced_first_pass(self) -> None:
+        original = supervisor_module.evaluate_supervisor_control_authorization
+
+        def forged_first_pass(*args, **kwargs):
+            authorization = original(*args, **kwargs)
+            forged_action = replace(
+                authorization.request.action,
+                parameters_digest=canonical_digest({"forged": True}),
+            )
+            return replace(
+                authorization,
+                request=replace(authorization.request, action=forged_action),
+            )
+
+        with patch(
+            "ordomata.supervisor.evaluate_supervisor_control_authorization",
+            side_effect=forged_first_pass,
+        ):
+            with self.assertRaises(AuthorizationBlocked):
+                self.store.update_control(
+                    expected_revision=0,
+                    mode=SupervisorMode.RUNNING,
+                    actor_id="operator/session-000000000001",
+                    reason_code="operator_started",
+                    occurred_at=100.0,
+                )
+
+        self.assertEqual(self.store.current_control().revision, 0)
+        with closing(sqlite3.connect(self.database)) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM supervisor_control_events"
+                ).fetchone()[0],
+                0,
+            )
+
+    def test_control_pep_audit_detects_decision_and_receipt_tampering(self) -> None:
+        self.store.update_control(
+            expected_revision=0,
+            mode=SupervisorMode.RUNNING,
+            actor_id="operator/session-000000000001",
+            reason_code="operator_started",
+            occurred_at=100.0,
+        )
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.executescript(
+                """
+                DROP TRIGGER supervisor_control_authorization_decisions_no_update;
+                DROP TRIGGER supervisor_control_authorization_action_receipts_no_update;
+                """
+            )
+            connection.execute(
+                """
+                UPDATE supervisor_control_authorization_decisions
+                SET payload_json = '{"tampered":true}'
+                """
+            )
+            connection.execute(
+                """
+                UPDATE supervisor_control_authorization_action_receipts
+                SET payload_json = '{"tampered":true}'
+                """
+            )
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+        codes = {finding.code for finding in audit.findings}
+        self.assertFalse(audit.clean)
+        self.assertIn("authorization_schema_mismatch", codes)
+        self.assertIn("control_authorization_decision_invalid", codes)
+        self.assertIn("control_authorization_receipt_invalid", codes)
+
+    def test_v5_migration_baselines_existing_controls_before_enforcement(self) -> None:
+        running = self.store.update_control(
+            expected_revision=0,
+            mode=SupervisorMode.RUNNING,
+            actor_id="operator/session-000000000001",
+            reason_code="operator_started",
+            occurred_at=100.0,
+        )
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v5_schema(connection)
+
+        self.store = self._open_store()
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean)
+        self.assertEqual(audit.control_enforcement_record_count, 0)
+        self.assertEqual(audit.expected_control_enforcement_record_count, 0)
+        paused = self.store.update_control(
+            expected_revision=running.revision,
+            mode=SupervisorMode.PAUSED,
+            actor_id="operator/session-000000000001",
+            reason_code="operator_paused",
+            occurred_at=101.0,
+        )
+        with closing(sqlite3.connect(self.database)) as connection:
+            baseline = connection.execute(
+                """
+                SELECT control_event_id
+                FROM supervisor_control_authorization_baseline
+                """
+            ).fetchall()
+        self.assertEqual(baseline, [(running.event_id,)])
+        self.assertNotEqual(paused.event_id, running.event_id)
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean)
+        self.assertEqual(audit.control_enforcement_record_count, 2)
+        self.assertEqual(audit.expected_control_enforcement_record_count, 2)
+
     def test_bookkeeping_shadow_failure_cannot_block_control_or_cancellation(self) -> None:
         with patch(
             "ordomata.supervisor.ShadowAuthorizationEvaluator.evaluate",
@@ -939,7 +1227,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
                 """
                 INSERT INTO state_schema_migrations (
                     version, name, script_sha256, applied_at
-                ) VALUES (5, 'future_unknown', ?, 100.0)
+                ) VALUES (6, 'future_unknown', ?, 100.0)
                 """,
                 ("0" * 64,),
             )
@@ -1046,6 +1334,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         self.store.admit_flow(spec)
         self.store.close()
         with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v5_schema(connection)
             connection.executescript(
                 """
                 DROP TRIGGER supervisor_bookkeeping_authorization_observations_no_update;
