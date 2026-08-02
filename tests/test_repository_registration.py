@@ -477,8 +477,12 @@ class RepositoryRegistrationTests(unittest.TestCase):
                 canonical["path_policy"]["protected_paths"],
                 sorted(payload["path_policy"]["protected_paths"]),
             )
-            with self.assertRaises(FrozenInstanceError):
+            original_digest = registration.registration_digest
+            # Python 3.12 reports inherited frozen-slot assignment as
+            # TypeError; newer interpreters report FrozenInstanceError.
+            with self.assertRaises((FrozenInstanceError, TypeError)):
                 registration.registration_digest = "sha256:" + "0" * 64
+            self.assertEqual(registration.registration_digest, original_digest)
 
             payload["repository"]["repository_id"] = "mutated"
             payload["verification_commands"]["test"][0]["argv"].append(
