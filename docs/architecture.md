@@ -458,6 +458,17 @@ network policy, limits, credential absence, and lack of control sockets;
 post-run evidence verifies containment and cleanup. The controller never
 silently downgrades an assurance requirement.
 
+The current `ordomata.worker_cell_containment` v1 implementation is only the
+inert contract seam for that future boundary. It binds a bounded, digest-only
+schema-v4 registration-evidence snapshot to the declared local-container,
+network-disabled assurance profile and to typed preflight/postflight evidence
+shapes. Its only backend is a deterministic no-I/O mock: it creates no cell,
+does not inspect a host or repository, starts no process, persists no state,
+and always reports containment unproven with execution and dispatch disabled.
+Even a shape-complete mock assessment is non-authoritative. A real backend
+requires a separately reviewed contract version with observed host evidence;
+the controller cannot reinterpret this mock as successful containment.
+
 Once that containment is proven, an implementation worker may use a general
 shell inside its disposable cell and bounded temporary storage. It receives no
 host shell, shared Git metadata, credentials, or control socket. Network is
