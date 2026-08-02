@@ -239,10 +239,12 @@ architecture, status, policy, routing, roadmap, plan, and research sources.
 - The supervisor is a dispatch-disabled foreground tracer, not a worker daemon.
 - Repository registration and executable-closure evidence grant no route,
   authority, worktree integration, subprocess, or execution capability.
-- Only the narrow exact built-in-mock Class 1 admission, dispatch, and private
-  publication path has authoritative attribute-based access-control coverage.
-  Live, comparison, supervisor, shared publication, promotion, and general
-  mediated-tool paths remain shadow-only or disabled.
+- Authoritative attribute-based access-control coverage remains limited to the
+  narrow exact built-in-mock Class 1 admission, dispatch, and private
+  publication path, plus mock-only supervisor flow admission and reversible
+  local supervisor control transitions. Live, comparison, supervisor
+  claim/dispatch, shared-publication, promotion, and general mediated-tool
+  paths remain shadow-only or disabled.
 - No production inbox, calendar, Drive, Slack, deployment, or other connector
   is enabled.
 - No Cursor Agent adapter, autonomous learning, retry/failover controller,
