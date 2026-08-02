@@ -141,15 +141,21 @@ schema v6; they add no authority. The dispatch PEP remains
 limited to Class 0/1 requests for the exact profile-backed controller-owned
 `MockRunner`, while every new attempt that reaches it still requires the Class
 1 admission permit.
-Separately, a fourth narrow PEP mediates only an exact reversible local
+Separately, one narrow PEP mediates only an exact reversible local
 supervisor control transition. It binds the prior control revision and intended
 next revision, retains only a digest of the operator identity, persists and
 exactly rereads its fixed Class 1 decision before the append-only control event,
 then appends and rereads an action receipt in the same SQLite transaction. It
 does not authorize flow admission, cancellation, claims, worker dispatch,
-repository work, network access, or any Class 2/3 effect.
+repository work, network access, or any Class 2/3 effect. A separate fixed
+Class 1 PEP now mediates only an immutable deterministic-mock flow admission.
+It persists and exactly rereads a privacy-bounded permit before the flow and
+initial queued revision, then appends and rereads its action receipt in the same
+SQLite transaction. That permit controls only the local bookkeeping write, not
+the requested task effect, and cannot authorize claims, cancellation, worker
+dispatch, repository work, network access, or Class 2/3 effects.
 There is still no
-general, live, comparison, or supervisor admission PEP, live/shared
+general, live, comparison, or supervisor claim/dispatch admission PEP, live/shared
 publication or promotion PEP, per-command/tool mediation,
 approval-resumption path, supervisor worker permit, or live-harness ABAC
 enforcement. Existing gates remain in force, and the migration cannot widen
@@ -2018,7 +2024,7 @@ object and fails closed on missing, replaced, or unexpected triggers. A new
 baseline, or the migration-ledger adoption of an exact legacy baseline, is
 created statement-by-statement in one explicit transaction. Existing state is
 verified before any schema DDL: the ledger must be a contiguous prefix of the
-frozen v1-v5 identities, its version must agree with the installed supervisor
+frozen v1-v6 identities, its version must agree with the installed supervisor
 tables, baseline foreign keys and run-status lineage must remain valid, and a
 rejected database is not repaired. WAL mode is selected only after baseline
 acceptance.
@@ -2034,10 +2040,11 @@ separate authoritative Class 1 control PEP.
 The read-only authorization inspector and supervisor audit each hold one
 SQLite snapshot while checking baseline and migration integrity. The
 supervisor audit independently recomputes both the shadow observations and
-post-v5 control-PEP decision/receipt pairs, then checks coverage, order, parity,
-append-only guards, and migration provenance. Frozen migration baselines
-exclude history created before each applicable schema. Neither the control PEP
-nor its shadows authorize a worker or replace the deterministic control path.
+post-v5 control-PEP plus post-v6 flow-admission-PEP decision/receipt pairs,
+then checks coverage, order, parity, append-only guards, and migration
+provenance. Frozen migration baselines exclude history created before each
+applicable schema. Neither narrow supervisor PEP authorizes a worker, and
+neither PEP's shadows replace the deterministic control path.
 Control observations bind the exact previous control revision. Cancellation
 observations bind the exact source flow revision and resulting local state/
 outbox writes. The original flow remains irreversibly sticky-cancelled;

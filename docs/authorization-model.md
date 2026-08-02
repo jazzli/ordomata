@@ -1447,7 +1447,13 @@ and target control revisions, retains only a digest of the operator identity,
 persists and exactly rereads its permit before the append-only control event,
 and appends a reread action receipt in the same SQLite transaction. The PEP
 cannot authorize flow admission, claims, cancellation, worker dispatch,
-repository work, network access, or a Class 2/3 effect. Cancellation requests
+repository work, network access, or a Class 2/3 effect. A separate fixed Class
+1 PEP authorizes only an immutable deterministic-mock flow admission: it binds
+the admission-key reference, immutable flow digest, and exact initial queued
+revision, persists and rereads its permit before either flow write, and appends
+and rereads its action receipt in the same SQLite transaction. It grants no
+claim, cancellation, worker-dispatch, task-execution, repository, network, or
+Class 2/3 authority. Cancellation requests
 bind the exact source flow revision and deterministic local writes that follow,
 including whether a completion intent is appended. Cancellation is irreversible
 on the original flow; explicitly admitting a replacement is compensation, not
