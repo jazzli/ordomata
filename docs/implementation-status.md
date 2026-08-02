@@ -998,6 +998,32 @@ resolution, dependency closure, loader invocation, execution, persistence,
 routing, authorization, network, subprocess, model, or permission widening.
 Only Class 0/1 effects remain enabled.
 
+Implemented as the thirty-first bounded Phase 3 slice, the library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_loader_nested_target_loader_requirements`
+API consumes the exact nested-target runtime manifest, exact staging receipt,
+and active same-PID lease. It freshly reproduces the runtime evidence before
+and after extraction and requires two matching complete descriptor/parser
+passes. Bounded parsing emits fixed ELF32/ELF64 `PT_INTERP`, thin
+Mach-O32/Mach-O64 `LC_LOAD_DYLINKER`, declaration-absent, unsupported-native-
+layout, or non-native dispositions.
+
+Each unique runtime file produces one syntax requirement while the full
+target-loader, depth-two resolution, known-chain guard, nested staging, nested
+runtime, source-requirement, and command-binding lineage remains exact. Shared
+files stay deduplicated without collapsing provenance. Terminal source lineages
+that never produced nested files remain explicit and perform no descriptor
+reads.
+
+Canonical receipts contain only digest references, fixed classifications and
+dispositions, bounded counts, absolute-path booleans, and byte totals. Raw
+loader paths, headers, content, filesystem numbers, descriptors, and temporary
+names remain private. The API opens no path, mutates or cleans up no lease,
+resolves or follows no newly declared loader, and adds no recursive or
+dependency/shared-library closure, loader invocation, execution, persistence,
+routing, authorization, network, subprocess, harness, model, or permission
+widening. Only Class 0/1 effects remain enabled.
+
 The separate `ordomata.repository_proposal` evidence layer implements
 `bind_repository_proposal_attempt(state, *, run_id, proposal_digest,
 registration)`. It freshly revalidates the registration and accepts only a
@@ -1326,6 +1352,13 @@ those detached depth-two descriptors. Full remeasurement surrounds the header
 read, fixed classifications preserve requirement, source-lineage, and command
 correspondence, and empty stages perform no descriptor reads. It opens no path,
 mutates no lease, follows no further declaration, invokes no loader, and
+executes nothing.
+
+The thirty-first slice adds matching Class 0 bounded loader-declaration
+evidence for the classified depth-two files. Fresh runtime reproduction and two
+matching complete descriptor/parser passes extract only ELF `PT_INTERP` or thin
+Mach-O `LC_LOAD_DYLINKER` syntax while preserving full digest lineage. It
+resolves and follows no declaration, invokes no loader, mutates no lease, and
 executes nothing.
 
 Started profile-backed Chief-of-Staff attempts additionally persist exactly

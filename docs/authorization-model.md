@@ -991,6 +991,29 @@ resolution, loader, dependency, shared-library, subprocess, model, network,
 persistence, routing, or execution authority. The current Class 0/1 ceiling is
 unchanged.
 
+The thirty-first bounded Phase 3 slice adds another separate Class 0 PIP, not
+a PDP or PEP:
+`ordomata.repository_executable_native_loader_nested_target_loader_requirements`.
+It accepts only the exact nested-target runtime and staging receipts plus their
+active same-PID lease, freshly reproduces the runtime evidence before and after
+extraction, and requires two matching complete descriptor/parser passes.
+Bounded parsing records only fixed ELF `PT_INTERP`, thin Mach-O
+`LC_LOAD_DYLINKER`, absent, unsupported-layout, or non-native dispositions.
+
+The result preserves complete digest lineage through target-loader inspection,
+depth-two resolution, known-chain guarding, nested staging, nested runtime,
+source requirements, and command bindings. Shared files remain deduplicated;
+terminal source lineages remain explicit without descriptor reads. Raw paths,
+headers, content, filesystem numbers, staging names, and descriptors are not
+policy attributes and remain private.
+
+This descriptive evidence grants no authority, satisfies no fresh
+authorization, and is not an action receipt. It neither resolves nor follows a
+declared loader path, mutates a lease, invokes a loader, nor establishes
+recursive, dependency, shared-library, freshness, execution, persistence,
+routing, network, subprocess, harness, model, or wider-permission eligibility.
+The current Class 0/1 ceiling is unchanged.
+
 The separate second slice records that PIP evidence for a dispatch-disabled
 repository proposal. The controller API
 `ordomata.repository_proposal.bind_repository_proposal_attempt` freshly
@@ -1319,6 +1342,14 @@ The thirtieth slice adds matching Class 0 bounded runtime-header inspection for
 those detached descriptors. Full remeasurement surrounds the read and exact
 digest lineage remains descriptive only. It grants no authorization,
 recursive-resolution, loader, dependency, shared-library, persistence,
+routing, model, subprocess, or execution authority.
+
+The thirty-first slice adds matching Class 0 bounded loader-declaration
+inspection for those depth-two runtime files. Fresh runtime reproduction and
+two matching complete descriptor/parser passes produce digest-only ELF
+`PT_INTERP` or thin Mach-O `LC_LOAD_DYLINKER` evidence with full lineage. It
+does not resolve or follow the declaration and grants no authorization,
+recursive/dependency/shared-library closure, loader invocation, persistence,
 routing, model, subprocess, or execution authority.
 
 The durable supervisor now also records non-enforcing controller-bookkeeping

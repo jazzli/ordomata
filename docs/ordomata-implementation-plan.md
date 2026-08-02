@@ -983,6 +983,26 @@ persistence, proposal/worktree, routing, billing, network, worker, subprocess,
 harness, model, authorization, or permission widening. Only Class 0/1 effects
 remain enabled.
 
+The thirty-first bounded Phase 3 slice adds the matching library-only schema-v1
+Class 0 native-loader nested-target loader-requirements primitive. It requires
+the exact nested-target runtime manifest, exact staging receipt, and active
+same-PID lease; freshly reproduces the runtime evidence before and after
+extraction; and requires two matching complete descriptor/parser passes. The
+bounded parser emits fixed ELF32/ELF64 `PT_INTERP`, thin Mach-O32/Mach-O64
+`LC_LOAD_DYLINKER`, absent-declaration, unsupported-native-layout, or non-native
+outcomes.
+
+Shared files remain deduplicated while the complete target-loader, depth-two
+resolution, known-chain guard, nested staging, nested runtime, source-
+requirement, and command-binding digest lineage stays exact. Terminal source
+lineages that produced no nested file require no descriptor read. Canonical
+records exclude raw paths, headers, content, filesystem numbers, staging names,
+and descriptors. The primitive resolves and follows no newly declared loader,
+opens no path, mutates or cleans up no lease, and adds no recursive/dependency/
+shared-library closure, loader invocation, execution, persistence, proposal/
+worktree, routing, billing, authorization, network, worker, subprocess,
+harness, model, or permission widening. Only Class 0/1 effects remain enabled.
+
 The second Phase 3 slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` evidence API.
 It freshly revalidates a registration and requires an explicit canonical
@@ -1909,6 +1929,20 @@ Only Class 0/1 effects remain enabled.
     semantics, dependency/loader/toolchain closure, freshness, immutability,
     authority, persistence, proposal/worktree integration, routing, billing,
     subprocess, harness, model, and execution remain deferred);
+  - controller-inspected guarded nested-target native-loader declarations
+    (separate schema-v1 Class 0 receipt implemented; exact active same-PID
+    nested-stage and runtime receipt/lease anchoring, full runtime/staging
+    correspondence, fresh runtime reproduction before and after extraction,
+    two matching complete descriptor/parser passes, fixed ELF32/ELF64
+    `PT_INTERP` and thin Mach-O32/Mach-O64 `LC_LOAD_DYLINKER` dispositions,
+    unique-file parsing, full source/target/guard/stage/runtime/command digest
+    lineage, and terminal zero-read behavior are implemented; raw loader paths,
+    headers, content, identities, names, and descriptors remain private, while
+    declared-path resolution/following, recursion beyond depth 2, loader
+    identity/authenticity/compatibility/invocation, dependency/shared-library/
+    runtime/toolchain closure, freshness, immutability, authority,
+    authorization, persistence, proposal/worktree integration, routing,
+    billing, subprocess, harness, model, and execution remain deferred);
   - controller-inspected guarded nested-target shebang requirements (separate
     schema-v1 Class 0 receipt implemented; exact active same-PID nested-stage
     and runtime receipt/lease anchoring, full runtime/staging correspondence,
