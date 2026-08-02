@@ -848,6 +848,22 @@ parallel because it cannot exercise worker authority.
   mutation/cleanup, recursive resolution, dependency closure, loader
   invocation, execution, persistence, routing, network, model, or permission
   widening is added. Only Class 0/1 effects remain enabled.
+- The thirty-first bounded Phase 3 slice implements the matching library-only
+  schema-v1 Class 0
+  `ordomata.repository_executable_native_loader_nested_target_loader_requirements`
+  primitive. It requires the exact nested-target runtime/staging receipts and
+  active same-PID lease, freshly reproduces runtime evidence before and after
+  extraction, and requires two matching complete descriptor/parser passes.
+  Bounded ELF32/ELF64 `PT_INTERP` and thin Mach-O32/Mach-O64
+  `LC_LOAD_DYLINKER` parsing emits fixed declared, absent, unsupported-layout,
+  or non-native dispositions. Shared files deduplicate without collapsing the
+  complete digest lineage; terminal source lineages remain zero-read. Public
+  evidence excludes raw paths, headers, content, identity numbers, staging
+  names, and descriptors. No declared-path resolution/following, path open,
+  lease mutation/cleanup, recursive or dependency/shared-library closure,
+  loader invocation, execution, persistence, routing, authorization, network,
+  subprocess, harness, model, or permission widening is added. Only Class 0/1
+  effects remain enabled.
 - Complete interpreter/dependency/runtime/toolchain closure and command
   execution remain future boundaries before any proposal-lineage or
   operational widening.

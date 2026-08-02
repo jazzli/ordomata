@@ -1082,6 +1082,29 @@ recurse beyond depth two, resolve dependencies, invoke a loader, execute,
 persist, route, authorize, call a network/model/subprocess, or widen
 permissions. Only Class 0/1 effects remain enabled.
 
+The thirty-first bounded Phase 3 slice adds the matching library-only
+schema-v1 Class 0
+`ordomata.repository_executable_native_loader_nested_target_loader_requirements`
+primitive. It consumes the exact nested-target runtime manifest, exact staging
+receipt, and same-PID lease; freshly reproduces the runtime evidence before and
+after extraction; and requires two matching complete descriptor/parser passes.
+Bounded byte-level parsing reports ELF32/ELF64 `PT_INTERP`, thin
+Mach-O32/Mach-O64 `LC_LOAD_DYLINKER`, absent declarations, unsupported native
+layouts, or non-native non-applicability. Shared files remain deduplicated
+without collapsing the complete target-loader, nested-target, guard, staging,
+runtime, source-requirement, or command lineage. Terminal source lineages that
+never produced a nested target retain exact dispositions and perform no
+descriptor reads.
+
+Canonical records expose only digests, fixed classifications and dispositions,
+bounded counts, absolute-path booleans, and byte totals. Raw loader paths,
+headers, content, filesystem numbers, descriptors, and staging names remain
+private. This inspection resolves or follows no newly declared loader path,
+opens no path, mutates or cleans up no lease, invokes no loader, and adds no
+recursive or dependency/shared-library closure, execution, persistence,
+routing, authorization, network, subprocess, harness, model, or permission
+widening. Only Class 0/1 effects remain enabled.
+
 Separately, `ordomata.repository_proposal.bind_repository_proposal_attempt`
 freshly revalidates one registration, requires an explicit canonical
 `proposal_digest`, and accepts only an existing immutable Class 0/1
@@ -1440,6 +1463,13 @@ bounded position-independent read, fixed byte-level classification preserves
 requirement, source-lineage, and command correspondence, and empty stages
 perform no descriptor reads. It opens no path, mutates no lease, follows no
 further declaration, invokes no loader, and executes nothing.
+
+The thirty-first slice adds matching Class 0 loader-declaration evidence for
+those classified depth-two files. Fresh runtime reproduction and two complete
+matching descriptor/parser passes extract only bounded ELF `PT_INTERP` or thin
+Mach-O `LC_LOAD_DYLINKER` syntax and preserve the complete digest lineage.
+Terminal lineages remain zero-read. It does not resolve or follow the declared
+path, invoke a loader, mutate a lease, or execute anything.
 
 ## Quick start
 

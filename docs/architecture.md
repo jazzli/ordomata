@@ -1472,6 +1472,32 @@ mutation/cleanup, recursive resolution, dependency closure, loader invocation,
 execution, persistence, routing, network, subprocess, harness, model, or
 permission widening. The Class 0/1 ceiling is unchanged.
 
+The thirty-first bounded Phase 3 slice is the matching library-only schema-v1
+Class 0 native-loader nested-target loader-requirements PIP. Its conceptual
+flow is `exact nested runtime + exact active nested stage -> fresh runtime
+reproduction -> complete descriptor/parser pass -> fresh runtime reproduction
+-> matching complete descriptor/parser pass -> closing lease snapshot`. The
+fixed parser recognizes ELF32/ELF64 `PT_INTERP` and thin Mach-O32/Mach-O64
+`LC_LOAD_DYLINKER`; it also records absent declarations, unsupported native
+layouts, and non-native non-applicability.
+
+One syntax requirement is emitted per unique runtime file. Full digest lineage
+continues through target-loader inspection, depth-two resolution, the known-
+chain guard, nested staging, nested runtime inspection, original source
+requirements, and command bindings. Shared files therefore stay deduplicated
+without collapsing provenance, while terminal source lineages that produced no
+nested file remain explicit and require no descriptor read.
+
+Canonical output contains only digest references, fixed classifications and
+dispositions, bounded counts, absolute-path booleans, and byte totals. Raw
+loader paths, headers, content, filesystem numbers, staging names, and
+descriptors remain private. This historical PIP evidence neither resolves nor
+follows a newly declared loader path. It opens no path, mutates or cleans up no
+lease, invokes no loader, and grants no recursive/dependency/shared-library
+closure, freshness, authorization, execution, persistence, routing, network,
+subprocess, harness, model, or wider permission. The Class 0/1 ceiling is
+unchanged.
+
 The second slice is the separate
 `ordomata.repository_proposal.bind_repository_proposal_attempt` controller API.
 It freshly revalidates a `RepositoryRegistration`, requires an existing
@@ -1803,6 +1829,13 @@ bounded position-independent header read, preserves exact requirement,
 source-lineage, and command correspondence, and performs no reads for empty
 stages. It opens no path, mutates no lease, follows no further declaration,
 invokes no loader, and executes nothing.
+
+The thirty-first slice adds the matching Class 0 nested-target loader-
+requirements boundary. It freshly reproduces the exact runtime evidence around
+two matching complete descriptor/parser passes, extracts only bounded ELF
+`PT_INTERP` or thin Mach-O `LC_LOAD_DYLINKER` syntax, and preserves the full
+digest lineage. It resolves and follows no declaration, invokes no loader,
+mutates no lease, and executes nothing.
 
 The lineage digest, downstream content links, and SQLite append-only guards
 detect ordinary in-place mutation; they are not an external tamper anchor
