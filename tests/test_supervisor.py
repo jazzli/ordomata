@@ -4037,6 +4037,55 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         self.assertEqual(repaired[0].attempt_id, claim.attempt.attempt_id)
         self.assertEqual(repaired[0].envelope["attempt_id"], claim.attempt.attempt_id)
 
+    def test_reconciliation_releases_orphan_attempt_leases_without_changing_completion(
+        self,
+    ) -> None:
+        claim = self._start_and_claim()
+        completed, outbox = self.store.complete_attempt(
+            claim,
+            expected_flow_revision=claim.flow_revision.revision,
+            outcome=FlowState.SUCCEEDED,
+            reason_code="checks_passed",
+            now=101.0,
+        )
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.executemany(
+                """
+                INSERT INTO leases (
+                    lease_key, owner_id, acquired_at, renewed_at, expires_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                [
+                    (key, claim.attempt.lease_owner, 100.0, 101.0, 122.0)
+                    for key in claim.attempt.lease_keys
+                ],
+            )
+            connection.commit()
+
+        plan = self.store.reconciliation_plan(now=102.0)
+        self.assertEqual(
+            [finding.action for finding in plan.findings if finding.action],
+            ["release_orphan_attempt_leases"],
+        )
+        self.store.apply_reconciliation(plan_digest=plan.plan_digest, now=102.0)
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            leftovers = connection.execute(
+                """
+                SELECT lease_key FROM leases
+                WHERE owner_id = ? ORDER BY lease_key
+                """,
+                (claim.attempt.lease_owner,),
+            ).fetchall()
+        self.assertEqual(leftovers, [])
+        self.assertEqual(
+            self.store.current_flow_revision(claim.flow.flow_id),
+            completed,
+        )
+        self.assertEqual(self.store.list_pending_completions(), (outbox,))
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean, audit.to_mapping())
+
     def test_read_only_inspection_of_absent_database_creates_nothing(self) -> None:
         absent = Path(self.temporary.name) / "absent.sqlite3"
 
