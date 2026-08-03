@@ -1846,7 +1846,14 @@ The proposed [`worker-dispatch security design`](worker-dispatch-security-design
 now fixes the next review target: a local VM-contained, fresh unprivileged
 container cell, an exact worker-dispatch PEP, controller-owned materialization
 without Git metadata, observed pre/postflight evidence, and adversarial gates.
-It adds no code path, backend, authority, or eligibility; an operator decision
-and a separately reviewed non-production probe remain prerequisites.
+The operator-approved, bounded
+[`laboratory probe`](worker-dispatch-laboratory-probe-2026-08-03.md) observed
+that a local Docker Desktop engine honored selected unprivileged-user,
+read-only-root, capability, cgroup, no-default-route, and automatic-cleanup
+constraints. It also found an injected resolver configuration, so it is not a
+containment proof or backend approval. The proposal still adds no worker code
+path, authority, or eligibility; controller materialization, authoritative
+ABAC, verified pre/postflight evidence, and the remaining adversarial gates are
+required before any dispatch change.
 
 The controlled comparison machinery has been implemented and tested with deterministic fixtures. No claim is made that the planned three-runs-per-profile live experiment has run, passed automated checks, received human scores, or produced a winner.
