@@ -4738,7 +4738,10 @@ class SQLiteSupervisorStore:
                     self._insert_completion_intent(
                         connection,
                         revision,
-                        attempt_id=revision.active_attempt_id,
+                        attempt_id=self._completion_outbox_repair_attempt_id(
+                            connection,
+                            revision,
+                        ),
                         occurred_at=timestamp,
                     )
                     applied.append(finding)
@@ -4953,6 +4956,46 @@ class SQLiteSupervisorStore:
             ),
         )
         return intent
+
+    def _completion_outbox_repair_attempt_id(
+        self,
+        connection: sqlite3.Connection,
+        revision: FlowRevision,
+    ) -> str | None:
+        """Recover an existing terminal attempt link for an outbox repair.
+
+        Terminal flow revisions deliberately clear ``active_attempt_id``.  The
+        preceding running revision is therefore the only durable source for an
+        attempt-backed completion repair.  Non-running predecessors represent
+        flow-only terminal paths and retain a null attempt reference.
+        """
+
+        if revision.revision <= 1:
+            raise SupervisorError("terminal flow has no source revision")
+        row = connection.execute(
+            """
+            SELECT * FROM supervisor_flow_revisions
+            WHERE flow_id = ? AND revision = ?
+            """,
+            (revision.flow_id, revision.revision - 1),
+        ).fetchone()
+        if row is None:
+            raise SupervisorError("terminal flow source revision is missing")
+        source = _flow_revision_from_row(row)
+        if (
+            source.flow_id != revision.flow_id
+            or source.revision != revision.revision - 1
+        ):
+            raise SupervisorError("terminal flow source revision is invalid")
+        if source.state is not FlowState.RUNNING:
+            return None
+        attempt_id = source.active_attempt_id
+        if attempt_id is None:
+            raise SupervisorError("running terminal source has no active attempt")
+        attempt = self._attempt_in(connection, attempt_id)
+        if attempt.flow_id != revision.flow_id:
+            raise SupervisorError("terminal source attempt belongs to another flow")
+        return attempt.attempt_id
 
     def _current_control_in(
         self, connection: sqlite3.Connection

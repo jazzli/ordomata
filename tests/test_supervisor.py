@@ -3985,6 +3985,58 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
             f"flow:{spec.flow_id}:revision:{current.revision}",
         )
 
+    def test_repaired_completion_outbox_preserves_terminal_attempt_link(
+        self,
+    ) -> None:
+        claim = self._start_and_claim()
+        with patch(
+            "ordomata.supervisor.ShadowAuthorizationEvaluator.evaluate",
+            side_effect=RuntimeError("private shadow failure"),
+        ):
+            completed, outbox = self.store.complete_attempt(
+                claim,
+                expected_flow_revision=claim.flow_revision.revision,
+                outcome=FlowState.SUCCEEDED,
+                reason_code="checks_passed",
+                now=101.0,
+            )
+        self.assertEqual(completed.state, FlowState.SUCCEEDED)
+        self.assertEqual(outbox.attempt_id, claim.attempt.attempt_id)
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.executescript(
+                """
+                DROP TRIGGER supervisor_completion_outbox_no_delete;
+                """
+            )
+            connection.execute(
+                """
+                DELETE FROM supervisor_completion_outbox
+                WHERE outbox_id = ?
+                """,
+                (outbox.outbox_id,),
+            )
+            connection.executescript(
+                """
+                CREATE TRIGGER supervisor_completion_outbox_no_delete
+                BEFORE DELETE ON supervisor_completion_outbox BEGIN
+                    SELECT RAISE(ABORT, 'supervisor completion outbox is append-only');
+                END;
+                """
+            )
+            connection.commit()
+        self.store = self._open_store()
+
+        plan = self.store.reconciliation_plan(now=102.0)
+        self.assertEqual(plan.actionable_count, 1)
+        self.assertEqual(plan.findings[0].action, "repair_completion_outbox")
+        self.store.apply_reconciliation(plan_digest=plan.plan_digest, now=102.0)
+
+        repaired = self.store.list_pending_completions()
+        self.assertEqual(len(repaired), 1)
+        self.assertEqual(repaired[0].attempt_id, claim.attempt.attempt_id)
+        self.assertEqual(repaired[0].envelope["attempt_id"], claim.attempt.attempt_id)
+
     def test_read_only_inspection_of_absent_database_creates_nothing(self) -> None:
         absent = Path(self.temporary.name) / "absent.sqlite3"
 
