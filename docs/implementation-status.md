@@ -1842,4 +1842,75 @@ adversarial validation tests and documents the evidence a later real backend
 must provide; it is not a containment implementation, an admission boundary,
 or a substitute for authoritative ABAC enforcement.
 
+`ordomata.repository_worker_job_tree` now provides a second inert contract
+seam for controller materialization. It binds a bounded controller-owned
+in-memory source bundle to the exact v4 registration evidence and matching raw
+path-policy/resource-limit snapshots, rejects protected, generated, vendor,
+Git-metadata, credential-shaped, ambiguous, and over-budget entries, and
+emits only digest/count evidence. It imports no filesystem or process runtime,
+creates no job tree, reads no checkout, copies no source, reconciles no patch,
+persists no state, and always reports materialization/reconciliation/worker
+execution/dispatch as disabled or unimplemented.
+
+`ordomata.repository_worker_job_tree_snapshot` now supplies the preceding
+read-only source-capture seam. It descends through no-follow descriptors from
+an explicit source root, rejects direct source-root aliases, symlinks,
+hardlinks, casefold ambiguity, protected and credential-shaped paths, detected
+in-capture source drift, and over-budget inputs, and retains only a bounded detached bundle with
+a digest-only public projection. It writes no source data and does not create
+a job tree, bind fresh registration evidence, establish containment, or permit
+materialization, worker execution, or dispatch. The separately derived
+source-bundle contract is still required to bind the snapshot to v4 evidence.
+
+`ordomata.repository_worker_job_tree_materialization` now implements the
+following library-only Class 1 copy primitive. It accepts only an exact
+snapshot/contract pair and a caller-provided, existing, empty owner-mode-0700
+absolute root outside the captured source-root hierarchy; it walks and mutates
+that root only through no-follow
+descriptors, creates no Git metadata, standardizes private directory/file
+modes, and reads back the exact detached source tree before returning a
+digest-only receipt. Known partial entries are removed on ordinary failure,
+while unknown entries, changed roots, or cleanup uncertainty fail closed and
+are never silently removed or downgraded to success. The primitive is not
+called by the supervisor and does not establish root provenance beyond its
+local checks, immutable input, same-UID/mount-alias exclusion, post-run patch
+reconciliation, containment, authorization, persistence, worker execution, or
+dispatch.
+
+`ordomata.repository_worker_job_tree_reconciliation` now supplies the next
+pure, in-memory comparison seam. It accepts only a detached bounded candidate
+bundle alongside the exact snapshot/contract/materialization-receipt lineage
+and exact path-policy/resource-limit snapshots, rechecks that lineage whenever
+it renders evidence, and retains deterministic add/modify/delete operations
+only in process-private memory. Its public projection contains digest/count
+references only. It does not read a candidate directory or prove candidate
+origin, write or apply a patch, persist a record, establish cleanup or
+containment, create a worker, grant authority, or enable execution or dispatch.
+The controller lifecycle and custody boundary remain unimplemented.
+
+`ordomata.repository_worker_job_tree_candidate_snapshot` now implements the
+read-only candidate-reader half of that deferred boundary. It accepts only the
+active exact materialization lease, matching source/contract/receipt lineage,
+and matching policy/limit snapshots; it walks the held root through no-follow
+descriptors, rejects root replacement, links, unsafe modes, excluded or
+unrepresentable paths, and unstable double reads, and returns a bounded private
+candidate bundle with digest/count-only public evidence. It does not prove a
+worker produced the tree, exclusion of a same-UID writer, containment,
+lifecycle cleanup, patch safety, authorization, persistence, execution, or
+dispatch. The controller lifecycle/custody boundary remains unimplemented.
+
+The proposed [`worker-dispatch security design`](worker-dispatch-security-design.md)
+now fixes the next review target: a local VM-contained, fresh unprivileged
+container cell, an exact worker-dispatch PEP, controller-owned materialization
+without Git metadata, observed pre/postflight evidence, and adversarial gates.
+The operator-approved, bounded
+[`laboratory probe`](worker-dispatch-laboratory-probe-2026-08-03.md) observed
+that a local Docker Desktop engine honored selected unprivileged-user,
+read-only-root, capability, cgroup, no-default-route, and automatic-cleanup
+constraints. It also found an injected resolver configuration, so it is not a
+containment proof or backend approval. The proposal still adds no worker code
+path, authority, or eligibility; controller materialization, authoritative
+ABAC, verified pre/postflight evidence, and the remaining adversarial gates are
+required before any dispatch change.
+
 The controlled comparison machinery has been implemented and tested with deterministic fixtures. No claim is made that the planned three-runs-per-profile live experiment has run, passed automated checks, received human scores, or produced a winner.

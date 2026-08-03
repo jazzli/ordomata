@@ -2181,11 +2181,11 @@ Only Class 0/1 effects remain enabled.
   - required isolation backend;
   - review-only branch/patch policy.
 - Preserve the implemented independent, single-run, read-only evidence
-  inspection as a mandatory proof boundary before any future worktree or
+  inspection as a mandatory proof boundary before any future job-tree or
   command path; a clean report alone still grants no authority.
 - Preserve the implemented fresh-inspection admission shadow as an
   observational boundary only: neither its Class 0/1 projection nor an exact
-  permit may be reused as authority or enable a worktree, command, route,
+  permit may be reused as authority or enable a job tree, command, route,
   worker, or external effect.
 - Treat the implemented POSIX original-process-group lifecycle control for
   diagnostics and existing first-party harnesses as interim hardening only.
@@ -2197,9 +2197,17 @@ Only Class 0/1 effects remain enabled.
   made immutable by the controller descriptor. These controls therefore do not
   satisfy the repository-worker containment or post-run tree-reconciliation
   requirements in this phase.
-- Create one disposable detached Git worktree per Class 1 job. Never modify the operator's primary checkout or create a branch.
-- Keep the base repository read-only from the worker's perspective and expose only the job worktree plus bounded temporary storage.
-- Keep the repository's shared Git directory, refs, config, hooks, indexes, and credentials controller-only. Hide the worktree's `.git` pointer and do not mount the common Git directory into the worker cell. A worker edits only materialized source files without Git authority; the controller owns worktree lifecycle and computes the resulting patch.
+- The controller may freeze and verify a source snapshot, then materialize one
+  disposable **no-Git job tree** per Class 1 job. Never modify or expose the
+  operator's primary checkout, create a worker branch, or give the worker a
+  Git worktree.
+- Keep the frozen source and primary checkout controller-only. Expose only the
+  materialized job tree and bounded temporary storage to a future worker.
+- Keep the repository's shared Git directory, refs, config, hooks, indexes,
+  and credentials controller-only. Do not materialize a `.git` pointer or
+  mount any shared Git path into the cell. A worker edits only source files;
+  the controller owns job-tree lifecycle and independently reconstructs the
+  candidate patch against the frozen snapshot.
 - Add a worker-cell backend interface with deterministic mock/process backends first and a local container backend next.
 - Container requirements for unattended code work:
   - fresh container per attempt;
@@ -2209,7 +2217,9 @@ Only Class 0/1 effects remain enabled.
   - blocked credential/system paths;
   - read-only root filesystem where practical;
   - CPU, memory, process, output, wall, and idle limits;
-  - network denied by default, with any harness-required path explicitly assessed;
+  - network denied by default, with resolver and proxy configuration explicitly
+    suppressed or controller-verified and any harness-required path explicitly
+    assessed;
   - orphan cleanup and post-run containment verification.
 - Do not rely on shell-text parsing. Registered verification commands are exact argv arrays launched without a shell.
 - Bind authorization and any approval to the authenticated subject, typed
@@ -2221,14 +2231,14 @@ Only Class 0/1 effects remain enabled.
 
 ### Acceptance criteria
 
-- Fault-injection tests prove zero writes outside the disposable worktree and run directory.
-- Symlink, `..`, alternate-root, worktree-race, and protected-path attacks fail closed.
+- Fault-injection tests prove zero writes outside the disposable job tree and run directory.
+- Symlink, `..`, alternate-root, job-tree-race, and protected-path attacks fail closed.
 - Exact-command approval cannot be replayed with changed argv, cwd, environment, or inputs.
 - Worker processes cannot access prohibited credential locations in the effective tool environment.
 - Unexpected network destinations fail closed for network-constrained cells.
-- Timeout, idle timeout, process-tree termination, disk exhaustion, and crash cleanup leave no active worker or locked worktree.
+- Timeout, idle timeout, process-tree termination, disk exhaustion, and crash cleanup leave no active worker or retained job tree.
 - The primary checkout remains byte-for-byte unchanged after mock success and failure cases.
-- Worker code cannot mutate Git refs, config, hooks, indexes, remotes, sibling worktrees, or the repository's shared worktree metadata.
+- Worker code cannot mutate Git refs, config, hooks, indexes, remotes, sibling worktrees, or the repository's shared Git metadata.
 
 ### Deferred
 
@@ -2250,10 +2260,10 @@ Only Class 0/1 effects remain enabled.
   6. bounded housekeeping.
 - Freeze task definition, repository snapshot, baseline failures, acceptance commands, and allowed diff before dispatch.
 - Require the worker to return a structured patch/report rather than a success assertion.
-- Apply and validate the candidate only inside its worktree.
+- Apply and validate the candidate only inside its materialized job tree.
 - Compare pre/post command results and reject false greens, skipped checks, new failures, protected-path changes, generated noise, and unexplained dependency changes.
 - Store a local review bundle: patch, command evidence, raw outcome dimensions, risk notes, runner/profile/billing evidence, and reproduction instructions.
-- Keep the candidate in its detached disposable worktree and export a reviewable patch. Do not create a branch, commit, push, open a PR, merge, or deploy automatically.
+- Keep the candidate in its detached disposable no-Git job tree and export a reviewable patch. Do not create a branch, commit, push, open a PR, merge, or deploy automatically.
 
 ### Acceptance criteria
 

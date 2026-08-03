@@ -1143,6 +1143,41 @@ enablement. A real backend must land as a separately reviewed version with
 observed preflight/postflight evidence and authoritative worker-boundary
 enforcement.
 
+The first no-Git job-tree materialization slice is also implemented as the
+library-only `ordomata.repository_worker_job_tree_materialization` primitive.
+It copies only a detached snapshot matching the source-bundle contract into an
+existing empty owner-mode-0700 target root outside the captured source-root
+hierarchy through no-follow descriptors, then verifies the complete private
+tree and returns digest-only evidence. It has no
+supervisor integration and no worker, container, Git, network, or execution
+path. It does not yet prove controller custody of a target root, immutable
+handoff, lifecycle cleanup after worker use, or controller-owned patch
+reconciliation; those remain required before the Phase 3 worker boundary.
+
+The separate library-only
+`ordomata.repository_worker_job_tree_reconciliation` primitive now defines the
+pure comparison half of that future reconciliation boundary. Given only an
+already detached candidate bundle and exact snapshot, contract,
+materialization-receipt, policy, and limit inputs, it derives private
+add/modify/delete operations and emits digest/count evidence. It neither reads
+a candidate tree nor proves its origin, and it performs no patch application,
+persistence, worker, container, Git, network, or execution action. A
+descriptor-safe candidate reader now captures that input through the active
+materialization lease, but it still does not prove candidate origin or custody.
+The controller lifecycle/custody proof remains required before any worker
+boundary.
+
+The proposed [`worker-dispatch security design`](worker-dispatch-security-design.md)
+now makes the next non-enabling architecture decision explicit: a local
+VM-contained, fresh unprivileged container, controller-owned no-Git job
+materialization, an exact worker PEP, observed reconciliation evidence, and an
+adversarial-test gate. The operator-approved bounded
+[`laboratory probe`](worker-dispatch-laboratory-probe-2026-08-03.md) observed
+useful local resource, no-default-route, and cleanup behavior, but also an
+injected resolver configuration. It is therefore not backend approval or
+containment proof; the supervisor remains dispatch-disabled pending the
+controller, PEP, evidence, and adversarial gates in that design.
+
 ## Phase 3 — bounded local loop
 
 - Extend the implemented dispatch-disabled foreground tracer into an

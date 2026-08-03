@@ -497,6 +497,71 @@ Even a shape-complete mock assessment is non-authoritative. A real backend
 requires a separately reviewed contract version with observed host evidence;
 the controller cannot reinterpret this mock as successful containment.
 
+[`ordomata.repository_worker_job_tree`](../src/ordomata/repository_worker_job_tree.py)
+now supplies a separate v1, no-I/O source-bundle contract for the controller
+materialization stage. It binds bounded in-memory regular-file entries to the
+exact schema-v4 registration evidence, raw path-policy, and resource-limit
+snapshots by digest; it rejects protected, generated, vendor, Git-metadata,
+credential-shaped, ambiguous, and over-budget entries. Its output contains no
+source bytes or paths and permanently reports that materialization,
+reconciliation, worker execution, and dispatch are unimplemented or disabled.
+It does not itself freeze a checkout, create a directory, copy a file, or
+prove containment.
+
+[`ordomata.repository_worker_job_tree_snapshot`](../src/ordomata/repository_worker_job_tree_snapshot.py)
+now provides the preceding controller-only snapshot step. It walks an explicit
+source root through no-follow descriptors, rejects symlinks, hardlinks,
+casefold ambiguity, protected and credential-shaped paths, detected in-capture
+source drift, and over-budget files before retaining detached in-memory bytes.
+Its public projection contains digest/count evidence only. Capture writes no
+source data,
+does not materialize a job tree, and is not registration-bound or
+authoritative until the separate source-bundle contract is derived from fresh
+v4 registration evidence.
+
+[`ordomata.repository_worker_job_tree_materialization`](../src/ordomata/repository_worker_job_tree_materialization.py)
+implements the next, still library-only Class 1 copy boundary. It accepts only
+an exact detached snapshot, its matching source-bundle contract, and a
+caller-provided existing absolute target root that is empty, owner-mode `0700`,
+not itself a symlink, and neither the captured source root nor its ancestor or
+descendant. It traverses that root through held no-follow
+descriptors, creates only the detached source entries, uses private `0700`
+directories and executable files plus `0600` regular files, and verifies the
+resulting namespace, bytes, modes, identities, root binding, and absence of
+unexpected entries before issuing a digest-only receipt. On ordinary failure it
+rolls back only entries it can still prove it created; an unknown entry or
+uncertain cleanup is not deleted or reported clean. The primitive does not
+prove caller ownership of the root beyond those local checks, exclude a
+same-UID writer or mount alias, retain immutable worker input, reconcile a
+candidate, persist state, create a worker or container, or enable execution or
+dispatch.
+
+[`ordomata.repository_worker_job_tree_reconciliation`](../src/ordomata/repository_worker_job_tree_reconciliation.py)
+now supplies a separate pure comparison seam. It accepts only an already
+detached bounded candidate bundle together with the exact snapshot, contract,
+materialization receipt, path policy, and resource limits; it rechecks that
+complete lineage and derives private deterministic add/modify/delete operations.
+Its public evidence contains only digest/count references. It reads no
+candidate filesystem, cannot show that supplied bytes originated in the
+materialized job tree, and does not apply or persist a patch, provision a
+worker cell, authorize work, or enable execution or dispatch.
+
+[`ordomata.repository_worker_job_tree_candidate_snapshot`](../src/ordomata/repository_worker_job_tree_candidate_snapshot.py)
+now supplies the preceding read-only candidate-tree reader. It accepts only an
+active materialization lease and exact input lineage, traverses the held root
+through no-follow descriptors, rejects root replacement, symlinks, hard links,
+unsafe modes, unexpected empty directories, unapproved paths, and unstable
+double reads, and emits bounded private bytes with digest/count-only evidence.
+It does not prove candidate origin, worker containment, same-UID writer
+exclusion, lifecycle cleanup, patch safety, authorization, execution, or
+dispatch. Those custody and lifecycle properties remain separate gates.
+
+[`worker-dispatch-security-design.md`](worker-dispatch-security-design.md)
+records the proposed non-enabling VM-contained-container design, the exact
+future worker PEP binding, and the evidence and adversarial-test gates that a
+real backend must satisfy. It is not an implementation approval or a runtime
+capability.
+
 Once that containment is proven, an implementation worker may use a general
 shell inside its disposable cell and bounded temporary storage. It receives no
 host shell, shared Git metadata, credentials, or control socket. Network is
