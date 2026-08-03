@@ -1671,8 +1671,9 @@ reconciliation-shadow coverage, and post-v12 queued-deadline
 reconciliation-shadow coverage from one consistent SQLite snapshot, checking
 coverage/order, exact append-only schema, and migration provenance. It also
 checks each local completion acknowledgement against its outbox idempotency key
-and its one matching delivered event, plus a non-running cancellation's terminal
-revision and local outbox against its durable cancellation source. A v11
+and its one matching delivered event, rejects other delivery-event dispositions,
+and binds a non-running cancellation's terminal revision and local outbox
+against its durable cancellation source. A v11
 migration separately records post-write,
 non-authoritative evidence when previewed reconciliation closes an expired
 pre-dispatch claim as `lost` or `cancelled`. It binds the terminal
