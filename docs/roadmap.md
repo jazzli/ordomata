@@ -1147,9 +1147,12 @@ The proposed [`worker-dispatch security design`](worker-dispatch-security-design
 now makes the next non-enabling architecture decision explicit: a local
 VM-contained, fresh unprivileged container, controller-owned no-Git job
 materialization, an exact worker PEP, observed reconciliation evidence, and an
-adversarial-test gate. It is a design target only; the supervisor remains
-dispatch-disabled pending operator approval of a concrete backend and a
-separately reviewed non-production probe.
+adversarial-test gate. The operator-approved bounded
+[`laboratory probe`](worker-dispatch-laboratory-probe-2026-08-03.md) observed
+useful local resource, no-default-route, and cleanup behavior, but also an
+injected resolver configuration. It is therefore not backend approval or
+containment proof; the supervisor remains dispatch-disabled pending the
+controller, PEP, evidence, and adversarial gates in that design.
 
 ## Phase 3 — bounded local loop
 
