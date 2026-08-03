@@ -75,6 +75,13 @@ from .state import (
     _verify_migration_schema,
 )
 from .schema import parse_json_document
+from .supervisor_attempt_claim_authorization import (
+    SupervisorAttemptClaim,
+    SupervisorAttemptClaimAuthorization,
+    assert_supervisor_attempt_claim_authorized,
+    build_supervisor_attempt_claim_action_receipt,
+    evaluate_supervisor_attempt_claim_authorization,
+)
 from .supervisor_control_authorization import (
     SupervisorControlAuthorization,
     SupervisorControlTransition,
@@ -202,11 +209,51 @@ _TERMINAL_ATTEMPT_FOR_FLOW: Mapping[FlowState, AttemptState] = {
     FlowState.LOST: AttemptState.LOST,
     FlowState.WAITING: AttemptState.BLOCKED,
 }
+_ATTEMPT_TRANSITIONS: Mapping[AttemptState, frozenset[AttemptState]] = {
+    AttemptState.CREATED: frozenset(
+        {
+            AttemptState.DISPATCHING,
+            AttemptState.SUCCEEDED,
+            AttemptState.FAILED,
+            AttemptState.BLOCKED,
+            AttemptState.TIMED_OUT,
+            AttemptState.CANCELLED,
+            AttemptState.LOST,
+        }
+    ),
+    AttemptState.DISPATCHING: frozenset(
+        {
+            AttemptState.RUNNING,
+            AttemptState.SUCCEEDED,
+            AttemptState.FAILED,
+            AttemptState.BLOCKED,
+            AttemptState.TIMED_OUT,
+            AttemptState.CANCELLED,
+            AttemptState.LOST,
+        }
+    ),
+    AttemptState.RUNNING: frozenset(
+        {
+            AttemptState.SUCCEEDED,
+            AttemptState.FAILED,
+            AttemptState.BLOCKED,
+            AttemptState.TIMED_OUT,
+            AttemptState.CANCELLED,
+            AttemptState.LOST,
+        }
+    ),
+    AttemptState.SUCCEEDED: frozenset(),
+    AttemptState.FAILED: frozenset(),
+    AttemptState.BLOCKED: frozenset(),
+    AttemptState.TIMED_OUT: frozenset(),
+    AttemptState.CANCELLED: frozenset(),
+    AttemptState.LOST: frozenset(),
+}
 _REASON_CODE = re.compile(r"[a-z0-9_]{1,100}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _RESOURCE_KEY = re.compile(r"[a-z0-9][a-z0-9._:/-]{0,199}")
 _MAX_JSON_BYTES = 262_144
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 7
 _FOREGROUND_LEASE_KEY = "supervisor:foreground"
 SUPERVISOR_DISPATCH_BLOCKERS = (
     "runtime_abac_enforcement_not_implemented",
@@ -339,6 +386,8 @@ class SupervisorAuthorizationAudit:
     expected_control_enforcement_record_count: int = 0
     flow_admission_enforcement_record_count: int = 0
     expected_flow_admission_enforcement_record_count: int = 0
+    attempt_claim_enforcement_record_count: int = 0
+    expected_attempt_claim_enforcement_record_count: int = 0
 
     @property
     def clean(self) -> bool:
@@ -362,6 +411,12 @@ class SupervisorAuthorizationAudit:
             "expected_flow_admission_enforcement_record_count": (
                 self.expected_flow_admission_enforcement_record_count
             ),
+            "attempt_claim_enforcement_record_count": (
+                self.attempt_claim_enforcement_record_count
+            ),
+            "expected_attempt_claim_enforcement_record_count": (
+                self.expected_attempt_claim_enforcement_record_count
+            ),
             "finding_count": len(self.findings),
             "clean": self.clean,
             "findings": [finding.to_mapping() for finding in self.findings],
@@ -381,6 +436,16 @@ class _SupervisorControlEnforcementAudit:
 @dataclass(frozen=True, slots=True)
 class _SupervisorFlowAdmissionEnforcementAudit:
     """Internal read-only replay summary for the flow-admission PEP."""
+
+    schema_present: bool
+    record_count: int
+    expected_record_count: int
+    findings: tuple[SupervisorAuthorizationFinding, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _SupervisorAttemptClaimEnforcementAudit:
+    """Internal read-only replay summary for the attempt-claim PEP."""
 
     schema_present: bool
     record_count: int
@@ -1135,6 +1200,89 @@ END;
 """
 
 
+_SCHEMA_V7 = """
+CREATE TABLE supervisor_attempt_claim_authorization_baseline (
+    attempt_id TEXT PRIMARY KEY REFERENCES supervisor_attempts(attempt_id)
+);
+INSERT INTO supervisor_attempt_claim_authorization_baseline (attempt_id)
+    SELECT attempt_id FROM supervisor_attempts;
+
+CREATE TABLE supervisor_attempt_claim_authorization_decisions (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_event_id TEXT NOT NULL UNIQUE CHECK (length(decision_event_id) = 71),
+    attempt_id TEXT NOT NULL UNIQUE CHECK (length(attempt_id) <= 256),
+    flow_id TEXT NOT NULL REFERENCES supervisor_flows(flow_id),
+    flow_request_digest TEXT NOT NULL CHECK (length(flow_request_digest) = 64),
+    source_flow_revision INTEGER NOT NULL CHECK (source_flow_revision >= 1),
+    target_flow_revision INTEGER NOT NULL CHECK (
+        target_flow_revision = source_flow_revision + 1
+    ),
+    control_revision INTEGER NOT NULL CHECK (control_revision >= 1),
+    attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
+    run_id_ref TEXT NOT NULL CHECK (length(run_id_ref) = 71),
+    attempt_event_id TEXT NOT NULL CHECK (length(attempt_event_id) <= 256),
+    flow_event_id TEXT NOT NULL CHECK (length(flow_event_id) <= 256),
+    instance_owner_ref TEXT NOT NULL CHECK (length(instance_owner_ref) = 71),
+    lease_owner_ref TEXT NOT NULL CHECK (length(lease_owner_ref) = 71),
+    lease_keys_digest TEXT NOT NULL CHECK (length(lease_keys_digest) = 71),
+    input_digest TEXT NOT NULL CHECK (length(input_digest) = 64),
+    deadline_at REAL NOT NULL CHECK (deadline_at >= 0),
+    lease_expires_at REAL NOT NULL CHECK (
+        lease_expires_at >= 0 AND lease_expires_at <= deadline_at
+    ),
+    request_digest TEXT NOT NULL CHECK (length(request_digest) = 71),
+    decision_digest TEXT NOT NULL CHECK (length(decision_digest) = 71),
+    payload_json TEXT NOT NULL CHECK (length(payload_json) <= 262144),
+    evaluated_at REAL NOT NULL CHECK (evaluated_at >= 0)
+);
+CREATE INDEX supervisor_attempt_claim_authorization_decisions_attempt
+    ON supervisor_attempt_claim_authorization_decisions(attempt_id, sequence);
+
+CREATE TABLE supervisor_attempt_claim_authorization_action_receipts (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    receipt_event_id TEXT NOT NULL UNIQUE CHECK (length(receipt_event_id) = 71),
+    attempt_id TEXT NOT NULL UNIQUE REFERENCES supervisor_attempts(attempt_id),
+    flow_id TEXT NOT NULL REFERENCES supervisor_flows(flow_id),
+    decision_event_id TEXT NOT NULL UNIQUE
+        REFERENCES supervisor_attempt_claim_authorization_decisions(decision_event_id),
+    receipt_digest TEXT NOT NULL CHECK (length(receipt_digest) = 71),
+    payload_json TEXT NOT NULL CHECK (length(payload_json) <= 262144),
+    completed_at REAL NOT NULL CHECK (completed_at >= 0)
+);
+CREATE INDEX supervisor_attempt_claim_authorization_receipts_attempt
+    ON supervisor_attempt_claim_authorization_action_receipts(attempt_id, sequence);
+
+CREATE TRIGGER supervisor_attempt_claim_authorization_baseline_no_update
+BEFORE UPDATE ON supervisor_attempt_claim_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor attempt claim authorization baseline is append-only');
+END;
+CREATE TRIGGER supervisor_attempt_claim_authorization_baseline_no_delete
+BEFORE DELETE ON supervisor_attempt_claim_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor attempt claim authorization baseline is append-only');
+END;
+CREATE TRIGGER supervisor_attempt_claim_authorization_baseline_no_insert
+BEFORE INSERT ON supervisor_attempt_claim_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor attempt claim authorization baseline is frozen');
+END;
+CREATE TRIGGER supervisor_attempt_claim_authorization_decisions_no_update
+BEFORE UPDATE ON supervisor_attempt_claim_authorization_decisions BEGIN
+    SELECT RAISE(ABORT, 'supervisor attempt claim authorization decisions are append-only');
+END;
+CREATE TRIGGER supervisor_attempt_claim_authorization_decisions_no_delete
+BEFORE DELETE ON supervisor_attempt_claim_authorization_decisions BEGIN
+    SELECT RAISE(ABORT, 'supervisor attempt claim authorization decisions are append-only');
+END;
+CREATE TRIGGER supervisor_attempt_claim_authorization_action_receipts_no_update
+BEFORE UPDATE ON supervisor_attempt_claim_authorization_action_receipts BEGIN
+    SELECT RAISE(ABORT, 'supervisor attempt claim authorization receipts are append-only');
+END;
+CREATE TRIGGER supervisor_attempt_claim_authorization_action_receipts_no_delete
+BEFORE DELETE ON supervisor_attempt_claim_authorization_action_receipts BEGIN
+    SELECT RAISE(ABORT, 'supervisor attempt claim authorization receipts are append-only');
+END;
+"""
+
+
 class SQLiteSupervisorStore:
     """Supervisor-specific event store sharing the existing local SQLite file."""
 
@@ -1238,6 +1386,7 @@ class SQLiteSupervisorStore:
                     4: _SCHEMA_V4,
                     5: _SCHEMA_V5,
                     6: _SCHEMA_V6,
+                    7: _SCHEMA_V7,
                 }
                 for version, script in migration_scripts.items():
                     if _sha256_text(script) != _KNOWN_STATE_MIGRATIONS[version][1]:
@@ -1259,6 +1408,9 @@ class SQLiteSupervisorStore:
                     if version == 6:
                         _verify_pre_v6_supervisor_schema(self._connection)
                         _verify_pre_v6_flow_history(self._connection)
+                    if version == 7:
+                        _verify_pre_v7_supervisor_schema(self._connection)
+                        _verify_pre_v7_attempt_history(self._connection)
                     _execute_schema_script(
                         self._connection,
                         migration_scripts[version],
@@ -1690,9 +1842,9 @@ class SQLiteSupervisorStore:
     ) -> AttemptClaim | None:
         """Atomically claim one mock flow.
 
-        The CLI intentionally does not call this method until runtime ABAC
-        enforcement exists.  It is present now so crash, race, and fencing
-        semantics can be tested before a worker executor is connected.
+        The authoritative PEP here controls only local mock claim bookkeeping.
+        The foreground CLI still never calls this method: worker dispatch,
+        runner execution, and repository containment remain disabled.
         """
 
         _validate_owner(instance_owner, "instance_owner")
@@ -1767,6 +1919,60 @@ class SQLiteSupervisorStore:
                 lease_expiry = min(timestamp + ttl, hard_deadline)
                 if lease_expiry <= timestamp:
                     continue
+                input_digest = _sha256_text(
+                    _canonical_json(
+                        {
+                            "flow_request_digest": spec.request_digest,
+                            "attempt_number": attempt_number,
+                            "control_revision": control.revision,
+                        }
+                    )
+                )
+                attempt_event_id = self._new_id("attempt_event")
+                flow_event_id = self._new_id("flow_event")
+                claim_target = SupervisorAttemptClaim(
+                    flow_id=spec.flow_id,
+                    attempt_id=attempt_id,
+                    run_id=run_id,
+                    source_flow_revision=revision,
+                    target_flow_revision=revision + 1,
+                    control_revision=control.revision,
+                    attempt_number=attempt_number,
+                    flow_request_digest=spec.request_digest,
+                    input_digest=input_digest,
+                    instance_owner_ref=canonical_digest(
+                        {"instance_owner": instance_owner}
+                    ),
+                    lease_owner_ref=canonical_digest(
+                        {"lease_owner": lease_owner}
+                    ),
+                    lease_keys_digest=canonical_digest(
+                        {"lease_keys": list(lease_keys)}
+                    ),
+                    deadline_at=hard_deadline,
+                    lease_expires_at=lease_expiry,
+                    attempt_event_id=attempt_event_id,
+                    flow_event_id=flow_event_id,
+                    occurred_at=timestamp,
+                )
+                authorization = evaluate_supervisor_attempt_claim_authorization(
+                    claim=claim_target,
+                    legacy_executable=True,
+                )
+                decision_payload = authorization.to_event_payload()
+                persisted_decision_payload = (
+                    self._append_attempt_claim_authorization_decision(
+                        connection,
+                        authorization=authorization,
+                        payload=decision_payload,
+                    )
+                )
+                assert_supervisor_attempt_claim_authorized(
+                    authorization,
+                    claim=claim_target,
+                    action_started_at=timestamp,
+                    persisted_payload=persisted_decision_payload,
+                )
                 for key in lease_keys:
                     connection.execute(
                         """
@@ -1781,15 +1987,6 @@ class SQLiteSupervisorStore:
                         """,
                         (key, lease_owner, timestamp, timestamp, lease_expiry),
                     )
-                input_digest = _sha256_text(
-                    _canonical_json(
-                        {
-                            "flow_request_digest": spec.request_digest,
-                            "attempt_number": attempt_number,
-                            "control_revision": control.revision,
-                        }
-                    )
-                )
                 connection.execute(
                     """
                     INSERT INTO supervisor_attempts (
@@ -1803,13 +2000,26 @@ class SQLiteSupervisorStore:
                         input_digest, hard_deadline, timestamp,
                     ),
                 )
-                self._insert_attempt_event(
+                attempt = AttemptRecord(
+                    attempt_id, spec.flow_id, attempt_number, run_id, revision,
+                    lease_owner, lease_keys, input_digest, hard_deadline, timestamp,
+                )
+                attempt_row = connection.execute(
+                    "SELECT * FROM supervisor_attempts WHERE attempt_id = ?",
+                    (attempt_id,),
+                ).fetchone()
+                if attempt_row is None or _attempt_from_row(attempt_row) != attempt:
+                    raise SupervisorError(
+                        "supervisor attempt claim persistence is uncertain"
+                    )
+                attempt_event = self._insert_attempt_event(
                     connection,
                     attempt_id=attempt_id,
                     revision=1,
                     state=AttemptState.CREATED,
                     reason_code="claim_created",
                     occurred_at=timestamp,
+                    event_id=attempt_event_id,
                 )
                 flow_revision = self._insert_flow_revision(
                     connection,
@@ -1820,7 +2030,63 @@ class SQLiteSupervisorStore:
                     active_attempt_id=attempt_id,
                     reason_code="attempt_claimed",
                     occurred_at=timestamp,
+                    event_id=flow_event_id,
                 )
+                if (
+                    not isinstance(attempt_event, AttemptEvent)
+                    or attempt_event.event_id != claim_target.attempt_event_id
+                    or attempt_event.attempt_id != claim_target.attempt_id
+                    or attempt_event.revision != 1
+                    or attempt_event.state is not AttemptState.CREATED
+                    or attempt_event.reason_code != "claim_created"
+                    or attempt_event.occurred_at != claim_target.occurred_at
+                    or not isinstance(flow_revision, FlowRevision)
+                    or flow_revision.event_id != claim_target.flow_event_id
+                    or flow_revision.flow_id != claim_target.flow_id
+                    or flow_revision.revision != claim_target.target_flow_revision
+                    or flow_revision.state is not FlowState.RUNNING
+                    or flow_revision.cancellation_requested
+                    or flow_revision.active_attempt_id != claim_target.attempt_id
+                    or flow_revision.reason_code != "attempt_claimed"
+                    or flow_revision.occurred_at != claim_target.occurred_at
+                ):
+                    raise SupervisorError(
+                        "supervisor attempt claim effect persistence is uncertain"
+                    )
+                for lease_key in lease_keys:
+                    lease = connection.execute(
+                        """
+                        SELECT owner_id, acquired_at, renewed_at, expires_at
+                        FROM leases WHERE lease_key = ?
+                        """,
+                        (lease_key,),
+                    ).fetchone()
+                    if lease is None or tuple(lease) != (
+                        lease_owner,
+                        timestamp,
+                        timestamp,
+                        lease_expiry,
+                    ):
+                        raise SupervisorError(
+                            "supervisor attempt claim lease persistence is uncertain"
+                        )
+                receipt_payload = build_supervisor_attempt_claim_action_receipt(
+                    authorization=authorization,
+                    action_started_at=timestamp,
+                    completed_at=timestamp,
+                )
+                persisted_receipt_payload = (
+                    self._append_attempt_claim_authorization_receipt(
+                        connection,
+                        authorization=authorization,
+                        payload=receipt_payload,
+                        completed_at=timestamp,
+                    )
+                )
+                if persisted_receipt_payload != receipt_payload:
+                    raise SupervisorError(
+                        "supervisor attempt claim authorization receipt persistence is uncertain"
+                    )
                 try:
                     self._append_authorization_observation(
                         connection,
@@ -1834,10 +2100,6 @@ class SQLiteSupervisorStore:
                     # A shadow evaluator or evidence-write failure cannot
                     # change the legacy claim outcome.
                     pass
-                attempt = AttemptRecord(
-                    attempt_id, spec.flow_id, attempt_number, run_id, revision,
-                    lease_owner, lease_keys, input_digest, hard_deadline, timestamp,
-                )
                 return AttemptClaim(spec, flow_revision, attempt)
         return None
 
@@ -2032,6 +2294,173 @@ class SQLiteSupervisorStore:
         if type(persisted_payload) is not dict:
             raise SupervisorError(
                 "supervisor flow admission authorization receipt persistence is uncertain"
+            )
+        return persisted_payload
+
+    def _append_attempt_claim_authorization_decision(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        authorization: SupervisorAttemptClaimAuthorization,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Durably bind an exact PEP decision before an attempt claim."""
+
+        if (
+            not isinstance(authorization, SupervisorAttemptClaimAuthorization)
+            or dict(payload) != authorization.to_event_payload()
+        ):
+            raise AuthorizationBlocked(
+                "supervisor attempt claim authorization decision is inconsistent"
+            )
+        claim = authorization.claim
+        payload_json = _bounded_json(
+            dict(payload),
+            "supervisor attempt claim authorization decision payload",
+        )
+        values = (
+            authorization.decision.digest,
+            claim.attempt_id,
+            claim.flow_id,
+            claim.flow_request_digest,
+            claim.source_flow_revision,
+            claim.target_flow_revision,
+            claim.control_revision,
+            claim.attempt_number,
+            claim.run_id_ref,
+            claim.attempt_event_id,
+            claim.flow_event_id,
+            claim.instance_owner_ref,
+            claim.lease_owner_ref,
+            claim.lease_keys_digest,
+            claim.input_digest,
+            float(claim.deadline_at),
+            float(claim.lease_expires_at),
+            authorization.request.digest,
+            authorization.decision.digest,
+            payload_json,
+            float(claim.occurred_at),
+        )
+        connection.execute(
+            """
+            INSERT INTO supervisor_attempt_claim_authorization_decisions (
+                decision_event_id, attempt_id, flow_id, flow_request_digest,
+                source_flow_revision, target_flow_revision, control_revision,
+                attempt_number, run_id_ref, attempt_event_id, flow_event_id,
+                instance_owner_ref, lease_owner_ref, lease_keys_digest,
+                input_digest, deadline_at, lease_expires_at, request_digest,
+                decision_digest, payload_json, evaluated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+        row = connection.execute(
+            """
+            SELECT decision_event_id, attempt_id, flow_id, flow_request_digest,
+                   source_flow_revision, target_flow_revision, control_revision,
+                   attempt_number, run_id_ref, attempt_event_id, flow_event_id,
+                   instance_owner_ref, lease_owner_ref, lease_keys_digest,
+                   input_digest, deadline_at, lease_expires_at, request_digest,
+                   decision_digest, payload_json, evaluated_at
+            FROM supervisor_attempt_claim_authorization_decisions
+            WHERE attempt_id = ?
+            """,
+            (claim.attempt_id,),
+        ).fetchone()
+        if row is None or tuple(row) != values:
+            raise SupervisorError(
+                "supervisor attempt claim authorization decision persistence is uncertain"
+            )
+        try:
+            persisted_payload = json.loads(row["payload_json"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise SupervisorError(
+                "supervisor attempt claim authorization decision persistence is uncertain"
+            ) from error
+        if type(persisted_payload) is not dict:
+            raise SupervisorError(
+                "supervisor attempt claim authorization decision persistence is uncertain"
+            )
+        return persisted_payload
+
+    def _append_attempt_claim_authorization_receipt(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        authorization: SupervisorAttemptClaimAuthorization,
+        payload: Mapping[str, Any],
+        completed_at: float,
+    ) -> dict[str, Any]:
+        """Append and exactly reread the receipt after a local claim."""
+
+        if (
+            not isinstance(authorization, SupervisorAttemptClaimAuthorization)
+            or type(completed_at) not in (int, float)
+            or isinstance(completed_at, bool)
+            or not math.isfinite(float(completed_at))
+            or completed_at < 0
+        ):
+            raise AuthorizationBlocked(
+                "supervisor attempt claim authorization receipt is inconsistent"
+            )
+        expected_payload = build_supervisor_attempt_claim_action_receipt(
+            authorization=authorization,
+            action_started_at=authorization.claim.occurred_at,
+            completed_at=float(completed_at),
+        )
+        if dict(payload) != expected_payload:
+            raise AuthorizationBlocked(
+                "supervisor attempt claim authorization receipt is inconsistent"
+            )
+        receipt_digest = payload.get("receipt_digest")
+        if type(receipt_digest) is not str:
+            raise AuthorizationBlocked(
+                "supervisor attempt claim authorization receipt is inconsistent"
+            )
+        payload_json = _bounded_json(
+            dict(payload),
+            "supervisor attempt claim authorization receipt payload",
+        )
+        values = (
+            receipt_digest,
+            authorization.claim.attempt_id,
+            authorization.claim.flow_id,
+            authorization.decision.digest,
+            receipt_digest,
+            payload_json,
+            float(completed_at),
+        )
+        connection.execute(
+            """
+            INSERT INTO supervisor_attempt_claim_authorization_action_receipts (
+                receipt_event_id, attempt_id, flow_id, decision_event_id,
+                receipt_digest, payload_json, completed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+        row = connection.execute(
+            """
+            SELECT receipt_event_id, attempt_id, flow_id, decision_event_id,
+                   receipt_digest, payload_json, completed_at
+            FROM supervisor_attempt_claim_authorization_action_receipts
+            WHERE attempt_id = ?
+            """,
+            (authorization.claim.attempt_id,),
+        ).fetchone()
+        if row is None or tuple(row) != values:
+            raise SupervisorError(
+                "supervisor attempt claim authorization receipt persistence is uncertain"
+            )
+        try:
+            persisted_payload = json.loads(row["payload_json"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise SupervisorError(
+                "supervisor attempt claim authorization receipt persistence is uncertain"
+            ) from error
+        if type(persisted_payload) is not dict:
+            raise SupervisorError(
+                "supervisor attempt claim authorization receipt persistence is uncertain"
             )
         return persisted_payload
 
@@ -2758,8 +3187,12 @@ class SQLiteSupervisorStore:
         state: AttemptState,
         reason_code: str,
         occurred_at: float,
+        event_id: str | None = None,
     ) -> AttemptEvent:
-        event_id = self._new_id("attempt_event")
+        if event_id is None:
+            event_id = self._new_id("attempt_event")
+        else:
+            _validate_text(event_id, "attempt_event", maximum=256)
         cursor = connection.execute(
             """
             INSERT INTO supervisor_attempt_events (
@@ -3230,11 +3663,15 @@ def _inspect_supervisor_authorization_connection(
     flow_admission_enforcement = (
         _inspect_flow_admission_enforcement_connection(connection)
     )
+    attempt_claim_enforcement = (
+        _inspect_attempt_claim_enforcement_connection(connection)
+    )
     findings = (
         *flow.findings,
         *bookkeeping.findings,
         *control_enforcement.findings,
         *flow_admission_enforcement.findings,
+        *attempt_claim_enforcement.findings,
         *guard_findings,
     )
     return SupervisorAuthorizationAudit(
@@ -3244,6 +3681,7 @@ def _inspect_supervisor_authorization_connection(
             and bookkeeping.schema_present
             and control_enforcement.schema_present
             and flow_admission_enforcement.schema_present
+            and attempt_claim_enforcement.schema_present
             and not guard_findings
         ),
         observation_count=flow.observation_count + bookkeeping.observation_count,
@@ -3261,6 +3699,12 @@ def _inspect_supervisor_authorization_connection(
         ),
         expected_flow_admission_enforcement_record_count=(
             flow_admission_enforcement.expected_record_count
+        ),
+        attempt_claim_enforcement_record_count=(
+            attempt_claim_enforcement.record_count
+        ),
+        expected_attempt_claim_enforcement_record_count=(
+            attempt_claim_enforcement.expected_record_count
         ),
     )
 
@@ -4287,6 +4731,411 @@ def _inspect_flow_admission_enforcement_connection(
     )
 
 
+def _inspect_attempt_claim_enforcement_connection(
+    connection: sqlite3.Connection,
+) -> _SupervisorAttemptClaimEnforcementAudit:
+    """Replay only post-v7 local mock attempt claims without repairing state."""
+
+    tables = _table_names(connection)
+    required = {
+        "supervisor_control_events",
+        "supervisor_flows",
+        "supervisor_flow_revisions",
+        "supervisor_attempts",
+        "supervisor_attempt_events",
+        "supervisor_attempt_claim_authorization_baseline",
+        "supervisor_attempt_claim_authorization_decisions",
+        "supervisor_attempt_claim_authorization_action_receipts",
+    }
+    if not required.issubset(tables):
+        return _SupervisorAttemptClaimEnforcementAudit(
+            False,
+            0,
+            0,
+            (
+                SupervisorAuthorizationFinding(
+                    "attempt_claim_authorization_schema_missing",
+                    None,
+                    "attempt_claim",
+                    None,
+                ),
+            ),
+        )
+    try:
+        flow_rows = connection.execute(
+            "SELECT * FROM supervisor_flows ORDER BY flow_id"
+        ).fetchall()
+        flow_rows_by_id = {row["flow_id"]: row for row in flow_rows}
+        revision_rows_by_flow: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_flow_revisions ORDER BY flow_id, revision"
+        ).fetchall():
+            revision_rows_by_flow.setdefault(row["flow_id"], []).append(row)
+        attempt_rows = connection.execute(
+            "SELECT * FROM supervisor_attempts ORDER BY flow_id, attempt_number"
+        ).fetchall()
+        attempt_flow_ids = {
+            row["attempt_id"]: row["flow_id"] for row in attempt_rows
+        }
+        attempt_rows_by_id = {row["attempt_id"]: row for row in attempt_rows}
+        event_rows_by_attempt: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_attempt_events ORDER BY attempt_id, revision"
+        ).fetchall():
+            event_rows_by_attempt.setdefault(row["attempt_id"], []).append(row)
+        control_rows = connection.execute(
+            "SELECT * FROM supervisor_control_events ORDER BY revision"
+        ).fetchall()
+        baseline = {
+            row["attempt_id"]
+            for row in connection.execute(
+                "SELECT attempt_id FROM supervisor_attempt_claim_authorization_baseline"
+            ).fetchall()
+        }
+        decision_rows = connection.execute(
+            """
+            SELECT * FROM supervisor_attempt_claim_authorization_decisions
+            ORDER BY sequence
+            """
+        ).fetchall()
+        receipt_rows = connection.execute(
+            """
+            SELECT * FROM supervisor_attempt_claim_authorization_action_receipts
+            ORDER BY sequence
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        return _SupervisorAttemptClaimEnforcementAudit(
+            False,
+            0,
+            0,
+            (
+                SupervisorAuthorizationFinding(
+                    "attempt_claim_authorization_schema_unreadable",
+                    None,
+                    "attempt_claim",
+                    None,
+                ),
+            ),
+        )
+
+    findings: list[SupervisorAuthorizationFinding] = []
+    attempt_ids = set(attempt_rows_by_id)
+    if not baseline.issubset(attempt_ids):
+        findings.append(
+            SupervisorAuthorizationFinding(
+                "attempt_claim_authorization_baseline_invalid",
+                None,
+                "attempt_claim",
+                None,
+            )
+        )
+    expected_ids = tuple(
+        row["attempt_id"]
+        for row in attempt_rows
+        if row["attempt_id"] not in baseline
+    )
+    expected_set = set(expected_ids)
+    decision_by_attempt: dict[str, list[sqlite3.Row]] = {}
+    for row in decision_rows:
+        decision_by_attempt.setdefault(row["attempt_id"], []).append(row)
+    receipt_by_attempt: dict[str, list[sqlite3.Row]] = {}
+    for row in receipt_rows:
+        receipt_by_attempt.setdefault(row["attempt_id"], []).append(row)
+
+    controls_by_revision: dict[int, SupervisorControlRevision] = {}
+    controls_valid = True
+    previous_control = _initial_control_revision()
+    try:
+        for expected_revision, row in enumerate(control_rows, start=1):
+            control = _control_from_row(row)
+            _validate_text(control.event_id, "control event identifier", maximum=256)
+            _validate_text(control.actor_id, "control actor identifier", maximum=256)
+            _validate_reason(control.reason_code)
+            _timestamp(control.occurred_at, "control event timestamp")
+            if (
+                control.revision != expected_revision
+                or control.mode not in _CONTROL_TRANSITIONS[previous_control.mode]
+            ):
+                raise ValidationError("control history is not contiguous and valid")
+            controls_by_revision[control.revision] = control
+            previous_control = control
+    except (KeyError, TypeError, ValueError, ValidationError):
+        controls_valid = False
+
+    for attempt_row in attempt_rows:
+        attempt_id = attempt_row["attempt_id"]
+        if attempt_id in baseline:
+            continue
+        target_ref = canonical_digest({"attempt_id": attempt_id})
+        flow_ref = _audit_flow_reference(attempt_row["flow_id"])
+        decisions = decision_by_attempt.get(attempt_id, [])
+        receipts = receipt_by_attempt.get(attempt_id, [])
+        if len(decisions) != 1:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    (
+                        "attempt_claim_authorization_decision_missing"
+                        if not decisions
+                        else "attempt_claim_authorization_decision_duplicated"
+                    ),
+                    flow_ref,
+                    "attempt_claim",
+                    None,
+                    target_ref,
+                )
+            )
+        if len(receipts) != 1:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    (
+                        "attempt_claim_authorization_receipt_missing"
+                        if not receipts
+                        else "attempt_claim_authorization_receipt_duplicated"
+                    ),
+                    flow_ref,
+                    "attempt_claim",
+                    None,
+                    target_ref,
+                )
+            )
+        try:
+            if not controls_valid:
+                raise ValidationError("control history is invalid")
+            attempt = _attempt_from_row(attempt_row)
+            flow_row = flow_rows_by_id.get(attempt.flow_id)
+            if flow_row is None:
+                raise ValidationError("attempt flow is missing")
+            spec = _flow_from_row(flow_row)
+            _validate_flow_spec(spec)
+            if flow_row["request_digest"] != spec.request_digest:
+                raise ValidationError("flow request digest is invalid")
+            revisions = revision_rows_by_flow.get(attempt.flow_id, [])
+            _verify_flow_revision_lineage(
+                attempt.flow_id,
+                revisions,
+                attempt_flow_ids,
+            )
+            events = _verify_attempt_claim_history(
+                attempt=attempt,
+                spec=spec,
+                revision_rows=revisions,
+                event_rows=event_rows_by_attempt.get(attempt.attempt_id, []),
+            )
+            control_revision = (
+                decisions[0]["control_revision"] if len(decisions) == 1 else None
+            )
+            control = controls_by_revision.get(control_revision)
+            if (
+                control is None
+                or control.mode is not SupervisorMode.RUNNING
+                or control.occurred_at > attempt.created_at
+            ):
+                raise ValidationError("attempt control source is invalid")
+            expected_input_digest = _sha256_text(
+                _canonical_json(
+                    {
+                        "flow_request_digest": spec.request_digest,
+                        "attempt_number": attempt.attempt_number,
+                        "control_revision": control.revision,
+                    }
+                )
+            )
+            if attempt.input_digest != expected_input_digest:
+                raise ValidationError("attempt input digest is invalid")
+            initial_event = events[0]
+            target_revision = _flow_revision_from_row(
+                revisions[attempt.claimed_revision]
+            )
+            claim = SupervisorAttemptClaim(
+                flow_id=attempt.flow_id,
+                attempt_id=attempt.attempt_id,
+                run_id=attempt.run_id,
+                source_flow_revision=attempt.claimed_revision,
+                target_flow_revision=target_revision.revision,
+                control_revision=control.revision,
+                attempt_number=attempt.attempt_number,
+                flow_request_digest=spec.request_digest,
+                input_digest=attempt.input_digest,
+                instance_owner_ref=decisions[0]["instance_owner_ref"],
+                lease_owner_ref=canonical_digest(
+                    {"lease_owner": attempt.lease_owner}
+                ),
+                lease_keys_digest=canonical_digest(
+                    {"lease_keys": list(attempt.lease_keys)}
+                ),
+                deadline_at=attempt.deadline_at,
+                lease_expires_at=decisions[0]["lease_expires_at"],
+                attempt_event_id=initial_event.event_id,
+                flow_event_id=target_revision.event_id,
+                occurred_at=attempt.created_at,
+            )
+            authorization = evaluate_supervisor_attempt_claim_authorization(
+                claim=claim,
+                legacy_executable=True,
+            )
+            decision_payload = authorization.to_event_payload()
+            decision_values = (
+                authorization.decision.digest,
+                claim.attempt_id,
+                claim.flow_id,
+                claim.flow_request_digest,
+                claim.source_flow_revision,
+                claim.target_flow_revision,
+                claim.control_revision,
+                claim.attempt_number,
+                claim.run_id_ref,
+                claim.attempt_event_id,
+                claim.flow_event_id,
+                claim.instance_owner_ref,
+                claim.lease_owner_ref,
+                claim.lease_keys_digest,
+                claim.input_digest,
+                float(claim.deadline_at),
+                float(claim.lease_expires_at),
+                authorization.request.digest,
+                authorization.decision.digest,
+                _bounded_json(
+                    decision_payload,
+                    "supervisor attempt claim authorization audit decision payload",
+                ),
+                float(claim.occurred_at),
+            )
+            receipt_payload = build_supervisor_attempt_claim_action_receipt(
+                authorization=authorization,
+                action_started_at=claim.occurred_at,
+                completed_at=claim.occurred_at,
+            )
+            receipt_digest = receipt_payload["receipt_digest"]
+            receipt_values = (
+                receipt_digest,
+                claim.attempt_id,
+                claim.flow_id,
+                authorization.decision.digest,
+                receipt_digest,
+                _bounded_json(
+                    receipt_payload,
+                    "supervisor attempt claim authorization audit receipt payload",
+                ),
+                float(claim.occurred_at),
+            )
+        except Exception:
+            decision_values = None
+            receipt_values = None
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "attempt_claim_authorization_source_invalid",
+                    flow_ref,
+                    "attempt_claim",
+                    None,
+                    target_ref,
+                )
+            )
+        if (
+            len(decisions) == 1
+            and (
+                decision_values is None
+                or tuple(
+                    decisions[0][field]
+                    for field in (
+                        "decision_event_id",
+                        "attempt_id",
+                        "flow_id",
+                        "flow_request_digest",
+                        "source_flow_revision",
+                        "target_flow_revision",
+                        "control_revision",
+                        "attempt_number",
+                        "run_id_ref",
+                        "attempt_event_id",
+                        "flow_event_id",
+                        "instance_owner_ref",
+                        "lease_owner_ref",
+                        "lease_keys_digest",
+                        "input_digest",
+                        "deadline_at",
+                        "lease_expires_at",
+                        "request_digest",
+                        "decision_digest",
+                        "payload_json",
+                        "evaluated_at",
+                    )
+                )
+                != decision_values
+            )
+        ):
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "attempt_claim_authorization_decision_invalid",
+                    flow_ref,
+                    "attempt_claim",
+                    None,
+                    target_ref,
+                )
+            )
+        if (
+            len(receipts) == 1
+            and (
+                receipt_values is None
+                or tuple(
+                    receipts[0][field]
+                    for field in (
+                        "receipt_event_id",
+                        "attempt_id",
+                        "flow_id",
+                        "decision_event_id",
+                        "receipt_digest",
+                        "payload_json",
+                        "completed_at",
+                    )
+                )
+                != receipt_values
+            )
+        ):
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "attempt_claim_authorization_receipt_invalid",
+                    flow_ref,
+                    "attempt_claim",
+                    None,
+                    target_ref,
+                )
+            )
+
+    for attempt_id in decision_by_attempt:
+        if attempt_id not in expected_set:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "attempt_claim_authorization_decision_unexpected",
+                    _audit_flow_reference(
+                        decision_by_attempt[attempt_id][0]["flow_id"]
+                    ),
+                    "attempt_claim",
+                    None,
+                    canonical_digest({"attempt_id": attempt_id}),
+                )
+            )
+    for attempt_id in receipt_by_attempt:
+        if attempt_id not in expected_set:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "attempt_claim_authorization_receipt_unexpected",
+                    _audit_flow_reference(
+                        receipt_by_attempt[attempt_id][0]["flow_id"]
+                    ),
+                    "attempt_claim",
+                    None,
+                    canonical_digest({"attempt_id": attempt_id}),
+                )
+            )
+    return _SupervisorAttemptClaimEnforcementAudit(
+        True,
+        len(decision_rows) + len(receipt_rows),
+        len(expected_ids) * 2,
+        tuple(findings),
+    )
+
+
 def inspect_pending_completions(
     database_path: str | Path,
 ) -> tuple[CompletionIntent, ...]:
@@ -4351,6 +5200,7 @@ def _authorization_guard_findings(
             "bookkeeping_authorization_migration_ledger_mismatch",
             "control_authorization_migration_ledger_mismatch",
             "flow_admission_authorization_migration_ledger_mismatch",
+            "attempt_claim_authorization_migration_ledger_mismatch",
         ):
             findings.append(
                 SupervisorAuthorizationFinding(code, None, None, None)
@@ -4444,6 +5294,21 @@ def _authorization_guard_findings(
         findings.append(
             SupervisorAuthorizationFinding(
                 "flow_admission_authorization_migration_ledger_mismatch",
+                None,
+                None,
+                None,
+            )
+        )
+    attempt_claim_migration = ledger.get(7)
+    if (
+        attempt_claim_migration is None
+        or attempt_claim_migration["name"]
+        != "supervisor_attempt_claim_authorization_enforcement"
+        or attempt_claim_migration["script_sha256"] != _sha256_text(_SCHEMA_V7)
+    ):
+        findings.append(
+            SupervisorAuthorizationFinding(
+                "attempt_claim_authorization_migration_ledger_mismatch",
                 None,
                 None,
                 None,
@@ -5098,6 +5963,177 @@ def _verify_pre_v6_flow_history(connection: sqlite3.Connection) -> None:
         ) from error
 
 
+def _verify_pre_v7_attempt_history(connection: sqlite3.Connection) -> None:
+    """Refuse to baseline malformed legacy claims into the enforcing PEP."""
+
+    try:
+        foreign_key_errors = tuple(
+            row
+            for table in (
+                "supervisor_control_events",
+                "supervisor_flows",
+                "supervisor_flow_revisions",
+                "supervisor_cancellation_requests",
+                "supervisor_attempts",
+                "supervisor_attempt_events",
+                "supervisor_completion_outbox",
+                "supervisor_completion_delivery_events",
+                "supervisor_completion_receipts",
+                "supervisor_authorization_observations",
+                "supervisor_bookkeeping_authorization_sources",
+                "supervisor_bookkeeping_authorization_observations",
+                "supervisor_control_authorization_baseline",
+                "supervisor_control_authorization_decisions",
+                "supervisor_control_authorization_action_receipts",
+                "supervisor_flow_admission_authorization_baseline",
+                "supervisor_flow_admission_authorization_decisions",
+                "supervisor_flow_admission_authorization_action_receipts",
+            )
+            for row in connection.execute(f'PRAGMA foreign_key_check("{table}")')
+        )
+        if foreign_key_errors:
+            raise ValidationError("supervisor history has invalid references")
+        flow_rows = connection.execute(
+            "SELECT * FROM supervisor_flows ORDER BY flow_id"
+        ).fetchall()
+        specs_by_flow: dict[str, FlowSpec] = {}
+        for row in flow_rows:
+            spec = _flow_from_row(row)
+            _validate_flow_spec(spec)
+            if row["request_digest"] != spec.request_digest:
+                raise ValidationError("flow request digest is invalid")
+            specs_by_flow[spec.flow_id] = spec
+        revision_rows_by_flow: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_flow_revisions ORDER BY flow_id, revision"
+        ).fetchall():
+            revision_rows_by_flow.setdefault(row["flow_id"], []).append(row)
+        attempt_rows = connection.execute(
+            "SELECT * FROM supervisor_attempts ORDER BY flow_id, attempt_number"
+        ).fetchall()
+        attempt_rows_by_flow: dict[str, list[sqlite3.Row]] = {}
+        attempt_flow_ids = {
+            row["attempt_id"]: row["flow_id"] for row in attempt_rows
+        }
+        for row in attempt_rows:
+            attempt_rows_by_flow.setdefault(row["flow_id"], []).append(row)
+        event_rows_by_attempt: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_attempt_events ORDER BY attempt_id, revision"
+        ).fetchall():
+            event_rows_by_attempt.setdefault(row["attempt_id"], []).append(row)
+
+        for flow_id, spec in specs_by_flow.items():
+            _verify_flow_revision_lineage(
+                flow_id,
+                revision_rows_by_flow.get(flow_id, []),
+                attempt_flow_ids,
+            )
+            for expected_number, attempt_row in enumerate(
+                attempt_rows_by_flow.get(flow_id, []),
+                start=1,
+            ):
+                attempt = _attempt_from_row(attempt_row)
+                if attempt.attempt_number != expected_number:
+                    raise ValidationError("attempt numbering is not contiguous")
+                _verify_attempt_claim_history(
+                    attempt=attempt,
+                    spec=spec,
+                    revision_rows=revision_rows_by_flow[flow_id],
+                    event_rows=event_rows_by_attempt.get(attempt.attempt_id, []),
+                )
+        if set(event_rows_by_attempt) != set(attempt_flow_ids):
+            raise ValidationError("attempt event history has an unknown attempt")
+    except (KeyError, TypeError, ValueError, ValidationError, sqlite3.Error) as error:
+        raise ConfigurationError(
+            "pre-v7 supervisor attempt history is invalid"
+        ) from error
+
+
+def _verify_attempt_claim_history(
+    *,
+    attempt: AttemptRecord,
+    spec: FlowSpec,
+    revision_rows: Sequence[sqlite3.Row],
+    event_rows: Sequence[sqlite3.Row],
+) -> tuple[AttemptEvent, ...]:
+    """Validate one durable claim against its local flow and event lineage."""
+
+    for name in ("attempt_id", "flow_id", "run_id", "lease_owner"):
+        _validate_text(getattr(attempt, name), name, maximum=256)
+    _validate_revision(attempt.attempt_number)
+    if attempt.attempt_number > spec.max_attempts:
+        raise ValidationError("attempt number exceeds its flow budget")
+    _validate_revision(attempt.claimed_revision)
+    _validate_digest(attempt.input_digest, "attempt input digest")
+    _timestamp(attempt.deadline_at, "attempt deadline")
+    _timestamp(attempt.created_at, "attempt claim timestamp")
+    if attempt.flow_id != spec.flow_id or attempt.created_at < spec.available_at:
+        raise ValidationError("attempt does not match its flow")
+    expected_lease_keys = tuple(
+        sorted({f"flow:{spec.flow_id}", *spec.resource_keys})
+    )
+    if attempt.lease_keys != expected_lease_keys:
+        raise ValidationError("attempt lease keys do not match its flow")
+    expected_deadline = min(
+        attempt.created_at + spec.attempt_timeout_seconds,
+        (
+            spec.deadline_at
+            if spec.deadline_at is not None
+            else attempt.created_at + spec.attempt_timeout_seconds
+        ),
+    )
+    if attempt.deadline_at != expected_deadline or attempt.deadline_at <= attempt.created_at:
+        raise ValidationError("attempt deadline does not match its flow")
+    if attempt.claimed_revision >= len(revision_rows):
+        raise ValidationError("attempt claim has no resulting flow revision")
+    source = _flow_revision_from_row(revision_rows[attempt.claimed_revision - 1])
+    target = _flow_revision_from_row(revision_rows[attempt.claimed_revision])
+    if (
+        source.revision != attempt.claimed_revision
+        or source.state is not FlowState.QUEUED
+        or source.cancellation_requested
+        or source.active_attempt_id is not None
+        or target.revision != attempt.claimed_revision + 1
+        or target.state is not FlowState.RUNNING
+        or target.cancellation_requested
+        or target.active_attempt_id != attempt.attempt_id
+        or target.reason_code != "attempt_claimed"
+        or target.occurred_at != attempt.created_at
+    ):
+        raise ValidationError("attempt claim flow transition is invalid")
+    events: list[AttemptEvent] = []
+    previous: AttemptEvent | None = None
+    for expected_revision, row in enumerate(event_rows, start=1):
+        event = _attempt_event_from_row(row)
+        _validate_text(event.event_id, "attempt event identifier", maximum=256)
+        _validate_reason(event.reason_code)
+        _timestamp(event.occurred_at, "attempt event timestamp")
+        if (
+            event.attempt_id != attempt.attempt_id
+            or event.revision != expected_revision
+            or (previous is None and event.state is not AttemptState.CREATED)
+            or (
+                previous is not None
+                and event.state not in _ATTEMPT_TRANSITIONS[previous.state]
+            )
+        ):
+            raise ValidationError("attempt event history is invalid")
+        if (
+            previous is None
+            and (
+                event.reason_code != "claim_created"
+                or event.occurred_at != attempt.created_at
+            )
+        ):
+            raise ValidationError("attempt initial event is invalid")
+        events.append(event)
+        previous = event
+    if not events:
+        raise ValidationError("attempt event history is missing")
+    return tuple(events)
+
+
 def _verify_pre_v4_bookkeeping_history(connection: sqlite3.Connection) -> None:
     foreign_key_tables = (
         "supervisor_attempt_events",
@@ -5269,6 +6305,8 @@ def _expected_supervisor_schema() -> dict[
             + _SCHEMA_V5
             + "\n"
             + _SCHEMA_V6
+            + "\n"
+            + _SCHEMA_V7
         )
         objects = _schema_objects(connection)
         return {
@@ -5340,6 +6378,35 @@ def _expected_pre_v6_supervisor_schema() -> dict[
         connection.close()
 
 
+@cache
+def _expected_pre_v7_supervisor_schema() -> dict[
+    tuple[str, str], tuple[str, str, str]
+]:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.executescript(
+            _SCHEMA_V2
+            + "\n"
+            + _SCHEMA_V3
+            + "\n"
+            + _SCHEMA_V4
+            + "\n"
+            + _SCHEMA_V5
+            + "\n"
+            + _SCHEMA_V6
+        )
+        objects = _schema_objects(connection)
+        return {
+            key: value
+            for key, value in objects.items()
+            if key[1].startswith("supervisor_")
+            or value[1].startswith("supervisor_")
+        }
+    finally:
+        connection.close()
+
+
 def _verify_pre_v4_supervisor_schema(connection: sqlite3.Connection) -> None:
     objects = _schema_objects(connection)
     actual = {
@@ -5374,6 +6441,18 @@ def _verify_pre_v6_supervisor_schema(connection: sqlite3.Connection) -> None:
     }
     if actual != _expected_pre_v6_supervisor_schema():
         raise ConfigurationError("pre-v6 supervisor schema is invalid")
+
+
+def _verify_pre_v7_supervisor_schema(connection: sqlite3.Connection) -> None:
+    objects = _schema_objects(connection)
+    actual = {
+        key: value
+        for key, value in objects.items()
+        if key[1].startswith("supervisor_")
+        or value[1].startswith("supervisor_")
+    }
+    if actual != _expected_pre_v7_supervisor_schema():
+        raise ConfigurationError("pre-v7 supervisor schema is invalid")
 
 
 def _verify_supervisor_schema(connection: sqlite3.Connection) -> None:

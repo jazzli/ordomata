@@ -72,9 +72,11 @@ class SupervisorCLITests(unittest.TestCase):
             self.assertEqual(
                 audit["authorization"],
                 {
+                    "attempt_claim_enforcement_record_count": 0,
                     "clean": True,
                     "control_enforcement_record_count": 0,
                     "database_present": False,
+                    "expected_attempt_claim_enforcement_record_count": 0,
                     "expected_control_enforcement_record_count": 0,
                     "expected_flow_admission_enforcement_record_count": 0,
                     "expected_observation_count": 0,

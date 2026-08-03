@@ -1,6 +1,6 @@
 # Ordomata Implementation Plan
 
-Status: proposed expansion; baseline and Billing Hard-Stop v2 implemented; profile-backed exact built-in-mock Class 1 admission, dispatch, and local-candidate publication PEPs implemented; immutable mock-flow admission and local supervisor-control PEPs implemented; Phase 2 durable supervisor control-plane tracer remains dispatch-disabled; broader enforcement planned
+Status: proposed expansion; baseline and Billing Hard-Stop v2 implemented; profile-backed exact built-in-mock Class 1 admission, dispatch, and local-candidate publication PEPs implemented; immutable mock-flow admission, local supervisor-control, and local attempt-claim PEPs implemented; Phase 2 durable supervisor control-plane tracer remains dispatch-disabled; broader enforcement planned
 
 Date: 2026-07-28
 
@@ -157,11 +157,18 @@ exactly rereads its permit before the flow write; then appends and rereads an
 action receipt in the same SQLite transaction. It controls only that local
 bookkeeping write and cannot authorize claims, cancellation, worker dispatch,
 task execution, repository work, network access, or Class 2/3 effects.
+A third fixed Class 1 PEP covers only a local deterministic-mock attempt claim:
+it binds the queued source and running target revisions, immutable flow and
+attempt inputs, initial attempt/flow event references, control revision, and
+digest-only controller/lease references; persists and rereads its permit before
+the local claim records and leases; then appends and rereads an action receipt
+before commit. It cannot authorize worker dispatch, task execution,
+cancellation, repository work, network access, or Class 2/3 effects.
 General runtime ABAC enforcement is still **planned**. `PermissionClass`
 remains authoritative across contracts, approval, routing, runner validation,
 persistence, evaluation, and comparison, alongside the distributed billing,
 identity, environment, profile, isolation, capacity, and circuit gates.
-General/live/comparison and supervisor claim/dispatch admission, shared
+General/live/comparison and supervisor worker-dispatch admission, shared
 publication or promotion, comparison execution, supervisor workers, live
 harnesses, approval resumption, and mediated commands/tools remain
 non-enforcing or disabled. Comparison
@@ -1473,7 +1480,7 @@ Extend the existing SQLite state rather than replacing it. Migrations must be ve
 exact pre-ledger baseline execute statement-by-statement in one explicit
 transaction. Every ordinary state open verifies the exact baseline schema,
 baseline foreign-key and run-status lineage, append-only migration guards, a
-contiguous frozen v1-v6 identity prefix, and agreement between the recorded
+contiguous frozen v1-v7 identity prefix, and agreement between the recorded
 version and installed supervisor tables before use. Partial schemas, missing
 guards, gaps, future versions, or changed identities fail closed without
 automatic repair. Read-only authorization inspection exposes only bounded
@@ -1663,13 +1670,14 @@ completion outbox and receipts, read-only status/audit, digest-bound
 reconciliation, operator control commands, and foreground `ordomata supervise`
 loop are implemented. Admission, library-only claim, and sticky cancellation
 emit append-only authorization shadows. Reversible operator control transitions
-retain their compatibility shadow but first pass an authoritative fixed Class 1
-PEP, and each immutable deterministic-mock flow admission now passes its own
-exact fixed Class 1 PEP before the flow write and initial queued revision. The
-read-only audit independently verifies the shadow digests/parity plus post-v5
-control and post-v6 flow-admission decision/receipt coverage, alongside order,
-schema guards, and migration provenance. The loop deliberately uses the shared
-verified migration ledger; missing v2-v6 schema statements and their immutable
+and local mock attempt claims retain their compatibility shadows but each pass
+an authoritative fixed Class 1 PEP; each immutable deterministic-mock flow
+admission also passes its own exact fixed Class 1 PEP before the flow write and
+initial queued revision. The read-only audit independently verifies the shadow
+digests/parity plus post-v5 control, post-v6 flow-admission, and post-v7
+attempt-claim decision/receipt coverage, alongside order, schema guards, and
+migration provenance. The loop deliberately uses the shared verified migration
+ledger; missing v2-v7 schema statements and their immutable
 ledger rows commit atomically or roll back together. It
 deliberately
 does not call the claim API or any

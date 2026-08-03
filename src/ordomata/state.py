@@ -88,6 +88,10 @@ _KNOWN_STATE_MIGRATIONS: Mapping[int, tuple[str, str]] = {
         "supervisor_flow_admission_authorization_enforcement",
         "54b7f73d9cbf73c961e5e41a497cf79d6385d65b533f19870f7315f8cd49c852",
     ),
+    7: (
+        "supervisor_attempt_claim_authorization_enforcement",
+        "781efe437e66c760736f075e885d1cc82041a292a322cbc74f16737e569bf900",
+    ),
 }
 _CURRENT_STATE_SCHEMA_VERSION = max(_KNOWN_STATE_MIGRATIONS)
 _BASELINE_SCHEMA_SCRIPT_FINGERPRINT = (
@@ -146,6 +150,13 @@ _SUPERVISOR_REQUIRED_TABLES_BY_VERSION: Mapping[int, frozenset[str]] = {
             "supervisor_flow_admission_authorization_baseline",
             "supervisor_flow_admission_authorization_decisions",
             "supervisor_flow_admission_authorization_action_receipts",
+        }
+    ),
+    7: frozenset(
+        {
+            "supervisor_attempt_claim_authorization_baseline",
+            "supervisor_attempt_claim_authorization_decisions",
+            "supervisor_attempt_claim_authorization_action_receipts",
         }
     ),
 }
