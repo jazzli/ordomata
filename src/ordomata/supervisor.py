@@ -275,6 +275,9 @@ _ATTEMPT_COMPLETION_ACTION_SCOPE = "supervisor_local_attempt_completion_only"
 _ATTEMPT_COMPLETION_OPERATION = "supervisor.attempt_completion"
 # As above, historical completion-shadow replay must use the shipped evaluator.
 _BUILTIN_ATTEMPT_COMPLETION_SHADOW_EVALUATE = ShadowAuthorizationEvaluator.evaluate
+_COMPLETION_DELIVERY_BOUNDARY = "completion_delivery"
+_COMPLETION_DELIVERY_EVENT_TYPE = "delivered"
+_COMPLETION_DELIVERY_REASON = "local_consumer_acknowledged"
 _PRE_DISPATCH_RECONCILIATION_BOUNDARY = "attempt_pre_dispatch_reconciliation"
 _PRE_DISPATCH_RECONCILIATION_ACTION_SCOPE = (
     "supervisor_local_pre_dispatch_reconciliation_only"
@@ -5405,6 +5408,9 @@ def _inspect_supervisor_authorization_connection(
     queued_timeout_reconciliation = (
         _inspect_queued_timeout_reconciliation_authorization_connection(connection)
     )
+    completion_delivery_findings = _inspect_completion_delivery_integrity(
+        connection
+    )
     findings = (
         *flow.findings,
         *bookkeeping.findings,
@@ -5416,6 +5422,7 @@ def _inspect_supervisor_authorization_connection(
         *attempt_completion.findings,
         *pre_dispatch_reconciliation.findings,
         *queued_timeout_reconciliation.findings,
+        *completion_delivery_findings,
         *guard_findings,
     )
     return SupervisorAuthorizationAudit(
@@ -5493,6 +5500,173 @@ def _inspect_supervisor_authorization_connection(
             queued_timeout_reconciliation.expected_record_count
         ),
     )
+
+
+def _inspect_completion_delivery_integrity(
+    connection: sqlite3.Connection,
+) -> tuple[SupervisorAuthorizationFinding, ...]:
+    """Verify local completion acknowledgements without changing state.
+
+    A completion receipt is authoritative only for its exact outbox
+    idempotency key and the one local ``delivered`` event written alongside it.
+    SQLite cannot express those cross-table equalities as row-local checks, so
+    the supervisor audit validates them independently and fails closed in its
+    report when direct database tampering breaks the correspondence.
+    """
+
+    required = {
+        "supervisor_completion_outbox",
+        "supervisor_completion_delivery_events",
+        "supervisor_completion_receipts",
+    }
+    if not required.issubset(_table_names(connection)):
+        return (
+            SupervisorAuthorizationFinding(
+                "completion_delivery_schema_missing",
+                None,
+                _COMPLETION_DELIVERY_BOUNDARY,
+                None,
+            ),
+        )
+    try:
+        outbox_rows = connection.execute(
+            "SELECT * FROM supervisor_completion_outbox ORDER BY outbox_id"
+        ).fetchall()
+        event_rows = connection.execute(
+            """
+            SELECT * FROM supervisor_completion_delivery_events
+            ORDER BY sequence
+            """
+        ).fetchall()
+        receipt_rows = connection.execute(
+            "SELECT * FROM supervisor_completion_receipts ORDER BY receipt_id"
+        ).fetchall()
+    except sqlite3.Error:
+        return (
+            SupervisorAuthorizationFinding(
+                "completion_delivery_schema_unreadable",
+                None,
+                _COMPLETION_DELIVERY_BOUNDARY,
+                None,
+            ),
+        )
+
+    outboxes = {row["outbox_id"]: row for row in outbox_rows}
+    events_by_outbox: dict[Any, list[sqlite3.Row]] = {}
+    for event in event_rows:
+        events_by_outbox.setdefault(event["outbox_id"], []).append(event)
+    receipts_by_outbox: dict[Any, list[sqlite3.Row]] = {}
+    for receipt in receipt_rows:
+        receipts_by_outbox.setdefault(receipt["outbox_id"], []).append(receipt)
+
+    def finding(
+        code: str,
+        *,
+        outbox_id: Any,
+        sequence: int | None = None,
+    ) -> SupervisorAuthorizationFinding:
+        outbox = outboxes.get(outbox_id)
+        return SupervisorAuthorizationFinding(
+            code,
+            (
+                None
+                if outbox is None
+                else _audit_flow_reference(outbox["flow_id"])
+            ),
+            _COMPLETION_DELIVERY_BOUNDARY,
+            sequence,
+            _audit_completion_outbox_reference(outbox_id),
+        )
+
+    findings: list[SupervisorAuthorizationFinding] = []
+    for receipt in receipt_rows:
+        outbox_id = receipt["outbox_id"]
+        outbox = outboxes.get(outbox_id)
+        events = events_by_outbox.get(outbox_id, ())
+        try:
+            if outbox is None or len(events) != 1:
+                raise ValidationError("completion receipt lineage is invalid")
+            _validate_text(
+                receipt["receipt_id"],
+                "completion receipt identifier",
+                maximum=256,
+            )
+            _validate_text(
+                receipt["outbox_id"], "completion receipt outbox", maximum=256
+            )
+            _validate_text(
+                receipt["idempotency_key"],
+                "completion receipt idempotency key",
+                maximum=256,
+            )
+            _validate_text(
+                receipt["consumer_id"],
+                "completion consumer identifier",
+                maximum=256,
+            )
+            _validate_digest(receipt["result_digest"], "completion result digest")
+            delivered_at = _timestamp(
+                receipt["delivered_at"], "completion receipt timestamp"
+            )
+            _validate_text(
+                outbox["idempotency_key"],
+                "completion outbox idempotency key",
+                maximum=256,
+            )
+            created_at = _timestamp(
+                outbox["created_at"], "completion outbox timestamp"
+            )
+            if (
+                receipt["idempotency_key"] != outbox["idempotency_key"]
+                or delivered_at < created_at
+            ):
+                raise ValidationError("completion receipt does not match its outbox")
+            event = events[0]
+            _validate_text(
+                event["event_id"],
+                "completion delivery event identifier",
+                maximum=256,
+            )
+            _validate_text(
+                event["outbox_id"], "completion delivery outbox", maximum=256
+            )
+            _validate_text(
+                event["delivery_id"],
+                "completion delivery identifier",
+                maximum=256,
+            )
+            _validate_reason(event["reason_code"])
+            occurred_at = _timestamp(
+                event["occurred_at"], "completion delivery timestamp"
+            )
+            if (
+                event["event_type"] != _COMPLETION_DELIVERY_EVENT_TYPE
+                or event["reason_code"] != _COMPLETION_DELIVERY_REASON
+                or occurred_at != delivered_at
+            ):
+                raise ValidationError("completion delivery event is invalid")
+        except (KeyError, TypeError, UnicodeError, ValidationError):
+            findings.append(
+                finding(
+                    "completion_delivery_receipt_invalid",
+                    outbox_id=outbox_id,
+                )
+            )
+
+    for event in event_rows:
+        outbox_id = event["outbox_id"]
+        if (
+            event["event_type"] == _COMPLETION_DELIVERY_EVENT_TYPE
+            and outbox_id not in receipts_by_outbox
+        ):
+            findings.append(
+                finding(
+                    "completion_delivery_event_invalid",
+                    outbox_id=outbox_id,
+                    sequence=int(event["sequence"]),
+                )
+            )
+    return tuple(findings)
 
 
 def _supervisor_table_shapes_safe(connection: sqlite3.Connection) -> bool:
@@ -9135,6 +9309,7 @@ def _audit_boundary_reference(value: Any) -> str | None:
         "attempt_claim",
         _PRE_DISPATCH_INTENT_BOUNDARY,
         _ATTEMPT_COMPLETION_BOUNDARY,
+        _COMPLETION_DELIVERY_BOUNDARY,
         "control_transition",
         "flow_cancellation",
     }:

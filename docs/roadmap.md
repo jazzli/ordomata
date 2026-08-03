@@ -1075,7 +1075,9 @@ post-v7 attempt-claim decision/receipt pairs, and post-v9 pre-dispatch
 decision/receipt pairs plus post-v10 completion-shadow, post-v11 expired-claim
 reconciliation-shadow, and post-v12 queued-deadline reconciliation-shadow
 coverage, checking coverage, order, exact schema guards, and migration
-provenance without altering reconciliation plan digests. Ordinary
+provenance without altering reconciliation plan digests. It also verifies that
+each local completion acknowledgement has one matching delivered event and an
+exact outbox idempotency key. Ordinary
 state opens now validate the exact baseline and run history plus a frozen,
 contiguous v1-v12 migration prefix
 before use; creation and exact legacy adoption are

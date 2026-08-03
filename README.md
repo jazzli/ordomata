@@ -67,7 +67,8 @@ disabled.
   it carries no delivery or execution authority. Other paths remain shadow-only
   or disabled.
 - Read-only authorization and supervisor inspection that reports fixed,
-  privacy-bounded findings without repairing history.
+  privacy-bounded findings without repairing history, including local
+  completion receipt/outbox/delivery correspondence.
 - A foreground, dispatch-disabled supervisor control-plane tracer with
   optimistic revisions, sticky cancellation, claims, reconciliation, and a
   local completion outbox.
