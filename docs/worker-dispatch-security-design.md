@@ -151,9 +151,12 @@ separate, explicitly gated decision.
 1. **Backend review and laboratory probe:** select one local VM/container
    runtime, record its exact supported host/runtime versions, and run only
    non-production adversarial probes. No repository worker is enabled.
-2. **Controller materialization:** build a no-Git, no-symlink job tree and a
-   controller-owned patch reconciler. Test that the primary checkout and
-   shared Git data remain unchanged on success, failure, timeout, and crash.
+2. **Controller materialization:** the implemented v1 source-bundle contract
+   now binds a bounded controller input to registration policy without I/O; it
+   does not make a tree or establish snapshot freshness. Build the remaining
+   no-Git, no-symlink job tree and controller-owned patch reconciler. Test that
+   the primary checkout and shared Git data remain unchanged on success,
+   failure, timeout, and crash.
 3. **Authoritative dispatch PEP:** add append-only decision and receipt
    records, exact replay, read-only audit coverage, and cancellation/lease
    rechecks. It remains connected only to a deterministic mock cell until the
@@ -170,7 +173,7 @@ network access, Git publication, message delivery, deployment, or automatic
 promotion.
 
 The minimum adversarial suite includes traversal and symlink attacks,
-worktree-race attempts, protected-path writes, Git metadata and socket access,
+job-tree-race attempts, protected-path writes, Git metadata and socket access,
 credential-path probes, attempted network access, resource exhaustion,
 process-tree escape attempts, cancellation during launch, crash recovery, and
 changed argv/cwd/environment/input replay. A single false green, out-of-cell

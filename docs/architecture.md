@@ -497,6 +497,17 @@ Even a shape-complete mock assessment is non-authoritative. A real backend
 requires a separately reviewed contract version with observed host evidence;
 the controller cannot reinterpret this mock as successful containment.
 
+[`ordomata.repository_worker_job_tree`](../src/ordomata/repository_worker_job_tree.py)
+now supplies a separate v1, no-I/O source-bundle contract for the controller
+materialization stage. It binds bounded in-memory regular-file entries to the
+exact schema-v4 registration evidence, raw path-policy, and resource-limit
+snapshots by digest; it rejects protected, generated, vendor, Git-metadata,
+credential-shaped, ambiguous, and over-budget entries. Its output contains no
+source bytes or paths and permanently reports that materialization,
+reconciliation, worker execution, and dispatch are unimplemented or disabled.
+It does not freeze a checkout, create a directory, copy a file, or prove a
+source snapshot; those controller operations remain separate gates.
+
 [`worker-dispatch-security-design.md`](worker-dispatch-security-design.md)
 records the proposed non-enabling VM-contained-container design, the exact
 future worker PEP binding, and the evidence and adversarial-test gates that a

@@ -1842,6 +1842,17 @@ adversarial validation tests and documents the evidence a later real backend
 must provide; it is not a containment implementation, an admission boundary,
 or a substitute for authoritative ABAC enforcement.
 
+`ordomata.repository_worker_job_tree` now provides a second inert contract
+seam for controller materialization. It binds a bounded controller-owned
+in-memory source bundle to the exact v4 registration evidence and matching raw
+path-policy/resource-limit snapshots, rejects protected, generated, vendor,
+Git-metadata, credential-shaped, ambiguous, and over-budget entries, and
+emits only digest/count evidence. It imports no filesystem or process runtime,
+creates no job tree, reads no checkout, copies no source, reconciles no patch,
+persists no state, and always reports materialization/reconciliation/worker
+execution/dispatch as disabled or unimplemented. It makes the future input
+object exact; it does not establish a frozen source snapshot or containment.
+
 The proposed [`worker-dispatch security design`](worker-dispatch-security-design.md)
 now fixes the next review target: a local VM-contained, fresh unprivileged
 container cell, an exact worker-dispatch PEP, controller-owned materialization
