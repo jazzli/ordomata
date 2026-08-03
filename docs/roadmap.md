@@ -1143,6 +1143,14 @@ enablement. A real backend must land as a separately reviewed version with
 observed preflight/postflight evidence and authoritative worker-boundary
 enforcement.
 
+The proposed [`worker-dispatch security design`](worker-dispatch-security-design.md)
+now makes the next non-enabling architecture decision explicit: a local
+VM-contained, fresh unprivileged container, controller-owned no-Git job
+materialization, an exact worker PEP, observed reconciliation evidence, and an
+adversarial-test gate. It is a design target only; the supervisor remains
+dispatch-disabled pending operator approval of a concrete backend and a
+separately reviewed non-production probe.
+
 ## Phase 3 — bounded local loop
 
 - Extend the implemented dispatch-disabled foreground tracer into an

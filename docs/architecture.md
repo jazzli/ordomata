@@ -497,6 +497,12 @@ Even a shape-complete mock assessment is non-authoritative. A real backend
 requires a separately reviewed contract version with observed host evidence;
 the controller cannot reinterpret this mock as successful containment.
 
+[`worker-dispatch-security-design.md`](worker-dispatch-security-design.md)
+records the proposed non-enabling VM-contained-container design, the exact
+future worker PEP binding, and the evidence and adversarial-test gates that a
+real backend must satisfy. It is not an implementation approval or a runtime
+capability.
+
 Once that containment is proven, an implementation worker may use a general
 shell inside its disposable cell and bounded temporary storage. It receives no
 host shell, shared Git metadata, credentials, or control socket. Network is

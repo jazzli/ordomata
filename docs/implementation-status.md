@@ -1842,4 +1842,11 @@ adversarial validation tests and documents the evidence a later real backend
 must provide; it is not a containment implementation, an admission boundary,
 or a substitute for authoritative ABAC enforcement.
 
+The proposed [`worker-dispatch security design`](worker-dispatch-security-design.md)
+now fixes the next review target: a local VM-contained, fresh unprivileged
+container cell, an exact worker-dispatch PEP, controller-owned materialization
+without Git metadata, observed pre/postflight evidence, and adversarial gates.
+It adds no code path, backend, authority, or eligibility; an operator decision
+and a separately reviewed non-production probe remain prerequisites.
+
 The controlled comparison machinery has been implemented and tested with deterministic fixtures. No claim is made that the planned three-runs-per-profile live experiment has run, passed automated checks, received human scores, or produced a winner.

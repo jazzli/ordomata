@@ -11,6 +11,7 @@ status, durable policy, and future plans separate.
 | [`architecture.md`](architecture.md) | Implemented component boundaries, control flow, persistence, and failure handling |
 | [`implementation-status.md`](implementation-status.md) | Detailed current-capability and evidence-boundary ledger |
 | [`authorization-model.md`](authorization-model.md) | Runtime authorization vocabulary, policy decisions, enforcement state, and migration constraints |
+| [`worker-dispatch-security-design.md`](worker-dispatch-security-design.md) | Proposed non-enabling containment and authorization design for future repository worker dispatch |
 | [`subscription-only-policy.md`](subscription-only-policy.md) | Subscription-only billing, credential, attestation, and post-run invariants |
 | [`routing.md`](routing.md) | Execution profiles, eligibility, selection evidence, billing lanes, and target routing policy |
 | [`roadmap.md`](roadmap.md) | Prioritized delivery phases and explicit deferrals |
