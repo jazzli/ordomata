@@ -544,9 +544,17 @@ complete lineage and derives private deterministic add/modify/delete operations.
 Its public evidence contains only digest/count references. It reads no
 candidate filesystem, cannot show that supplied bytes originated in the
 materialized job tree, and does not apply or persist a patch, provision a
-worker cell, authorize work, or enable execution or dispatch. A later
-controller-owned descriptor-safe candidate-tree reader and lifecycle boundary
-must establish those missing custody properties.
+worker cell, authorize work, or enable execution or dispatch.
+
+[`ordomata.repository_worker_job_tree_candidate_snapshot`](../src/ordomata/repository_worker_job_tree_candidate_snapshot.py)
+now supplies the preceding read-only candidate-tree reader. It accepts only an
+active materialization lease and exact input lineage, traverses the held root
+through no-follow descriptors, rejects root replacement, symlinks, hard links,
+unsafe modes, unexpected empty directories, unapproved paths, and unstable
+double reads, and emits bounded private bytes with digest/count-only evidence.
+It does not prove candidate origin, worker containment, same-UID writer
+exclusion, lifecycle cleanup, patch safety, authorization, execution, or
+dispatch. Those custody and lifecycle properties remain separate gates.
 
 [`worker-dispatch-security-design.md`](worker-dispatch-security-design.md)
 records the proposed non-enabling VM-contained-container design, the exact

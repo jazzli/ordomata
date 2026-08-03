@@ -1886,8 +1886,18 @@ only in process-private memory. Its public projection contains digest/count
 references only. It does not read a candidate directory or prove candidate
 origin, write or apply a patch, persist a record, establish cleanup or
 containment, create a worker, grant authority, or enable execution or dispatch.
-The required descriptor-safe post-worker reader and controller lifecycle
-boundary remain unimplemented.
+The controller lifecycle and custody boundary remain unimplemented.
+
+`ordomata.repository_worker_job_tree_candidate_snapshot` now implements the
+read-only candidate-reader half of that deferred boundary. It accepts only the
+active exact materialization lease, matching source/contract/receipt lineage,
+and matching policy/limit snapshots; it walks the held root through no-follow
+descriptors, rejects root replacement, links, unsafe modes, excluded or
+unrepresentable paths, and unstable double reads, and returns a bounded private
+candidate bundle with digest/count-only public evidence. It does not prove a
+worker produced the tree, exclusion of a same-UID writer, containment,
+lifecycle cleanup, patch safety, authorization, persistence, execution, or
+dispatch. The controller lifecycle/custody boundary remains unimplemented.
 
 The proposed [`worker-dispatch security design`](worker-dispatch-security-design.md)
 now fixes the next review target: a local VM-contained, fresh unprivileged

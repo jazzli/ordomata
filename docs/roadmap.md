@@ -1162,8 +1162,10 @@ materialization-receipt, policy, and limit inputs, it derives private
 add/modify/delete operations and emits digest/count evidence. It neither reads
 a candidate tree nor proves its origin, and it performs no patch application,
 persistence, worker, container, Git, network, or execution action. A
-descriptor-safe candidate reader and the controller lifecycle/custody proof
-remain required before any worker boundary.
+descriptor-safe candidate reader now captures that input through the active
+materialization lease, but it still does not prove candidate origin or custody.
+The controller lifecycle/custody proof remains required before any worker
+boundary.
 
 The proposed [`worker-dispatch security design`](worker-dispatch-security-design.md)
 now makes the next non-enabling architecture decision explicit: a local

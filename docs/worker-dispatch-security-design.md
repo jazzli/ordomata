@@ -164,10 +164,12 @@ separate, explicitly gated decision.
    seam now compares caller-supplied detached candidate bytes to that exact
    snapshot/contract/receipt lineage and emits private operations plus
    digest/count evidence. It does not read a candidate tree or establish its
-   provenance, custody, or containment. Build the remaining controller-owned
-   lifecycle and no-follow candidate-tree reader. Test that the primary
-   checkout and shared Git data remain unchanged on success, failure, timeout,
-   and crash.
+   provenance, custody, or containment. The separate candidate-snapshot reader
+   now performs the no-follow, bounded, double-read capture of an active
+   materialized root and rejects unsafe namespace forms, but it does not prove
+   a worker produced that root. Build the remaining controller-owned lifecycle
+   and custody proof. Test that the primary checkout and shared Git data remain
+   unchanged on success, failure, timeout, and crash.
 3. **Authoritative dispatch PEP:** add append-only decision and receipt
    records, exact replay, read-only audit coverage, and cancellation/lease
    rechecks. It remains connected only to a deterministic mock cell until the
