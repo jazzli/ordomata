@@ -261,7 +261,7 @@ _REASON_CODE = re.compile(r"[a-z0-9_]{1,100}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _RESOURCE_KEY = re.compile(r"[a-z0-9][a-z0-9._:/-]{0,199}")
 _MAX_JSON_BYTES = 262_144
-_SCHEMA_VERSION = 11
+_SCHEMA_VERSION = 12
 _FOREGROUND_LEASE_KEY = "supervisor:foreground"
 _PRE_DISPATCH_INTENT_BOUNDARY = "attempt_pre_dispatch_intent"
 _PRE_DISPATCH_INTENT_ACTION_SCOPE = (
@@ -285,6 +285,18 @@ _PRE_DISPATCH_RECONCILIATION_OPERATION = (
 # As above, historical reconciliation-shadow replay must use the shipped
 # evaluator rather than a mutable first-pass seam.
 _BUILTIN_PRE_DISPATCH_RECONCILIATION_SHADOW_EVALUATE = (
+    ShadowAuthorizationEvaluator.evaluate
+)
+_QUEUED_TIMEOUT_RECONCILIATION_BOUNDARY = "flow_queued_timeout_reconciliation"
+_QUEUED_TIMEOUT_RECONCILIATION_ACTION_SCOPE = (
+    "supervisor_local_queued_timeout_reconciliation_only"
+)
+_QUEUED_TIMEOUT_RECONCILIATION_OPERATION = (
+    "supervisor.flow_queued_timeout_reconciliation"
+)
+# As above, historical queued-timeout replay must use the shipped evaluator
+# rather than a mutable first-pass seam.
+_BUILTIN_QUEUED_TIMEOUT_RECONCILIATION_SHADOW_EVALUATE = (
     ShadowAuthorizationEvaluator.evaluate
 )
 SUPERVISOR_DISPATCH_BLOCKERS = (
@@ -461,6 +473,28 @@ class SupervisorPreDispatchReconciliationAuthorizationObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class SupervisorQueuedTimeoutReconciliationAuthorizationObservation:
+    """One non-authoritative, privacy-bounded queued-timeout observation."""
+
+    sequence: int
+    observation_id: str
+    flow_id: str
+    source_flow_event_id: str
+    source_flow_revision: int
+    target_flow_event_id: str
+    outbox_id: str
+    reconciliation_action: str
+    request_digest: str
+    decision_digest: str
+    effect: str
+    derived_permission_class: PermissionClass
+    legacy_executable: bool
+    execution_parity: bool
+    payload: Mapping[str, Any]
+    observed_at: float
+
+
+@dataclass(frozen=True, slots=True)
 class SupervisorAuthorizationFinding:
     code: str
     flow_id: str | None
@@ -499,6 +533,8 @@ class SupervisorAuthorizationAudit:
     expected_attempt_completion_observation_count: int = 0
     pre_dispatch_reconciliation_observation_count: int = 0
     expected_pre_dispatch_reconciliation_observation_count: int = 0
+    queued_timeout_reconciliation_observation_count: int = 0
+    expected_queued_timeout_reconciliation_observation_count: int = 0
 
     @property
     def clean(self) -> bool:
@@ -551,6 +587,12 @@ class SupervisorAuthorizationAudit:
             ),
             "expected_pre_dispatch_reconciliation_observation_count": (
                 self.expected_pre_dispatch_reconciliation_observation_count
+            ),
+            "queued_timeout_reconciliation_observation_count": (
+                self.queued_timeout_reconciliation_observation_count
+            ),
+            "expected_queued_timeout_reconciliation_observation_count": (
+                self.expected_queued_timeout_reconciliation_observation_count
             ),
             "finding_count": len(self.findings),
             "clean": self.clean,
@@ -621,6 +663,16 @@ class _SupervisorAttemptCompletionShadowAudit:
 @dataclass(frozen=True, slots=True)
 class _SupervisorPreDispatchReconciliationShadowAudit:
     """Internal replay summary for pre-dispatch reconciliation shadows."""
+
+    schema_present: bool
+    record_count: int
+    expected_record_count: int
+    findings: tuple[SupervisorAuthorizationFinding, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _SupervisorQueuedTimeoutReconciliationShadowAudit:
+    """Internal replay summary for queued-timeout reconciliation shadows."""
 
     schema_present: bool
     record_count: int
@@ -1812,6 +1864,91 @@ END;
 """
 
 
+_SCHEMA_V12 = """
+CREATE TABLE supervisor_queued_timeout_reconciliation_authorization_baseline (
+    outbox_id TEXT PRIMARY KEY
+        REFERENCES supervisor_completion_outbox(outbox_id)
+);
+INSERT INTO supervisor_queued_timeout_reconciliation_authorization_baseline (
+    outbox_id
+)
+    SELECT o.outbox_id
+    FROM supervisor_completion_outbox AS o
+    JOIN supervisor_flow_revisions AS r
+        ON r.flow_id = o.flow_id AND r.revision = o.source_revision
+    WHERE o.attempt_id IS NULL
+      AND o.operation_digest = o.intent_digest
+      AND r.state = 'timed_out'
+      AND r.reason_code = 'flow_deadline_elapsed';
+
+CREATE TABLE supervisor_queued_timeout_reconciliation_authorization_observations (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    observation_id TEXT NOT NULL UNIQUE CHECK (length(observation_id) <= 256),
+    outbox_id TEXT NOT NULL UNIQUE CHECK (length(outbox_id) <= 256)
+        REFERENCES supervisor_completion_outbox(outbox_id),
+    target_flow_event_id TEXT NOT NULL UNIQUE CHECK (
+        length(target_flow_event_id) <= 256
+    ) REFERENCES supervisor_flow_revisions(event_id),
+    source_flow_event_id TEXT NOT NULL UNIQUE CHECK (
+        length(source_flow_event_id) <= 256
+    ) REFERENCES supervisor_flow_revisions(event_id),
+    source_flow_revision INTEGER NOT NULL CHECK (source_flow_revision >= 1),
+    flow_id TEXT NOT NULL REFERENCES supervisor_flows(flow_id),
+    flow_request_digest TEXT NOT NULL CHECK (length(flow_request_digest) = 64),
+    flow_deadline_at REAL NOT NULL CHECK (flow_deadline_at >= 0),
+    completion_intent_digest TEXT NOT NULL CHECK (
+        length(completion_intent_digest) = 64
+    ),
+    completion_operation_digest TEXT NOT NULL CHECK (
+        length(completion_operation_digest) = 64
+    ),
+    reconciliation_action TEXT NOT NULL CHECK (
+        reconciliation_action = 'mark_queued_timed_out'
+    ),
+    request_digest TEXT NOT NULL CHECK (length(request_digest) = 71),
+    decision_digest TEXT NOT NULL CHECK (length(decision_digest) = 71),
+    effect TEXT NOT NULL CHECK (effect IN ('permit', 'defer', 'deny', 'indeterminate')),
+    derived_permission_class INTEGER NOT NULL CHECK (
+        derived_permission_class IN (0, 1, 2, 3)
+    ),
+    legacy_executable INTEGER NOT NULL CHECK (legacy_executable IN (0, 1)),
+    execution_parity INTEGER NOT NULL CHECK (execution_parity IN (0, 1)),
+    payload_json TEXT NOT NULL CHECK (length(payload_json) <= 262144),
+    observed_at REAL NOT NULL CHECK (observed_at >= 0),
+    CHECK (source_flow_event_id != target_flow_event_id),
+    CHECK (completion_intent_digest = completion_operation_digest)
+);
+CREATE INDEX supervisor_queued_timeout_reconciliation_authorization_flow
+    ON supervisor_queued_timeout_reconciliation_authorization_observations(
+        flow_id, sequence
+    );
+CREATE INDEX supervisor_queued_timeout_reconciliation_authorization_target
+    ON supervisor_queued_timeout_reconciliation_authorization_observations(
+        outbox_id, sequence
+    );
+CREATE TRIGGER supervisor_queued_timeout_reconciliation_authorization_baseline_no_update
+BEFORE UPDATE ON supervisor_queued_timeout_reconciliation_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor queued-timeout reconciliation authorization baseline is append-only');
+END;
+CREATE TRIGGER supervisor_queued_timeout_reconciliation_authorization_baseline_no_delete
+BEFORE DELETE ON supervisor_queued_timeout_reconciliation_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor queued-timeout reconciliation authorization baseline is append-only');
+END;
+CREATE TRIGGER supervisor_queued_timeout_reconciliation_authorization_baseline_no_insert
+BEFORE INSERT ON supervisor_queued_timeout_reconciliation_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor queued-timeout reconciliation authorization baseline is frozen');
+END;
+CREATE TRIGGER supervisor_queued_timeout_reconciliation_authorization_observations_no_update
+BEFORE UPDATE ON supervisor_queued_timeout_reconciliation_authorization_observations BEGIN
+    SELECT RAISE(ABORT, 'supervisor queued-timeout reconciliation authorization observations are append-only');
+END;
+CREATE TRIGGER supervisor_queued_timeout_reconciliation_authorization_observations_no_delete
+BEFORE DELETE ON supervisor_queued_timeout_reconciliation_authorization_observations BEGIN
+    SELECT RAISE(ABORT, 'supervisor queued-timeout reconciliation authorization observations are append-only');
+END;
+"""
+
+
 class SQLiteSupervisorStore:
     """Supervisor-specific event store sharing the existing local SQLite file."""
 
@@ -1920,6 +2057,7 @@ class SQLiteSupervisorStore:
                     9: _SCHEMA_V9,
                     10: _SCHEMA_V10,
                     11: _SCHEMA_V11,
+                    12: _SCHEMA_V12,
                 }
                 for version, script in migration_scripts.items():
                     if _sha256_text(script) != _KNOWN_STATE_MIGRATIONS[version][1]:
@@ -1962,6 +2100,11 @@ class SQLiteSupervisorStore:
                     if version == 11:
                         _verify_pre_v11_supervisor_schema(self._connection)
                         _verify_pre_v11_pre_dispatch_reconciliation_history(
+                            self._connection
+                        )
+                    if version == 12:
+                        _verify_pre_v12_supervisor_schema(self._connection)
+                        _verify_pre_v12_queued_timeout_reconciliation_history(
                             self._connection
                         )
                     _execute_schema_script(
@@ -2398,6 +2541,42 @@ class SQLiteSupervisorStore:
                 ).fetchall()
         return tuple(
             _pre_dispatch_reconciliation_authorization_observation_from_row(row)
+            for row in rows
+        )
+
+    def list_queued_timeout_reconciliation_authorization_observations(
+        self,
+        flow_id: str | None = None,
+    ) -> tuple[SupervisorQueuedTimeoutReconciliationAuthorizationObservation, ...]:
+        """Return non-authoritative queued-timeout repair shadow records.
+
+        These observations bind only a completed local reconciliation of an
+        expired queued flow. They cannot authorize or invoke a worker, delivery,
+        subprocess, task, repository operation, or network action.
+        """
+
+        if flow_id is not None:
+            _validate_text(flow_id, "flow_id", maximum=256)
+        with self._lock:
+            if flow_id is None:
+                rows = self._connection.execute(
+                    """
+                    SELECT *
+                    FROM supervisor_queued_timeout_reconciliation_authorization_observations
+                    ORDER BY sequence
+                    """
+                ).fetchall()
+            else:
+                rows = self._connection.execute(
+                    """
+                    SELECT *
+                    FROM supervisor_queued_timeout_reconciliation_authorization_observations
+                    WHERE flow_id = ? ORDER BY sequence
+                    """,
+                    (flow_id,),
+                ).fetchall()
+        return tuple(
+            _queued_timeout_reconciliation_authorization_observation_from_row(row)
             for row in rows
         )
 
@@ -3919,6 +4098,108 @@ class SQLiteSupervisorStore:
                 "pre-dispatch reconciliation authorization persistence is uncertain"
             )
 
+    def _append_queued_timeout_reconciliation_authorization_observation(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        spec: FlowSpec,
+        source_flow: FlowRevision,
+        target_flow: FlowRevision,
+        completion: CompletionIntent,
+        reconciliation_action: str | None,
+        observed_at: float,
+        legacy_executable: bool,
+    ) -> None:
+        """Append best-effort evidence for an already-timed-out queued flow.
+
+        The caller reaches this method only after the terminal flow and outbox
+        writes have succeeded. The observation is compatibility evidence only;
+        it cannot alter deterministic repair or activate delivery, a worker,
+        a subprocess, or a task.
+        """
+
+        request, policy, intent = (
+            _supervisor_queued_timeout_reconciliation_authorization_request(
+                spec=spec,
+                source_flow=source_flow,
+                target_flow=target_flow,
+                completion=completion,
+                reconciliation_action=reconciliation_action,
+                observed_at=observed_at,
+            )
+        )
+        decision = ShadowAuthorizationEvaluator().evaluate(request, policy)
+        parity = (decision.effect.value == "permit") == legacy_executable
+        payload = {
+            "mode": "shadow",
+            "boundary": _QUEUED_TIMEOUT_RECONCILIATION_BOUNDARY,
+            "action_scope": _QUEUED_TIMEOUT_RECONCILIATION_ACTION_SCOPE,
+            "queued_timeout_reconciliation": intent,
+            "queued_timeout_reconciliation_digest": canonical_digest(intent),
+            "request": request.to_canonical(),
+            "request_digest": request.digest,
+            "decision": decision.to_canonical(),
+            "decision_digest": decision.digest,
+            "legacy_executable": legacy_executable,
+            "execution_parity": parity,
+        }
+        payload_json = _bounded_json(
+            payload,
+            "queued-timeout reconciliation authorization payload",
+        )
+        values = (
+            self._new_id("queued_timeout_reconciliation_authorization"),
+            completion.outbox_id,
+            target_flow.event_id,
+            source_flow.event_id,
+            source_flow.revision,
+            source_flow.flow_id,
+            spec.request_digest,
+            intent["source"]["deadline_at"],
+            completion.intent_digest,
+            completion.operation_digest,
+            intent["reconciliation"]["action"],
+            request.digest,
+            decision.digest,
+            decision.effect.value,
+            int(decision.derived_permission_class),
+            int(legacy_executable),
+            int(parity),
+            payload_json,
+            float(observed_at),
+        )
+        connection.execute(
+            """
+            INSERT INTO supervisor_queued_timeout_reconciliation_authorization_observations (
+                observation_id, outbox_id, target_flow_event_id,
+                source_flow_event_id, source_flow_revision, flow_id,
+                flow_request_digest, flow_deadline_at, completion_intent_digest,
+                completion_operation_digest, reconciliation_action, request_digest,
+                decision_digest, effect, derived_permission_class,
+                legacy_executable, execution_parity, payload_json, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+        row = connection.execute(
+            """
+            SELECT observation_id, outbox_id, target_flow_event_id,
+                   source_flow_event_id, source_flow_revision, flow_id,
+                   flow_request_digest, flow_deadline_at, completion_intent_digest,
+                   completion_operation_digest, reconciliation_action,
+                   request_digest, decision_digest, effect,
+                   derived_permission_class, legacy_executable,
+                   execution_parity, payload_json, observed_at
+            FROM supervisor_queued_timeout_reconciliation_authorization_observations
+            WHERE outbox_id = ?
+            """,
+            (completion.outbox_id,),
+        ).fetchone()
+        if row is None or tuple(row) != values:
+            raise SupervisorError(
+                "queued-timeout reconciliation authorization persistence is uncertain"
+            )
+
     def mark_attempt_dispatching(
         self,
         claim: AttemptClaim,
@@ -4401,6 +4682,12 @@ class SQLiteSupervisorStore:
                         raise StaleReconciliationPlanError(
                             "flow changed during reconciliation"
                         )
+                    flow_row = connection.execute(
+                        "SELECT * FROM supervisor_flows WHERE flow_id = ?",
+                        (finding.flow_id,),
+                    ).fetchone()
+                    if flow_row is None:
+                        raise SupervisorError("flow was not found")
                     revision = self._insert_flow_revision(
                         connection,
                         flow_id=finding.flow_id,
@@ -4411,12 +4698,29 @@ class SQLiteSupervisorStore:
                         reason_code=finding.reason_code,
                         occurred_at=timestamp,
                     )
-                    self._insert_completion_intent(
+                    outbox = self._insert_completion_intent(
                         connection,
                         revision,
                         attempt_id=None,
                         occurred_at=timestamp,
                     )
+                    try:
+                        self._append_queued_timeout_reconciliation_authorization_observation(
+                            connection,
+                            spec=_flow_from_row(flow_row),
+                            source_flow=current,
+                            target_flow=revision,
+                            completion=outbox,
+                            reconciliation_action=finding.action,
+                            observed_at=timestamp,
+                            legacy_executable=True,
+                        )
+                    except Exception:
+                        # Reconciliation remains deterministic and fail-safe.
+                        # This post-write compatibility shadow cannot alter a
+                        # terminal local repair, deliver its outbox, or invoke
+                        # a worker.
+                        pass
                     applied.append(finding)
                 elif finding.action == "finalize_cancelled_pre_dispatch":
                     self._reconcile_attempt(
@@ -5055,6 +5359,9 @@ def _inspect_supervisor_authorization_connection(
     pre_dispatch_reconciliation = (
         _inspect_pre_dispatch_reconciliation_authorization_connection(connection)
     )
+    queued_timeout_reconciliation = (
+        _inspect_queued_timeout_reconciliation_authorization_connection(connection)
+    )
     findings = (
         *flow.findings,
         *bookkeeping.findings,
@@ -5065,6 +5372,7 @@ def _inspect_supervisor_authorization_connection(
         *pre_dispatch_intent_enforcement.findings,
         *attempt_completion.findings,
         *pre_dispatch_reconciliation.findings,
+        *queued_timeout_reconciliation.findings,
         *guard_findings,
     )
     return SupervisorAuthorizationAudit(
@@ -5079,6 +5387,7 @@ def _inspect_supervisor_authorization_connection(
             and pre_dispatch_intent_enforcement.schema_present
             and attempt_completion.schema_present
             and pre_dispatch_reconciliation.schema_present
+            and queued_timeout_reconciliation.schema_present
             and not guard_findings
         ),
         observation_count=(
@@ -5087,6 +5396,7 @@ def _inspect_supervisor_authorization_connection(
             + pre_dispatch_intent.record_count
             + attempt_completion.record_count
             + pre_dispatch_reconciliation.record_count
+            + queued_timeout_reconciliation.record_count
         ),
         expected_observation_count=(
             flow.expected_observation_count
@@ -5094,6 +5404,7 @@ def _inspect_supervisor_authorization_connection(
             + pre_dispatch_intent.expected_record_count
             + attempt_completion.expected_record_count
             + pre_dispatch_reconciliation.expected_record_count
+            + queued_timeout_reconciliation.expected_record_count
         ),
         findings=findings,
         control_enforcement_record_count=control_enforcement.record_count,
@@ -5131,6 +5442,12 @@ def _inspect_supervisor_authorization_connection(
         ),
         expected_pre_dispatch_reconciliation_observation_count=(
             pre_dispatch_reconciliation.expected_record_count
+        ),
+        queued_timeout_reconciliation_observation_count=(
+            queued_timeout_reconciliation.record_count
+        ),
+        expected_queued_timeout_reconciliation_observation_count=(
+            queued_timeout_reconciliation.expected_record_count
         ),
     )
 
@@ -7991,6 +8308,327 @@ def _inspect_pre_dispatch_reconciliation_authorization_connection(
     )
 
 
+def _queued_timeout_reconciliation_target_flow(
+    outbox_row: sqlite3.Row,
+    *,
+    revision_rows_by_flow: Mapping[str, Sequence[sqlite3.Row]],
+) -> FlowRevision | None:
+    """Return the target flow when an outbox points to a valid local revision."""
+
+    try:
+        flow_id = outbox_row["flow_id"]
+        source_revision = outbox_row["source_revision"]
+        if (
+            type(flow_id) is not str
+            or isinstance(source_revision, bool)
+            or not isinstance(source_revision, int)
+            or source_revision < 1
+        ):
+            return None
+        revisions = revision_rows_by_flow.get(flow_id, ())
+        if source_revision > len(revisions):
+            return None
+        return _flow_revision_from_row(revisions[source_revision - 1])
+    except (IndexError, KeyError, TypeError, ValueError, ValidationError):
+        return None
+
+
+def _is_queued_timeout_reconciliation_outbox_row(
+    row: sqlite3.Row,
+    *,
+    target_flow: FlowRevision | None,
+) -> bool:
+    """Return whether an outbox row closes a queued deadline reconciliation."""
+
+    try:
+        return (
+            row["attempt_id"] is None
+            and row["operation_digest"] == row["intent_digest"]
+            and target_flow is not None
+            and target_flow.state is FlowState.TIMED_OUT
+            and target_flow.reason_code == "flow_deadline_elapsed"
+        )
+    except (IndexError, KeyError):
+        return False
+
+
+def _queued_timeout_reconciliation_source_from_outbox(
+    *,
+    outbox_row: sqlite3.Row,
+    flow_rows_by_id: Mapping[str, sqlite3.Row],
+    revision_rows_by_flow: Mapping[str, Sequence[sqlite3.Row]],
+    attempt_flow_ids: Mapping[str, str],
+) -> tuple[FlowSpec, FlowRevision, FlowRevision, CompletionIntent]:
+    """Rebuild one queued-deadline repair from immutable local records."""
+
+    completion = _completion_from_row(outbox_row)
+    if type(completion.flow_id) is not str or completion.attempt_id is not None:
+        raise ValidationError("queued-timeout reconciliation outbox is invalid")
+    _validate_revision(completion.source_revision)
+    if completion.source_revision < 2:
+        raise ValidationError("queued-timeout reconciliation source revision is invalid")
+    flow_row = flow_rows_by_id.get(completion.flow_id)
+    if flow_row is None:
+        raise ValidationError("queued-timeout reconciliation flow is missing")
+    spec = _flow_from_row(flow_row)
+    _validate_flow_spec(spec)
+    if flow_row["request_digest"] != spec.request_digest:
+        raise ValidationError(
+            "queued-timeout reconciliation flow request digest is invalid"
+        )
+    revisions = revision_rows_by_flow.get(spec.flow_id, ())
+    _verify_flow_revision_lineage(spec.flow_id, revisions, attempt_flow_ids)
+    if completion.source_revision > len(revisions):
+        raise ValidationError("queued-timeout reconciliation target flow is missing")
+    source_flow = _flow_revision_from_row(
+        revisions[completion.source_revision - 2]
+    )
+    target_flow = _flow_revision_from_row(
+        revisions[completion.source_revision - 1]
+    )
+    _queued_timeout_reconciliation_mapping(
+        spec=spec,
+        source_flow=source_flow,
+        target_flow=target_flow,
+        completion=completion,
+        reconciliation_action="mark_queued_timed_out",
+        observed_at=target_flow.occurred_at,
+    )
+    return spec, source_flow, target_flow, completion
+
+
+def _inspect_queued_timeout_reconciliation_authorization_connection(
+    connection: sqlite3.Connection,
+) -> _SupervisorQueuedTimeoutReconciliationShadowAudit:
+    """Replay post-v12 queued-deadline repair shadows without repair."""
+
+    tables = _table_names(connection)
+    required = {
+        "supervisor_flows",
+        "supervisor_flow_revisions",
+        "supervisor_attempts",
+        "supervisor_completion_outbox",
+        "supervisor_queued_timeout_reconciliation_authorization_baseline",
+        "supervisor_queued_timeout_reconciliation_authorization_observations",
+    }
+    if not required.issubset(tables):
+        return _SupervisorQueuedTimeoutReconciliationShadowAudit(
+            False,
+            0,
+            0,
+            (
+                SupervisorAuthorizationFinding(
+                    "queued_timeout_reconciliation_authorization_schema_missing",
+                    None,
+                    _QUEUED_TIMEOUT_RECONCILIATION_BOUNDARY,
+                    None,
+                ),
+            ),
+        )
+    try:
+        flow_rows = connection.execute(
+            "SELECT * FROM supervisor_flows ORDER BY flow_id"
+        ).fetchall()
+        flow_rows_by_id = {row["flow_id"]: row for row in flow_rows}
+        revision_rows_by_flow: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_flow_revisions ORDER BY flow_id, revision"
+        ).fetchall():
+            revision_rows_by_flow.setdefault(row["flow_id"], []).append(row)
+        attempt_rows = connection.execute(
+            "SELECT * FROM supervisor_attempts ORDER BY flow_id, attempt_number"
+        ).fetchall()
+        attempt_flow_ids = {
+            row["attempt_id"]: row["flow_id"] for row in attempt_rows
+        }
+        outbox_rows = connection.execute(
+            """
+            SELECT * FROM supervisor_completion_outbox
+            ORDER BY flow_id, source_revision, outbox_id
+            """
+        ).fetchall()
+        outbox_rows_by_id = {row["outbox_id"]: row for row in outbox_rows}
+        baseline = {
+            row["outbox_id"]
+            for row in connection.execute(
+                """
+                SELECT outbox_id
+                FROM supervisor_queued_timeout_reconciliation_authorization_baseline
+                """
+            ).fetchall()
+        }
+        observation_rows = connection.execute(
+            """
+            SELECT *
+            FROM supervisor_queued_timeout_reconciliation_authorization_observations
+            ORDER BY sequence
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        return _SupervisorQueuedTimeoutReconciliationShadowAudit(
+            False,
+            0,
+            0,
+            (
+                SupervisorAuthorizationFinding(
+                    "queued_timeout_reconciliation_authorization_schema_unreadable",
+                    None,
+                    _QUEUED_TIMEOUT_RECONCILIATION_BOUNDARY,
+                    None,
+                ),
+            ),
+        )
+
+    findings: list[SupervisorAuthorizationFinding] = []
+    for outbox_id in sorted(baseline):
+        row = outbox_rows_by_id.get(outbox_id)
+        try:
+            if row is None:
+                raise ValidationError(
+                    "queued-timeout reconciliation baseline is invalid"
+                )
+            _queued_timeout_reconciliation_source_from_outbox(
+                outbox_row=row,
+                flow_rows_by_id=flow_rows_by_id,
+                revision_rows_by_flow=revision_rows_by_flow,
+                attempt_flow_ids=attempt_flow_ids,
+            )
+        except Exception:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "queued_timeout_reconciliation_authorization_baseline_invalid",
+                    None if row is None else _audit_flow_reference(row["flow_id"]),
+                    _QUEUED_TIMEOUT_RECONCILIATION_BOUNDARY,
+                    None,
+                    _audit_completion_outbox_reference(outbox_id),
+                )
+            )
+
+    expected_rows = [
+        row
+        for row in outbox_rows
+        if _is_queued_timeout_reconciliation_outbox_row(
+            row,
+            target_flow=_queued_timeout_reconciliation_target_flow(
+                row,
+                revision_rows_by_flow=revision_rows_by_flow,
+            ),
+        )
+        and row["outbox_id"] not in baseline
+    ]
+    expected_ids = {row["outbox_id"] for row in expected_rows}
+    observations_by_outbox: dict[str, list[sqlite3.Row]] = {}
+    for row in observation_rows:
+        observations_by_outbox.setdefault(row["outbox_id"], []).append(row)
+
+    for outbox_row in expected_rows:
+        outbox_id = outbox_row["outbox_id"]
+        target_reference = _audit_completion_outbox_reference(outbox_id)
+        flow_reference = _audit_flow_reference(outbox_row["flow_id"])
+        matches = observations_by_outbox.get(outbox_id, [])
+        if len(matches) != 1:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    (
+                        "queued_timeout_reconciliation_authorization_observation_missing"
+                        if not matches
+                        else "queued_timeout_reconciliation_authorization_observation_duplicated"
+                    ),
+                    flow_reference,
+                    _QUEUED_TIMEOUT_RECONCILIATION_BOUNDARY,
+                    None,
+                    target_reference,
+                )
+            )
+            continue
+        source: tuple[FlowSpec, FlowRevision, FlowRevision, CompletionIntent] | None = None
+        try:
+            source = _queued_timeout_reconciliation_source_from_outbox(
+                outbox_row=outbox_row,
+                flow_rows_by_id=flow_rows_by_id,
+                revision_rows_by_flow=revision_rows_by_flow,
+                attempt_flow_ids=attempt_flow_ids,
+            )
+        except Exception:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "queued_timeout_reconciliation_authorization_source_invalid",
+                    flow_reference,
+                    _QUEUED_TIMEOUT_RECONCILIATION_BOUNDARY,
+                    None,
+                    target_reference,
+                )
+            )
+        if source is None:
+            continue
+        spec, source_flow, target_flow, completion = source
+        try:
+            expected_values = _expected_queued_timeout_reconciliation_observation_values(
+                matches[0],
+                spec=spec,
+                source_flow=source_flow,
+                target_flow=target_flow,
+                completion=completion,
+            )
+        except Exception:
+            expected_values = None
+        if (
+            expected_values is None
+            or tuple(
+                matches[0][field]
+                for field in (
+                    "outbox_id",
+                    "target_flow_event_id",
+                    "source_flow_event_id",
+                    "source_flow_revision",
+                    "flow_id",
+                    "flow_request_digest",
+                    "flow_deadline_at",
+                    "completion_intent_digest",
+                    "completion_operation_digest",
+                    "reconciliation_action",
+                    "request_digest",
+                    "decision_digest",
+                    "effect",
+                    "derived_permission_class",
+                    "legacy_executable",
+                    "execution_parity",
+                    "payload_json",
+                    "observed_at",
+                )
+            )
+            != expected_values
+        ):
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "queued_timeout_reconciliation_authorization_observation_invalid",
+                    flow_reference,
+                    _QUEUED_TIMEOUT_RECONCILIATION_BOUNDARY,
+                    int(matches[0]["sequence"]),
+                    target_reference,
+                )
+            )
+
+    for outbox_id, rows in observations_by_outbox.items():
+        if outbox_id not in expected_ids:
+            for row in rows:
+                findings.append(
+                    SupervisorAuthorizationFinding(
+                        "queued_timeout_reconciliation_authorization_observation_unexpected",
+                        _audit_flow_reference(row["flow_id"]),
+                        _QUEUED_TIMEOUT_RECONCILIATION_BOUNDARY,
+                        int(row["sequence"]),
+                        _audit_completion_outbox_reference(outbox_id),
+                    )
+                )
+    return _SupervisorQueuedTimeoutReconciliationShadowAudit(
+        True,
+        len(observation_rows),
+        len(expected_rows),
+        tuple(findings),
+    )
+
+
 def inspect_pending_completions(
     database_path: str | Path,
 ) -> tuple[CompletionIntent, ...]:
@@ -8060,6 +8698,7 @@ def _authorization_guard_findings(
             "pre_dispatch_intent_enforcement_migration_ledger_mismatch",
             "attempt_completion_authorization_migration_ledger_mismatch",
             "pre_dispatch_reconciliation_authorization_migration_ledger_mismatch",
+            "queued_timeout_reconciliation_authorization_migration_ledger_mismatch",
         ):
             findings.append(
                 SupervisorAuthorizationFinding(code, None, None, None)
@@ -8232,6 +8871,22 @@ def _authorization_guard_findings(
         findings.append(
             SupervisorAuthorizationFinding(
                 "pre_dispatch_reconciliation_authorization_migration_ledger_mismatch",
+                None,
+                None,
+                None,
+            )
+        )
+    queued_timeout_reconciliation_migration = ledger.get(12)
+    if (
+        queued_timeout_reconciliation_migration is None
+        or queued_timeout_reconciliation_migration["name"]
+        != "supervisor_queued_timeout_reconciliation_authorization_shadow"
+        or queued_timeout_reconciliation_migration["script_sha256"]
+        != _sha256_text(_SCHEMA_V12)
+    ):
+        findings.append(
+            SupervisorAuthorizationFinding(
+                "queued_timeout_reconciliation_authorization_migration_ledger_mismatch",
                 None,
                 None,
                 None,
@@ -9244,6 +9899,76 @@ def _verify_pre_v11_pre_dispatch_reconciliation_history(
         ) from error
 
 
+def _verify_pre_v12_queued_timeout_reconciliation_history(
+    connection: sqlite3.Connection,
+) -> None:
+    """Refuse to baseline malformed queued-deadline repair history."""
+
+    try:
+        _verify_pre_v11_pre_dispatch_reconciliation_history(connection)
+        foreign_key_errors = tuple(
+            row
+            for table in (
+                "supervisor_attempt_completion_authorization_baseline",
+                "supervisor_attempt_completion_authorization_observations",
+                "supervisor_pre_dispatch_reconciliation_authorization_baseline",
+                "supervisor_pre_dispatch_reconciliation_authorization_observations",
+            )
+            for row in connection.execute(f'PRAGMA foreign_key_check("{table}")')
+        )
+        if foreign_key_errors:
+            raise ValidationError(
+                "supervisor reconciliation shadows have invalid references"
+            )
+        flow_rows = connection.execute(
+            "SELECT * FROM supervisor_flows ORDER BY flow_id"
+        ).fetchall()
+        flow_rows_by_id = {row["flow_id"]: row for row in flow_rows}
+        revision_rows_by_flow: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_flow_revisions ORDER BY flow_id, revision"
+        ).fetchall():
+            revision_rows_by_flow.setdefault(row["flow_id"], []).append(row)
+        attempt_rows = connection.execute(
+            "SELECT * FROM supervisor_attempts ORDER BY flow_id, attempt_number"
+        ).fetchall()
+        attempt_flow_ids = {
+            row["attempt_id"]: row["flow_id"] for row in attempt_rows
+        }
+        for outbox_row in connection.execute(
+            """
+            SELECT * FROM supervisor_completion_outbox
+            ORDER BY flow_id, source_revision, outbox_id
+            """
+        ).fetchall():
+            target_flow = _queued_timeout_reconciliation_target_flow(
+                outbox_row,
+                revision_rows_by_flow=revision_rows_by_flow,
+            )
+            if not _is_queued_timeout_reconciliation_outbox_row(
+                outbox_row,
+                target_flow=target_flow,
+            ):
+                continue
+            _queued_timeout_reconciliation_source_from_outbox(
+                outbox_row=outbox_row,
+                flow_rows_by_id=flow_rows_by_id,
+                revision_rows_by_flow=revision_rows_by_flow,
+                attempt_flow_ids=attempt_flow_ids,
+            )
+    except (
+        ConfigurationError,
+        KeyError,
+        TypeError,
+        ValueError,
+        ValidationError,
+        sqlite3.Error,
+    ) as error:
+        raise ConfigurationError(
+            "pre-v12 supervisor queued-timeout reconciliation history is invalid"
+        ) from error
+
+
 def _verify_attempt_claim_history(
     *,
     attempt: AttemptRecord,
@@ -9557,6 +10282,8 @@ def _expected_supervisor_schema() -> dict[
             + _SCHEMA_V10
             + "\n"
             + _SCHEMA_V11
+            + "\n"
+            + _SCHEMA_V12
         )
         objects = _schema_objects(connection)
         return {
@@ -9793,6 +10520,45 @@ def _expected_pre_v11_supervisor_schema() -> dict[
         connection.close()
 
 
+@cache
+def _expected_pre_v12_supervisor_schema() -> dict[
+    tuple[str, str], tuple[str, str, str]
+]:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.executescript(
+            _SCHEMA_V2
+            + "\n"
+            + _SCHEMA_V3
+            + "\n"
+            + _SCHEMA_V4
+            + "\n"
+            + _SCHEMA_V5
+            + "\n"
+            + _SCHEMA_V6
+            + "\n"
+            + _SCHEMA_V7
+            + "\n"
+            + _SCHEMA_V8
+            + "\n"
+            + _SCHEMA_V9
+            + "\n"
+            + _SCHEMA_V10
+            + "\n"
+            + _SCHEMA_V11
+        )
+        objects = _schema_objects(connection)
+        return {
+            key: value
+            for key, value in objects.items()
+            if key[1].startswith("supervisor_")
+            or value[1].startswith("supervisor_")
+        }
+    finally:
+        connection.close()
+
+
 def _verify_pre_v4_supervisor_schema(connection: sqlite3.Connection) -> None:
     objects = _schema_objects(connection)
     actual = {
@@ -9887,6 +10653,18 @@ def _verify_pre_v11_supervisor_schema(connection: sqlite3.Connection) -> None:
     }
     if actual != _expected_pre_v11_supervisor_schema():
         raise ConfigurationError("pre-v11 supervisor schema is invalid")
+
+
+def _verify_pre_v12_supervisor_schema(connection: sqlite3.Connection) -> None:
+    objects = _schema_objects(connection)
+    actual = {
+        key: value
+        for key, value in objects.items()
+        if key[1].startswith("supervisor_")
+        or value[1].startswith("supervisor_")
+    }
+    if actual != _expected_pre_v12_supervisor_schema():
+        raise ConfigurationError("pre-v12 supervisor schema is invalid")
 
 
 def _verify_supervisor_schema(connection: sqlite3.Connection) -> None:
@@ -11561,6 +12339,153 @@ def _pre_dispatch_reconciliation_mapping(
     }
 
 
+def _queued_timeout_reconciliation_mapping(
+    *,
+    spec: FlowSpec,
+    source_flow: FlowRevision,
+    target_flow: FlowRevision,
+    completion: CompletionIntent,
+    reconciliation_action: str | None,
+    observed_at: float,
+) -> dict[str, Any]:
+    """Build redacted evidence for one queued-deadline terminal repair."""
+
+    _validate_flow_spec(spec)
+    for flow, description in ((source_flow, "source"), (target_flow, "target")):
+        for field_name in ("event_id", "flow_id"):
+            _validate_text(
+                getattr(flow, field_name),
+                f"{description} flow {field_name}",
+                maximum=256,
+            )
+        _validate_revision(flow.revision)
+        _validate_reason(flow.reason_code)
+        _timestamp(flow.occurred_at, f"{description} flow timestamp")
+        if type(flow.cancellation_requested) is not bool:
+            raise ValidationError(
+                "queued-timeout reconciliation cancellation source is invalid"
+            )
+    timestamp = _timestamp(
+        observed_at,
+        "queued-timeout reconciliation observation timestamp",
+    )
+    if spec.deadline_at is None:
+        raise ValidationError("queued-timeout reconciliation deadline is missing")
+    deadline_at = _timestamp(
+        spec.deadline_at,
+        "queued-timeout reconciliation deadline",
+    )
+
+    for field_name in ("outbox_id", "idempotency_key", "flow_id"):
+        _validate_text(
+            getattr(completion, field_name),
+            f"completion {field_name}",
+            maximum=256,
+        )
+    _validate_revision(completion.source_revision)
+    if completion.attempt_id is not None:
+        raise ValidationError("queued-timeout reconciliation outbox has an attempt")
+    for field_name in ("intent_digest", "operation_digest"):
+        _validate_digest(
+            getattr(completion, field_name),
+            f"completion {field_name}",
+        )
+    completion_created_at = _timestamp(
+        completion.created_at,
+        "completion outbox timestamp",
+    )
+    if reconciliation_action != "mark_queued_timed_out":
+        raise ValidationError("queued-timeout reconciliation action is invalid")
+    expected_envelope_json = _bounded_json(
+        {
+            "flow_id": target_flow.flow_id,
+            "source_revision": target_flow.revision,
+            "state": target_flow.state.value,
+            "attempt_id": None,
+            "reason_code": target_flow.reason_code,
+        },
+        "queued-timeout reconciliation envelope",
+    )
+    if (
+        source_flow.flow_id != spec.flow_id
+        or source_flow.state is not FlowState.QUEUED
+        or source_flow.cancellation_requested
+        or source_flow.active_attempt_id is not None
+        or target_flow.flow_id != spec.flow_id
+        or target_flow.revision != source_flow.revision + 1
+        or target_flow.state is not FlowState.TIMED_OUT
+        or target_flow.cancellation_requested
+        or target_flow.active_attempt_id is not None
+        or target_flow.reason_code != "flow_deadline_elapsed"
+        or target_flow.occurred_at != timestamp
+        or completion_created_at != timestamp
+        or timestamp < deadline_at
+        or timestamp < source_flow.occurred_at
+        or completion.flow_id != target_flow.flow_id
+        or completion.source_revision != target_flow.revision
+        or completion.idempotency_key
+        != f"flow:{target_flow.flow_id}:revision:{target_flow.revision}"
+        or completion.envelope_json != expected_envelope_json
+        or completion.intent_digest != _sha256_text(expected_envelope_json)
+        or completion.operation_digest != completion.intent_digest
+    ):
+        raise ValidationError("queued-timeout reconciliation source or target is invalid")
+    finding = _finding(
+        "queued_deadline_elapsed",
+        "flow_deadline_elapsed",
+        spec.flow_id,
+        None,
+        source_flow.revision,
+        "mark_queued_timed_out",
+    )
+    return {
+        "source": {
+            "flow_id_ref": canonical_digest({"flow_id": spec.flow_id}),
+            "flow_event_ref": canonical_digest(
+                {"flow_event_id": source_flow.event_id}
+            ),
+            "flow_revision": source_flow.revision,
+            "flow_state": source_flow.state.value,
+            "flow_reason_code": source_flow.reason_code,
+            "cancellation_requested": False,
+            "active_attempt_absent": True,
+            "flow_request_digest": spec.request_digest,
+            "deadline_at": float(deadline_at),
+        },
+        "target": {
+            "flow_id_ref": canonical_digest({"flow_id": target_flow.flow_id}),
+            "flow_event_ref": canonical_digest(
+                {"flow_event_id": target_flow.event_id}
+            ),
+            "flow_revision": target_flow.revision,
+            "flow_state": target_flow.state.value,
+            "flow_reason_code": target_flow.reason_code,
+            "cancellation_requested": False,
+            "active_attempt_absent": True,
+            "occurred_at": float(target_flow.occurred_at),
+        },
+        "completion": {
+            "outbox_ref": canonical_digest({"outbox_id": completion.outbox_id}),
+            "idempotency_key_ref": canonical_digest(
+                {"idempotency_key": completion.idempotency_key}
+            ),
+            "source_revision": completion.source_revision,
+            "state": target_flow.state.value,
+            "attempt_absent": True,
+            "intent_digest": completion.intent_digest,
+            "operation_digest": completion.operation_digest,
+            "created_at": float(completion_created_at),
+        },
+        "reconciliation": {
+            "finding_ref": canonical_digest({"finding_id": finding.finding_id}),
+            "kind": finding.kind,
+            "reason_code": finding.reason_code,
+            "action": "mark_queued_timed_out",
+            "expected_flow_revision": source_flow.revision,
+        },
+    }
+
+
 def _supervisor_pre_dispatch_reconciliation_authorization_request(
     *,
     spec: FlowSpec,
@@ -11726,6 +12651,159 @@ def _supervisor_pre_dispatch_reconciliation_authorization_request(
     return request, policy, intent
 
 
+def _supervisor_queued_timeout_reconciliation_authorization_request(
+    *,
+    spec: FlowSpec,
+    source_flow: FlowRevision,
+    target_flow: FlowRevision,
+    completion: CompletionIntent,
+    reconciliation_action: str | None,
+    observed_at: float,
+) -> tuple[AuthorizationRequest, PolicyBundle, dict[str, Any]]:
+    """Build a fixed shadow-only request for local queued-deadline repair."""
+
+    intent = _queued_timeout_reconciliation_mapping(
+        spec=spec,
+        source_flow=source_flow,
+        target_flow=target_flow,
+        completion=completion,
+        reconciliation_action=reconciliation_action,
+        observed_at=observed_at,
+    )
+    timestamp = _timestamp(
+        observed_at,
+        "queued-timeout reconciliation observation timestamp",
+    )
+    request = AuthorizationRequest(
+        request_id=(
+            f"supervisor:{_QUEUED_TIMEOUT_RECONCILIATION_BOUNDARY}:"
+            f"{canonical_digest({'outbox_id': completion.outbox_id})}"
+        ),
+        subject=SubjectAttributes(
+            principal_id="controller:local",
+            controller_id="agentops:local-controller",
+            role=Role.CONTROLLER,
+            role_version="1",
+            profile_id=canonical_digest({"profile_id": "controller_bookkeeping"}),
+            runner_id="local_non_ai",
+            session_id=None,
+        ),
+        action=ActionAttributes(
+            verb=ActionVerb.MODIFY,
+            operation=_QUEUED_TIMEOUT_RECONCILIATION_OPERATION,
+            parameters_digest=canonical_digest(intent),
+            intended_effect="append_local_queued_timeout_reconciliation_and_outbox_only",
+        ),
+        resource=ResourceAttributes(
+            resource_type="supervisor_flow",
+            identifier=canonical_digest({"flow_id": spec.flow_id}),
+            version=canonical_digest(
+                {
+                    "source_flow_event_id": source_flow.event_id,
+                    "source_flow_revision": source_flow.revision,
+                    "target_flow_event_id": target_flow.event_id,
+                    "target_flow_revision": target_flow.revision,
+                    "outbox_id": completion.outbox_id,
+                    "reconciliation_action": intent["reconciliation"]["action"],
+                }
+            ),
+            owner="operator:local",
+            trust_boundary="local_control_plane",
+            protected=False,
+            sensitivity=ImpactLevel.LOW,
+            content_digest=canonical_digest(
+                {
+                    "flow_request_digest": spec.request_digest,
+                    "source": intent["source"],
+                    "target": intent["target"],
+                    "completion": intent["completion"],
+                    "reconciliation": intent["reconciliation"],
+                }
+            ),
+        ),
+        environment=EnvironmentAttributes(
+            evaluated_at=timestamp,
+            isolation_state=IsolationState.VERIFIED,
+            network_state=NetworkState.DISABLED,
+            billing_route=BillingRoute.LOCAL_NON_AI,
+            capacity_state=CapacityState.NOT_APPLICABLE,
+            paid_continuation_protection=PaidContinuationProtection.NOT_APPLICABLE,
+            circuit_state=CircuitState.CLOSED,
+            flow_state=source_flow.state.value,
+        ),
+        consequences=ConsequenceVector(
+            confidentiality=ImpactLevel.LOW,
+            integrity=ImpactLevel.LOW,
+            availability=ImpactLevel.LOW,
+            reach=Reach.LOCAL,
+            destructive=False,
+            reversible=True,
+            sensitivity=ImpactLevel.LOW,
+            blast_radius=BlastRadius.SINGLE_RESOURCE,
+        ),
+    )
+    sources = {
+        "subject": EvidenceSource.CONTROLLER,
+        "action": EvidenceSource.CONTROLLER,
+        "resource": EvidenceSource.CONTROLLER,
+        "environment": EvidenceSource.CONTROLLER,
+        "consequences": EvidenceSource.CONTROLLER,
+    }
+    evidence = tuple(
+        AttributeEvidence.bind(
+            evidence_id=(
+                f"supervisor:{_QUEUED_TIMEOUT_RECONCILIATION_BOUNDARY}:{attribute}"
+            ),
+            attribute=attribute,
+            value=request.attribute_value(attribute),
+            source=source,
+            source_id="agentops:controller",
+            observed_at=timestamp,
+            expires_at=timestamp + 60.0,
+            authenticated=True,
+        )
+        for attribute, source in sources.items()
+    )
+    request = AuthorizationRequest(
+        request.request_id,
+        request.subject,
+        request.action,
+        request.resource,
+        request.environment,
+        request.consequences,
+        evidence,
+    )
+    base = PolicyBundle.current_stage(issued_at=timestamp)
+    policy = PolicyBundle(
+        bundle_id=base.bundle_id,
+        version=base.version,
+        issued_at=base.issued_at,
+        evidence_requirements=base.evidence_requirements,
+        enabled_classes=base.enabled_classes,
+        allowed_verbs=base.allowed_verbs,
+        allowed_roles=tuple(dict.fromkeys((*base.allowed_roles, Role.CONTROLLER))),
+        allowed_operations=tuple(
+            dict.fromkeys(
+                (*base.allowed_operations, _QUEUED_TIMEOUT_RECONCILIATION_OPERATION)
+            )
+        ),
+        allowed_resource_types=tuple(
+            dict.fromkeys((*base.allowed_resource_types, "supervisor_flow"))
+        ),
+        allowed_trust_boundaries=tuple(
+            dict.fromkeys((*base.allowed_trust_boundaries, "local_control_plane"))
+        ),
+        allowed_flow_states=tuple(
+            dict.fromkeys((*base.allowed_flow_states, source_flow.state.value))
+        ),
+        allowed_network_states=base.allowed_network_states,
+        allowed_billing_routes=base.allowed_billing_routes,
+        approval_requirements=base.approval_requirements,
+        decision_ttl_seconds=base.decision_ttl_seconds,
+    )
+    return request, policy, intent
+
+
 def _expected_pre_dispatch_reconciliation_observation_values(
     row: sqlite3.Row,
     *,
@@ -11831,6 +12909,103 @@ def _expected_pre_dispatch_reconciliation_observation_values(
         _bounded_json(
             expected_payload,
             "pre-dispatch reconciliation authorization audit payload",
+        ),
+        float(target_flow.occurred_at),
+    )
+
+
+def _expected_queued_timeout_reconciliation_observation_values(
+    row: sqlite3.Row,
+    *,
+    spec: FlowSpec,
+    source_flow: FlowRevision,
+    target_flow: FlowRevision,
+    completion: CompletionIntent,
+) -> tuple[Any, ...]:
+    """Independently rebuild one durable queued-timeout repair shadow."""
+
+    _validate_text(
+        row["observation_id"],
+        "queued-timeout reconciliation authorization observation identifier",
+        maximum=256,
+    )
+    payload_text = row["payload_json"]
+    if (
+        not isinstance(payload_text, str)
+        or len(payload_text.encode("utf-8")) > _MAX_JSON_BYTES
+    ):
+        raise ValidationError(
+            "queued-timeout reconciliation authorization payload is invalid"
+        )
+    payload = parse_json_document(payload_text)
+    if type(payload) is not dict:
+        raise ValidationError(
+            "queued-timeout reconciliation authorization payload is invalid"
+        )
+    supplied_intent = payload.get("queued_timeout_reconciliation")
+    if type(supplied_intent) is not dict:
+        raise ValidationError(
+            "queued-timeout reconciliation authorization intent is invalid"
+        )
+    supplied_reconciliation = supplied_intent.get("reconciliation")
+    if type(supplied_reconciliation) is not dict:
+        raise ValidationError(
+            "queued-timeout reconciliation authorization source is invalid"
+        )
+    reconciliation_action = supplied_reconciliation.get("action")
+    request, policy, intent = (
+        _supervisor_queued_timeout_reconciliation_authorization_request(
+            spec=spec,
+            source_flow=source_flow,
+            target_flow=target_flow,
+            completion=completion,
+            reconciliation_action=reconciliation_action,
+            observed_at=target_flow.occurred_at,
+        )
+    )
+    decision = _BUILTIN_QUEUED_TIMEOUT_RECONCILIATION_SHADOW_EVALUATE(
+        ShadowAuthorizationEvaluator(),
+        request,
+        policy,
+    )
+    parity = decision.effect.value == "permit"
+    expected_payload = {
+        "mode": "shadow",
+        "boundary": _QUEUED_TIMEOUT_RECONCILIATION_BOUNDARY,
+        "action_scope": _QUEUED_TIMEOUT_RECONCILIATION_ACTION_SCOPE,
+        "queued_timeout_reconciliation": intent,
+        "queued_timeout_reconciliation_digest": canonical_digest(intent),
+        "request": request.to_canonical(),
+        "request_digest": request.digest,
+        "decision": decision.to_canonical(),
+        "decision_digest": decision.digest,
+        "legacy_executable": True,
+        "execution_parity": parity,
+    }
+    if payload != expected_payload:
+        raise ValidationError(
+            "queued-timeout reconciliation authorization payload is inconsistent"
+        )
+    return (
+        completion.outbox_id,
+        target_flow.event_id,
+        source_flow.event_id,
+        source_flow.revision,
+        spec.flow_id,
+        spec.request_digest,
+        intent["source"]["deadline_at"],
+        completion.intent_digest,
+        completion.operation_digest,
+        intent["reconciliation"]["action"],
+        request.digest,
+        decision.digest,
+        decision.effect.value,
+        int(decision.derived_permission_class),
+        1,
+        int(parity),
+        _bounded_json(
+            expected_payload,
+            "queued-timeout reconciliation authorization audit payload",
         ),
         float(target_flow.occurred_at),
     )
@@ -12136,6 +13311,29 @@ def _pre_dispatch_reconciliation_authorization_observation_from_row(
     )
 
 
+def _queued_timeout_reconciliation_authorization_observation_from_row(
+    row: sqlite3.Row,
+) -> SupervisorQueuedTimeoutReconciliationAuthorizationObservation:
+    return SupervisorQueuedTimeoutReconciliationAuthorizationObservation(
+        sequence=row["sequence"],
+        observation_id=row["observation_id"],
+        flow_id=row["flow_id"],
+        source_flow_event_id=row["source_flow_event_id"],
+        source_flow_revision=row["source_flow_revision"],
+        target_flow_event_id=row["target_flow_event_id"],
+        outbox_id=row["outbox_id"],
+        reconciliation_action=row["reconciliation_action"],
+        request_digest=row["request_digest"],
+        decision_digest=row["decision_digest"],
+        effect=row["effect"],
+        derived_permission_class=PermissionClass(row["derived_permission_class"]),
+        legacy_executable=bool(row["legacy_executable"]),
+        execution_parity=bool(row["execution_parity"]),
+        payload=json.loads(row["payload_json"]),
+        observed_at=row["observed_at"],
+    )
+
+
 def _initial_control_revision() -> SupervisorControlRevision:
     return SupervisorControlRevision(
         sequence=0,
@@ -12233,6 +13431,7 @@ __all__ = [
     "SupervisorBookkeepingAuthorizationObservation",
     "SupervisorAttemptCompletionAuthorizationObservation",
     "SupervisorPreDispatchReconciliationAuthorizationObservation",
+    "SupervisorQueuedTimeoutReconciliationAuthorizationObservation",
     "SupervisorPreDispatchIntentAuthorizationObservation",
     "SUPERVISOR_DISPATCH_BLOCKERS",
     "SupervisorAuthorizationObservation",

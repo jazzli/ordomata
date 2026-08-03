@@ -62,7 +62,28 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         self.store = self._open_store()
 
     @staticmethod
+    def _remove_v12_schema(connection: sqlite3.Connection) -> None:
+        connection.executescript(
+            """
+            DROP TRIGGER supervisor_queued_timeout_reconciliation_authorization_observations_no_update;
+            DROP TRIGGER supervisor_queued_timeout_reconciliation_authorization_observations_no_delete;
+            DROP TRIGGER supervisor_queued_timeout_reconciliation_authorization_baseline_no_update;
+            DROP TRIGGER supervisor_queued_timeout_reconciliation_authorization_baseline_no_delete;
+            DROP TRIGGER supervisor_queued_timeout_reconciliation_authorization_baseline_no_insert;
+            DROP TABLE supervisor_queued_timeout_reconciliation_authorization_observations;
+            DROP TABLE supervisor_queued_timeout_reconciliation_authorization_baseline;
+            DROP TRIGGER state_schema_migrations_no_delete;
+            DELETE FROM state_schema_migrations WHERE version = 12;
+            CREATE TRIGGER state_schema_migrations_no_delete
+            BEFORE DELETE ON state_schema_migrations BEGIN
+                SELECT RAISE(ABORT, 'schema migrations are append-only');
+            END;
+            """
+        )
+
+    @staticmethod
     def _remove_v11_schema(connection: sqlite3.Connection) -> None:
+        SQLiteSupervisorStoreTests._remove_v12_schema(connection)
         connection.executescript(
             """
             DROP TRIGGER supervisor_pre_dispatch_reconciliation_authorization_observations_no_update;
@@ -332,6 +353,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
                 (9, "supervisor_pre_dispatch_intent_authorization_enforcement"),
                 (10, "supervisor_attempt_completion_authorization_shadow"),
                 (11, "supervisor_pre_dispatch_reconciliation_authorization_shadow"),
+                (12, "supervisor_queued_timeout_reconciliation_authorization_shadow"),
             ],
         )
         self.assertEqual(
@@ -512,7 +534,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
             value = connection.execute(
                 "SELECT parent_id FROM private_child"
             ).fetchone()[0]
-        self.assertEqual(version, 11)
+        self.assertEqual(version, 12)
         self.assertEqual(value, "private-value")
 
     def test_missing_v3_schema_is_a_finding_even_without_flows(self) -> None:
@@ -1849,6 +1871,99 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         ):
             self._open_store()
 
+    def test_v12_migration_baselines_existing_queued_timeout_reconciliations(
+        self,
+    ) -> None:
+        legacy = self._flow(
+            "flow-queued-timeout-legacy",
+            deadline_at=110.0,
+            resource_keys=("repo:queued-timeout-legacy",),
+        )
+        self.store.admit_flow(legacy)
+        legacy_plan = self.store.reconciliation_plan(now=111.0)
+        self.store.apply_reconciliation(
+            plan_digest=legacy_plan.plan_digest,
+            now=111.0,
+        )
+        legacy_outbox = self.store.list_pending_completions()[0]
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v12_schema(connection)
+
+        self.store = self._open_store()
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean, audit.to_mapping())
+        self.assertEqual(audit.queued_timeout_reconciliation_observation_count, 0)
+        self.assertEqual(
+            audit.expected_queued_timeout_reconciliation_observation_count,
+            0,
+        )
+        current = self._flow(
+            "flow-queued-timeout-current",
+            deadline_at=130.0,
+            resource_keys=("repo:queued-timeout-current",),
+        )
+        self.store.admit_flow(current)
+        current_plan = self.store.reconciliation_plan(now=131.0)
+        self.store.apply_reconciliation(
+            plan_digest=current_plan.plan_digest,
+            now=131.0,
+        )
+        with closing(sqlite3.connect(self.database)) as connection:
+            baseline = connection.execute(
+                """
+                SELECT outbox_id
+                FROM supervisor_queued_timeout_reconciliation_authorization_baseline
+                """
+            ).fetchall()
+        self.assertEqual(baseline, [(legacy_outbox.outbox_id,)])
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean, audit.to_mapping())
+        self.assertEqual(audit.queued_timeout_reconciliation_observation_count, 1)
+        self.assertEqual(
+            audit.expected_queued_timeout_reconciliation_observation_count,
+            1,
+        )
+
+    def test_malformed_pre_v12_queued_timeout_history_is_rejected_before_baseline(
+        self,
+    ) -> None:
+        spec = self._flow(deadline_at=110.0)
+        self.store.admit_flow(spec)
+        plan = self.store.reconciliation_plan(now=111.0)
+        self.store.apply_reconciliation(plan_digest=plan.plan_digest, now=111.0)
+        outbox = self.store.list_pending_completions()[0]
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v12_schema(connection)
+            connection.executescript(
+                """
+                DROP TRIGGER supervisor_completion_outbox_no_update;
+                """
+            )
+            connection.execute(
+                """
+                UPDATE supervisor_completion_outbox
+                SET envelope_json = '{"forged":true}'
+                WHERE outbox_id = ?
+                """,
+                (outbox.outbox_id,),
+            )
+            connection.executescript(
+                """
+                CREATE TRIGGER supervisor_completion_outbox_no_update
+                BEFORE UPDATE ON supervisor_completion_outbox BEGIN
+                    SELECT RAISE(ABORT, 'supervisor completion outbox is append-only');
+                END;
+                """
+            )
+
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "pre-v12 supervisor queued-timeout reconciliation history is invalid",
+        ):
+            self._open_store()
+
     def test_pre_dispatch_intent_shadow_persists_redacted_parity(self) -> None:
         claim = self._start_and_claim(
             self._flow(
@@ -2438,6 +2553,195 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         self.assertIn("authorization_schema_mismatch", codes)
         self.assertIn(
             "pre_dispatch_reconciliation_authorization_observation_invalid",
+            codes,
+        )
+
+    def test_queued_timeout_reconciliation_shadow_persists_redacted_parity(
+        self,
+    ) -> None:
+        spec = self._flow(
+            "flow-queued-timeout-private",
+            deadline_at=110.0,
+            resource_keys=("repo:private-queued-timeout",),
+        )
+        self.store.admit_flow(spec)
+        source = self.store.current_flow_revision(spec.flow_id)
+        plan = self.store.reconciliation_plan(now=111.0)
+        self.assertEqual(plan.actionable_count, 1)
+        self.assertEqual(plan.findings[0].action, "mark_queued_timed_out")
+        self.store.apply_reconciliation(plan_digest=plan.plan_digest, now=111.0)
+        completed = self.store.current_flow_revision(spec.flow_id)
+        outbox = self.store.list_pending_completions()[0]
+
+        observations = (
+            self.store.list_queued_timeout_reconciliation_authorization_observations(
+                spec.flow_id
+            )
+        )
+        self.assertEqual(len(observations), 1)
+        observation = observations[0]
+        self.assertEqual(observation.flow_id, spec.flow_id)
+        self.assertEqual(observation.source_flow_revision, source.revision)
+        self.assertEqual(observation.source_flow_event_id, source.event_id)
+        self.assertEqual(observation.target_flow_event_id, completed.event_id)
+        self.assertEqual(observation.outbox_id, outbox.outbox_id)
+        self.assertEqual(
+            observation.reconciliation_action,
+            "mark_queued_timed_out",
+        )
+        self.assertEqual(observation.effect, "permit")
+        self.assertEqual(
+            observation.derived_permission_class,
+            PermissionClass.LOCAL_DRAFT,
+        )
+        self.assertTrue(observation.legacy_executable)
+        self.assertTrue(observation.execution_parity)
+        serialized = json.dumps(observation.payload, sort_keys=True)
+        for private_value in (
+            spec.flow_id,
+            source.event_id,
+            completed.event_id,
+            outbox.outbox_id,
+            "repo:private-queued-timeout",
+        ):
+            self.assertNotIn(private_value, serialized)
+        self.assertEqual(
+            observation.payload["action_scope"],
+            "supervisor_local_queued_timeout_reconciliation_only",
+        )
+        reconciliation = observation.payload["queued_timeout_reconciliation"]
+        self.assertEqual(reconciliation["source"]["flow_state"], "queued")
+        self.assertEqual(reconciliation["target"]["flow_state"], "timed_out")
+        self.assertEqual(reconciliation["completion"]["state"], "timed_out")
+        self.assertTrue(reconciliation["completion"]["attempt_absent"])
+        self.assertEqual(
+            reconciliation["reconciliation"]["action"],
+            "mark_queued_timed_out",
+        )
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean, audit.to_mapping())
+        self.assertEqual(audit.queued_timeout_reconciliation_observation_count, 1)
+        self.assertEqual(
+            audit.expected_queued_timeout_reconciliation_observation_count,
+            1,
+        )
+        with closing(sqlite3.connect(self.database)) as connection:
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "append-only"):
+                connection.execute(
+                    """
+                    UPDATE supervisor_queued_timeout_reconciliation_authorization_observations
+                    SET effect = 'deny'
+                    """
+                )
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "frozen"):
+                connection.execute(
+                    """
+                    INSERT INTO supervisor_queued_timeout_reconciliation_authorization_baseline (
+                        outbox_id
+                    ) VALUES ('forged-exemption')
+                    """
+                )
+
+    def test_queued_timeout_reconciliation_shadow_failure_cannot_block_repair(
+        self,
+    ) -> None:
+        spec = self._flow(deadline_at=110.0)
+        self.store.admit_flow(spec)
+        plan = self.store.reconciliation_plan(now=111.0)
+
+        with patch(
+            "ordomata.supervisor.ShadowAuthorizationEvaluator.evaluate",
+            side_effect=RuntimeError("private shadow failure"),
+        ):
+            applied = self.store.apply_reconciliation(
+                plan_digest=plan.plan_digest,
+                now=111.0,
+            )
+
+        self.assertEqual(applied, plan.findings)
+        self.assertEqual(
+            self.store.current_flow_revision(spec.flow_id).state,
+            FlowState.TIMED_OUT,
+        )
+        self.assertEqual(len(self.store.list_pending_completions()), 1)
+        self.assertEqual(
+            self.store.list_queued_timeout_reconciliation_authorization_observations(),
+            (),
+        )
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertIn(
+            "queued_timeout_reconciliation_authorization_observation_missing",
+            {finding.code for finding in audit.findings},
+        )
+
+    def test_queued_timeout_reconciliation_shadow_audit_replays_builtin_evaluator(
+        self,
+    ) -> None:
+        spec = self._flow(deadline_at=110.0)
+        self.store.admit_flow(spec)
+        plan = self.store.reconciliation_plan(now=111.0)
+        original = supervisor_module.ShadowAuthorizationEvaluator.evaluate
+
+        def forged_first_pass(request, policy):
+            return replace(
+                original(
+                    supervisor_module.ShadowAuthorizationEvaluator(),
+                    request,
+                    policy,
+                ),
+                effect=AuthorizationEffect.DENY,
+            )
+
+        with patch(
+            "ordomata.supervisor.ShadowAuthorizationEvaluator.evaluate",
+            side_effect=forged_first_pass,
+        ):
+            self.store.apply_reconciliation(
+                plan_digest=plan.plan_digest,
+                now=111.0,
+            )
+
+        observation = (
+            self.store.list_queued_timeout_reconciliation_authorization_observations()
+        )[0]
+        self.assertEqual(observation.effect, "deny")
+        self.assertFalse(observation.execution_parity)
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertIn(
+            "queued_timeout_reconciliation_authorization_observation_invalid",
+            {finding.code for finding in audit.findings},
+        )
+
+    def test_queued_timeout_reconciliation_shadow_audit_detects_tampering(
+        self,
+    ) -> None:
+        spec = self._flow(deadline_at=110.0)
+        self.store.admit_flow(spec)
+        plan = self.store.reconciliation_plan(now=111.0)
+        self.store.apply_reconciliation(plan_digest=plan.plan_digest, now=111.0)
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                """
+                DROP TRIGGER supervisor_queued_timeout_reconciliation_authorization_observations_no_update
+                """
+            )
+            connection.execute(
+                """
+                UPDATE supervisor_queued_timeout_reconciliation_authorization_observations
+                SET payload_json = '{"tampered":true}'
+                """
+            )
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+        codes = {finding.code for finding in audit.findings}
+        self.assertFalse(audit.clean)
+        self.assertIn("authorization_schema_mismatch", codes)
+        self.assertIn(
+            "queued_timeout_reconciliation_authorization_observation_invalid",
             codes,
         )
 
@@ -3039,7 +3343,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
                 """
                 INSERT INTO state_schema_migrations (
                     version, name, script_sha256, applied_at
-                ) VALUES (12, 'future_unknown', ?, 100.0)
+                ) VALUES (13, 'future_unknown', ?, 100.0)
                 """,
                 ("0" * 64,),
             )

@@ -254,8 +254,8 @@ architecture, status, policy, routing, roadmap, plan, and research sources.
   publication path, plus mock-only supervisor flow admission, reversible local
   supervisor control transitions, local mock attempt claims, and the local
   pre-dispatch bookkeeping append. Its permit, v8 shadow, v10 local completion
-  shadow, and v11 expired-claim reconciliation shadow grant no worker
-  authority. Live,
+  shadow, v11 expired-claim reconciliation shadow, and v12 queued-deadline
+  reconciliation shadow grant no worker authority. Live,
   comparison, supervisor worker dispatch/execution, shared-publication,
   promotion, and general mediated-tool paths remain shadow-only or disabled.
 - No production inbox, calendar, Drive, Slack, deployment, or other connector
