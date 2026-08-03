@@ -1850,8 +1850,17 @@ Git-metadata, credential-shaped, ambiguous, and over-budget entries, and
 emits only digest/count evidence. It imports no filesystem or process runtime,
 creates no job tree, reads no checkout, copies no source, reconciles no patch,
 persists no state, and always reports materialization/reconciliation/worker
-execution/dispatch as disabled or unimplemented. It makes the future input
-object exact; it does not establish a frozen source snapshot or containment.
+execution/dispatch as disabled or unimplemented.
+
+`ordomata.repository_worker_job_tree_snapshot` now supplies the preceding
+read-only source-capture seam. It descends through no-follow descriptors from
+an explicit source root, rejects direct source-root aliases, symlinks,
+hardlinks, casefold ambiguity, protected and credential-shaped paths, detected
+in-capture source drift, and over-budget inputs, and retains only a bounded detached bundle with
+a digest-only public projection. It writes no source data and does not create
+a job tree, bind fresh registration evidence, establish containment, or permit
+materialization, worker execution, or dispatch. The separately derived
+source-bundle contract is still required to bind the snapshot to v4 evidence.
 
 The proposed [`worker-dispatch security design`](worker-dispatch-security-design.md)
 now fixes the next review target: a local VM-contained, fresh unprivileged

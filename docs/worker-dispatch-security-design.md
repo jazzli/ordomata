@@ -151,12 +151,13 @@ separate, explicitly gated decision.
 1. **Backend review and laboratory probe:** select one local VM/container
    runtime, record its exact supported host/runtime versions, and run only
    non-production adversarial probes. No repository worker is enabled.
-2. **Controller materialization:** the implemented v1 source-bundle contract
-   now binds a bounded controller input to registration policy without I/O; it
-   does not make a tree or establish snapshot freshness. Build the remaining
-   no-Git, no-symlink job tree and controller-owned patch reconciler. Test that
-   the primary checkout and shared Git data remain unchanged on success,
-   failure, timeout, and crash.
+2. **Controller materialization:** the implemented v1 source-snapshot seam now
+   captures bounded allowed bytes through no-follow descriptors, and the
+   source-bundle contract binds that detached input to registration policy.
+   Neither creates a tree, establishes containment, or permits execution.
+   Build the remaining no-Git, no-symlink job tree and controller-owned patch
+   reconciler. Test that the primary checkout and shared Git data remain
+   unchanged on success, failure, timeout, and crash.
 3. **Authoritative dispatch PEP:** add append-only decision and receipt
    records, exact replay, read-only audit coverage, and cancellation/lease
    rechecks. It remains connected only to a deterministic mock cell until the
