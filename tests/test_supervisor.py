@@ -62,7 +62,28 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         self.store = self._open_store()
 
     @staticmethod
+    def _remove_v8_schema(connection: sqlite3.Connection) -> None:
+        connection.executescript(
+            """
+            DROP TRIGGER supervisor_pre_dispatch_intent_authorization_observations_no_update;
+            DROP TRIGGER supervisor_pre_dispatch_intent_authorization_observations_no_delete;
+            DROP TRIGGER supervisor_pre_dispatch_intent_authorization_baseline_no_update;
+            DROP TRIGGER supervisor_pre_dispatch_intent_authorization_baseline_no_delete;
+            DROP TRIGGER supervisor_pre_dispatch_intent_authorization_baseline_no_insert;
+            DROP TABLE supervisor_pre_dispatch_intent_authorization_observations;
+            DROP TABLE supervisor_pre_dispatch_intent_authorization_baseline;
+            DROP TRIGGER state_schema_migrations_no_delete;
+            DELETE FROM state_schema_migrations WHERE version = 8;
+            CREATE TRIGGER state_schema_migrations_no_delete
+            BEFORE DELETE ON state_schema_migrations BEGIN
+                SELECT RAISE(ABORT, 'schema migrations are append-only');
+            END;
+            """
+        )
+
+    @staticmethod
     def _remove_v7_schema(connection: sqlite3.Connection) -> None:
+        SQLiteSupervisorStoreTests._remove_v8_schema(connection)
         connection.executescript(
             """
             DROP TRIGGER supervisor_attempt_claim_authorization_action_receipts_no_update;
@@ -241,6 +262,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
                 (5, "supervisor_control_authorization_enforcement"),
                 (6, "supervisor_flow_admission_authorization_enforcement"),
                 (7, "supervisor_attempt_claim_authorization_enforcement"),
+                (8, "supervisor_pre_dispatch_intent_authorization_shadow"),
             ],
         )
         self.assertEqual(
@@ -421,7 +443,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
             value = connection.execute(
                 "SELECT parent_id FROM private_child"
             ).fetchone()[0]
-        self.assertEqual(version, 7)
+        self.assertEqual(version, 8)
         self.assertEqual(value, "private-value")
 
     def test_missing_v3_schema_is_a_finding_even_without_flows(self) -> None:
@@ -1269,6 +1291,222 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         self.assertIn("attempt_claim_authorization_decision_invalid", codes)
         self.assertIn("attempt_claim_authorization_receipt_invalid", codes)
 
+    def test_pre_dispatch_intent_shadow_persists_redacted_parity(self) -> None:
+        claim = self._start_and_claim(
+            self._flow(
+                "flow-pre-dispatch-private",
+                resource_keys=("repo:private-project",),
+            )
+        )
+
+        self.assertEqual(
+            self.store.renew_claim(claim, ttl_seconds=20.0, now=101.0),
+            121.0,
+        )
+        target = self.store.mark_attempt_dispatching(claim, now=102.0)
+
+        observations = self.store.list_pre_dispatch_intent_authorization_observations(
+            claim.attempt.attempt_id
+        )
+        self.assertEqual(len(observations), 1)
+        observation = observations[0]
+        self.assertEqual(observation.flow_id, claim.flow.flow_id)
+        self.assertEqual(observation.attempt_id, claim.attempt.attempt_id)
+        self.assertEqual(observation.source_flow_revision, claim.flow_revision.revision)
+        self.assertEqual(observation.target_attempt_event_id, target.event_id)
+        self.assertEqual(observation.effect, "permit")
+        self.assertEqual(
+            observation.derived_permission_class,
+            PermissionClass.LOCAL_DRAFT,
+        )
+        self.assertTrue(observation.legacy_executable)
+        self.assertTrue(observation.execution_parity)
+        serialized = json.dumps(observation.payload, sort_keys=True)
+        for private_value in (
+            claim.flow.flow_id,
+            claim.attempt.attempt_id,
+            claim.attempt.run_id,
+            claim.attempt.lease_owner,
+            "repo:private-project",
+            target.event_id,
+        ):
+            self.assertNotIn(private_value, serialized)
+        self.assertEqual(
+            observation.payload["action_scope"],
+            "supervisor_local_attempt_pre_dispatch_intent_only",
+        )
+        self.assertEqual(
+            observation.payload["pre_dispatch_intent"]["target"]["attempt_state"],
+            "dispatching",
+        )
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean, audit.to_mapping())
+        self.assertEqual(audit.pre_dispatch_intent_observation_count, 1)
+        self.assertEqual(audit.expected_pre_dispatch_intent_observation_count, 1)
+        with closing(sqlite3.connect(self.database)) as connection:
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "append-only"):
+                connection.execute(
+                    """
+                    UPDATE supervisor_pre_dispatch_intent_authorization_observations
+                    SET effect = 'deny'
+                    """
+                )
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "frozen"):
+                connection.execute(
+                    """
+                    INSERT INTO supervisor_pre_dispatch_intent_authorization_baseline (
+                        attempt_event_id
+                    ) VALUES ('forged-exemption')
+                    """
+                )
+
+    def test_pre_dispatch_shadow_failure_cannot_block_local_intent(self) -> None:
+        claim = self._start_and_claim()
+
+        with patch(
+            "ordomata.supervisor.ShadowAuthorizationEvaluator.evaluate",
+            side_effect=RuntimeError("private shadow failure"),
+        ):
+            target = self.store.mark_attempt_dispatching(claim, now=101.0)
+
+        self.assertEqual(target.state, supervisor_module.AttemptState.DISPATCHING)
+        self.assertEqual(
+            self.store.list_pre_dispatch_intent_authorization_observations(),
+            (),
+        )
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertIn(
+            "pre_dispatch_intent_authorization_observation_missing",
+            {finding.code for finding in audit.findings},
+        )
+
+    def test_pre_dispatch_shadow_audit_replays_the_builtin_evaluator(self) -> None:
+        claim = self._start_and_claim()
+        original = supervisor_module.ShadowAuthorizationEvaluator.evaluate
+
+        def forged_first_pass(request, policy):
+            return replace(
+                original(supervisor_module.ShadowAuthorizationEvaluator(), request, policy),
+                effect=AuthorizationEffect.DENY,
+            )
+
+        with patch(
+            "ordomata.supervisor.ShadowAuthorizationEvaluator.evaluate",
+            side_effect=forged_first_pass,
+        ):
+            target = self.store.mark_attempt_dispatching(claim, now=101.0)
+
+        self.assertEqual(target.state, supervisor_module.AttemptState.DISPATCHING)
+        observation = self.store.list_pre_dispatch_intent_authorization_observations()[0]
+        self.assertEqual(observation.effect, "deny")
+        self.assertFalse(observation.execution_parity)
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertIn(
+            "pre_dispatch_intent_authorization_observation_invalid",
+            {finding.code for finding in audit.findings},
+        )
+
+    def test_pre_dispatch_shadow_audit_detects_tampering(self) -> None:
+        claim = self._start_and_claim()
+        self.store.mark_attempt_dispatching(claim, now=101.0)
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                """
+                DROP TRIGGER supervisor_pre_dispatch_intent_authorization_observations_no_update
+                """
+            )
+            connection.execute(
+                """
+                UPDATE supervisor_pre_dispatch_intent_authorization_observations
+                SET payload_json = '{"tampered":true}'
+                """
+            )
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+        codes = {finding.code for finding in audit.findings}
+        self.assertFalse(audit.clean)
+        self.assertIn("authorization_schema_mismatch", codes)
+        self.assertIn("pre_dispatch_intent_authorization_observation_invalid", codes)
+
+    def test_v8_migration_baselines_existing_pre_dispatch_intents(self) -> None:
+        legacy = self._start_and_claim()
+        legacy_target = self.store.mark_attempt_dispatching(legacy, now=101.0)
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v8_schema(connection)
+
+        self.store = self._open_store()
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean, audit.to_mapping())
+        self.assertEqual(audit.pre_dispatch_intent_observation_count, 0)
+        self.assertEqual(audit.expected_pre_dispatch_intent_observation_count, 0)
+        current = self._flow(
+            "flow-pre-dispatch-current",
+            resource_keys=("repo:current-project",),
+        )
+        self.store.admit_flow(current)
+        current_claim = self.store.try_claim_next(
+            instance_owner="supervisor/instance-000000000001",
+            expected_control_revision=1,
+            ttl_seconds=20.0,
+            now=101.0,
+        )
+        self.assertIsNotNone(current_claim)
+        assert current_claim is not None
+        self.store.mark_attempt_dispatching(current_claim, now=102.0)
+        with closing(sqlite3.connect(self.database)) as connection:
+            baseline = connection.execute(
+                """
+                SELECT attempt_event_id
+                FROM supervisor_pre_dispatch_intent_authorization_baseline
+                """
+            ).fetchall()
+        self.assertEqual(baseline, [(legacy_target.event_id,)])
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean, audit.to_mapping())
+        self.assertEqual(audit.pre_dispatch_intent_observation_count, 1)
+        self.assertEqual(audit.expected_pre_dispatch_intent_observation_count, 1)
+
+    def test_malformed_pre_v8_dispatch_intent_history_is_rejected_before_baseline(
+        self,
+    ) -> None:
+        claim = self._start_and_claim()
+        self.store.mark_attempt_dispatching(claim, now=101.0)
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v8_schema(connection)
+            connection.executescript(
+                """
+                DROP TRIGGER supervisor_attempt_events_no_update;
+                """
+            )
+            connection.execute(
+                """
+                UPDATE supervisor_attempt_events
+                SET reason_code = 'forged_dispatch_intent'
+                WHERE attempt_id = ? AND state = 'dispatching'
+                """,
+                (claim.attempt.attempt_id,),
+            )
+            connection.executescript(
+                """
+                CREATE TRIGGER supervisor_attempt_events_no_update
+                BEFORE UPDATE ON supervisor_attempt_events BEGIN
+                    SELECT RAISE(ABORT, 'supervisor attempt events are append-only');
+                END;
+                """
+            )
+
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "pre-v8 supervisor pre-dispatch intent history is invalid",
+        ):
+            self._open_store()
+
     def test_v7_migration_baselines_existing_attempts_before_enforcement(self) -> None:
         legacy = self._start_and_claim()
         self.store.close()
@@ -1792,7 +2030,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
                 """
                 INSERT INTO state_schema_migrations (
                     version, name, script_sha256, applied_at
-                ) VALUES (8, 'future_unknown', ?, 100.0)
+                ) VALUES (9, 'future_unknown', ?, 100.0)
                 """,
                 ("0" * 64,),
             )

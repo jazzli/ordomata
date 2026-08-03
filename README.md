@@ -56,8 +56,10 @@ disabled.
 - Authoritative Class 1 policy-enforcement points for new profile-backed exact
   built-in mock admission, mock execution, and private local-candidate
   publication, plus mock-only supervisor flow admission, local attempt claims,
-  and reversible local supervisor control transitions. Other paths remain
-  shadow-only or disabled.
+  and reversible local supervisor control transitions. The library-only
+  `created` → `dispatching` supervisor intent has a separate non-authoritative,
+  redacted shadow; it does not dispatch a worker. Other paths remain shadow-only
+  or disabled.
 - Read-only authorization and supervisor inspection that reports fixed,
   privacy-bounded findings without repairing history.
 - A foreground, dispatch-disabled supervisor control-plane tracer with
@@ -244,7 +246,9 @@ architecture, status, policy, routing, roadmap, plan, and research sources.
 - Authoritative attribute-based access-control coverage remains limited to the
   narrow exact built-in-mock Class 1 admission, dispatch, and private
   publication path, plus mock-only supervisor flow admission, reversible local
-  supervisor control transitions, and local mock attempt claims. Live,
+  supervisor control transitions, and local mock attempt claims. The local
+  pre-dispatch-intent shadow is observational only and grants no worker
+  authority. Live,
   comparison, supervisor worker dispatch/execution, shared-publication,
   promotion, and general mediated-tool paths remain shadow-only or disabled.
 - No production inbox, calendar, Drive, Slack, deployment, or other connector

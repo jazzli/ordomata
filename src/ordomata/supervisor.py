@@ -253,8 +253,15 @@ _REASON_CODE = re.compile(r"[a-z0-9_]{1,100}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _RESOURCE_KEY = re.compile(r"[a-z0-9][a-z0-9._:/-]{0,199}")
 _MAX_JSON_BYTES = 262_144
-_SCHEMA_VERSION = 7
+_SCHEMA_VERSION = 8
 _FOREGROUND_LEASE_KEY = "supervisor:foreground"
+_PRE_DISPATCH_INTENT_BOUNDARY = "attempt_pre_dispatch_intent"
+_PRE_DISPATCH_INTENT_ACTION_SCOPE = (
+    "supervisor_local_attempt_pre_dispatch_intent_only"
+)
+_PRE_DISPATCH_INTENT_OPERATION = "supervisor.attempt_pre_dispatch_intent"
+# The read-only audit must not inherit a patched first-pass shadow evaluator.
+_BUILTIN_PRE_DISPATCH_SHADOW_EVALUATE = ShadowAuthorizationEvaluator.evaluate
 SUPERVISOR_DISPATCH_BLOCKERS = (
     "runtime_abac_enforcement_not_implemented",
     "repository_worker_containment_not_proven",
@@ -358,6 +365,28 @@ class SupervisorBookkeepingAuthorizationObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class SupervisorPreDispatchIntentAuthorizationObservation:
+    """One non-authoritative, privacy-bounded local pre-dispatch observation."""
+
+    sequence: int
+    observation_id: str
+    flow_id: str
+    attempt_id: str
+    source_flow_event_id: str
+    source_flow_revision: int
+    source_attempt_event_id: str
+    target_attempt_event_id: str
+    request_digest: str
+    decision_digest: str
+    effect: str
+    derived_permission_class: PermissionClass
+    legacy_executable: bool
+    execution_parity: bool
+    payload: Mapping[str, Any]
+    observed_at: float
+
+
+@dataclass(frozen=True, slots=True)
 class SupervisorAuthorizationFinding:
     code: str
     flow_id: str | None
@@ -388,6 +417,8 @@ class SupervisorAuthorizationAudit:
     expected_flow_admission_enforcement_record_count: int = 0
     attempt_claim_enforcement_record_count: int = 0
     expected_attempt_claim_enforcement_record_count: int = 0
+    pre_dispatch_intent_observation_count: int = 0
+    expected_pre_dispatch_intent_observation_count: int = 0
 
     @property
     def clean(self) -> bool:
@@ -416,6 +447,12 @@ class SupervisorAuthorizationAudit:
             ),
             "expected_attempt_claim_enforcement_record_count": (
                 self.expected_attempt_claim_enforcement_record_count
+            ),
+            "pre_dispatch_intent_observation_count": (
+                self.pre_dispatch_intent_observation_count
+            ),
+            "expected_pre_dispatch_intent_observation_count": (
+                self.expected_pre_dispatch_intent_observation_count
             ),
             "finding_count": len(self.findings),
             "clean": self.clean,
@@ -446,6 +483,16 @@ class _SupervisorFlowAdmissionEnforcementAudit:
 @dataclass(frozen=True, slots=True)
 class _SupervisorAttemptClaimEnforcementAudit:
     """Internal read-only replay summary for the attempt-claim PEP."""
+
+    schema_present: bool
+    record_count: int
+    expected_record_count: int
+    findings: tuple[SupervisorAuthorizationFinding, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _SupervisorPreDispatchIntentShadowAudit:
+    """Internal read-only replay summary for the pre-dispatch shadow."""
 
     schema_present: bool
     record_count: int
@@ -1283,6 +1330,80 @@ END;
 """
 
 
+_SCHEMA_V8 = """
+CREATE TABLE supervisor_pre_dispatch_intent_authorization_baseline (
+    attempt_event_id TEXT PRIMARY KEY
+        REFERENCES supervisor_attempt_events(event_id)
+);
+INSERT INTO supervisor_pre_dispatch_intent_authorization_baseline (
+    attempt_event_id
+)
+    SELECT event_id FROM supervisor_attempt_events
+    WHERE state = 'dispatching';
+
+CREATE TABLE supervisor_pre_dispatch_intent_authorization_observations (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    observation_id TEXT NOT NULL UNIQUE CHECK (length(observation_id) <= 256),
+    target_attempt_event_id TEXT NOT NULL UNIQUE CHECK (
+        length(target_attempt_event_id) <= 256
+    ) REFERENCES supervisor_attempt_events(event_id),
+    source_attempt_event_id TEXT NOT NULL UNIQUE CHECK (
+        length(source_attempt_event_id) <= 256
+    ) REFERENCES supervisor_attempt_events(event_id),
+    attempt_id TEXT NOT NULL REFERENCES supervisor_attempts(attempt_id),
+    flow_id TEXT NOT NULL REFERENCES supervisor_flows(flow_id),
+    source_flow_event_id TEXT NOT NULL CHECK (
+        length(source_flow_event_id) <= 256
+    ) REFERENCES supervisor_flow_revisions(event_id),
+    source_flow_revision INTEGER NOT NULL CHECK (source_flow_revision >= 1),
+    flow_request_digest TEXT NOT NULL CHECK (length(flow_request_digest) = 64),
+    input_digest TEXT NOT NULL CHECK (length(input_digest) = 64),
+    lease_snapshot_digest TEXT NOT NULL CHECK (
+        length(lease_snapshot_digest) = 71
+    ),
+    request_digest TEXT NOT NULL CHECK (length(request_digest) = 71),
+    decision_digest TEXT NOT NULL CHECK (length(decision_digest) = 71),
+    effect TEXT NOT NULL CHECK (effect IN ('permit', 'defer', 'deny', 'indeterminate')),
+    derived_permission_class INTEGER NOT NULL CHECK (
+        derived_permission_class IN (0, 1, 2, 3)
+    ),
+    legacy_executable INTEGER NOT NULL CHECK (legacy_executable IN (0, 1)),
+    execution_parity INTEGER NOT NULL CHECK (execution_parity IN (0, 1)),
+    payload_json TEXT NOT NULL CHECK (length(payload_json) <= 262144),
+    observed_at REAL NOT NULL CHECK (observed_at >= 0),
+    CHECK (source_attempt_event_id != target_attempt_event_id)
+);
+CREATE INDEX supervisor_pre_dispatch_intent_authorization_attempt
+    ON supervisor_pre_dispatch_intent_authorization_observations(
+        attempt_id, sequence
+    );
+CREATE INDEX supervisor_pre_dispatch_intent_authorization_target
+    ON supervisor_pre_dispatch_intent_authorization_observations(
+        target_attempt_event_id, sequence
+    );
+CREATE TRIGGER supervisor_pre_dispatch_intent_authorization_baseline_no_update
+BEFORE UPDATE ON supervisor_pre_dispatch_intent_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor pre-dispatch intent authorization baseline is append-only');
+END;
+CREATE TRIGGER supervisor_pre_dispatch_intent_authorization_baseline_no_delete
+BEFORE DELETE ON supervisor_pre_dispatch_intent_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor pre-dispatch intent authorization baseline is append-only');
+END;
+CREATE TRIGGER supervisor_pre_dispatch_intent_authorization_baseline_no_insert
+BEFORE INSERT ON supervisor_pre_dispatch_intent_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor pre-dispatch intent authorization baseline is frozen');
+END;
+CREATE TRIGGER supervisor_pre_dispatch_intent_authorization_observations_no_update
+BEFORE UPDATE ON supervisor_pre_dispatch_intent_authorization_observations BEGIN
+    SELECT RAISE(ABORT, 'supervisor pre-dispatch intent authorization observations are append-only');
+END;
+CREATE TRIGGER supervisor_pre_dispatch_intent_authorization_observations_no_delete
+BEFORE DELETE ON supervisor_pre_dispatch_intent_authorization_observations BEGIN
+    SELECT RAISE(ABORT, 'supervisor pre-dispatch intent authorization observations are append-only');
+END;
+"""
+
+
 class SQLiteSupervisorStore:
     """Supervisor-specific event store sharing the existing local SQLite file."""
 
@@ -1387,6 +1508,7 @@ class SQLiteSupervisorStore:
                     5: _SCHEMA_V5,
                     6: _SCHEMA_V6,
                     7: _SCHEMA_V7,
+                    8: _SCHEMA_V8,
                 }
                 for version, script in migration_scripts.items():
                     if _sha256_text(script) != _KNOWN_STATE_MIGRATIONS[version][1]:
@@ -1411,6 +1533,11 @@ class SQLiteSupervisorStore:
                     if version == 7:
                         _verify_pre_v7_supervisor_schema(self._connection)
                         _verify_pre_v7_attempt_history(self._connection)
+                    if version == 8:
+                        _verify_pre_v8_supervisor_schema(self._connection)
+                        _verify_pre_v8_pre_dispatch_intent_history(
+                            self._connection
+                        )
                     _execute_schema_script(
                         self._connection,
                         migration_scripts[version],
@@ -1742,6 +1869,40 @@ class SQLiteSupervisorStore:
             ).fetchall()
         return tuple(
             _bookkeeping_authorization_observation_from_row(row) for row in rows
+        )
+
+    def list_pre_dispatch_intent_authorization_observations(
+        self,
+        attempt_id: str | None = None,
+    ) -> tuple[SupervisorPreDispatchIntentAuthorizationObservation, ...]:
+        """Return non-authoritative local pre-dispatch shadow records.
+
+        These records describe only the append-only ``dispatching`` intent
+        transition. They are not an authorization permit and never dispatch a
+        worker, runner, model, subprocess, repository action, or network call.
+        """
+
+        if attempt_id is not None:
+            _validate_text(attempt_id, "attempt_id", maximum=256)
+        with self._lock:
+            if attempt_id is None:
+                rows = self._connection.execute(
+                    """
+                    SELECT * FROM supervisor_pre_dispatch_intent_authorization_observations
+                    ORDER BY sequence
+                    """
+                ).fetchall()
+            else:
+                rows = self._connection.execute(
+                    """
+                    SELECT * FROM supervisor_pre_dispatch_intent_authorization_observations
+                    WHERE attempt_id = ? ORDER BY sequence
+                    """,
+                    (attempt_id,),
+                ).fetchall()
+        return tuple(
+            _pre_dispatch_intent_authorization_observation_from_row(row)
+            for row in rows
         )
 
     def flow_state_counts(self) -> dict[str, int]:
@@ -2698,6 +2859,111 @@ class SQLiteSupervisorStore:
             ),
         )
 
+    def _append_pre_dispatch_intent_authorization_observation(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        spec: FlowSpec,
+        attempt: AttemptRecord,
+        source_flow: FlowRevision,
+        source_attempt: AttemptEvent,
+        target_attempt: AttemptEvent,
+        observed_at: float,
+        legacy_executable: bool,
+    ) -> None:
+        """Append a best-effort shadow for a local dispatching-state intent.
+
+        This method is intentionally non-authoritative.  The caller wraps it
+        so an evaluator or evidence-persistence failure cannot alter the
+        already validated local state transition, and it cannot dispatch work.
+        """
+
+        lease_snapshot = _pre_dispatch_intent_lease_snapshot(
+            connection,
+            attempt=attempt,
+            observed_at=observed_at,
+        )
+        request, policy, intent = (
+            _supervisor_pre_dispatch_intent_authorization_request(
+                spec=spec,
+                attempt=attempt,
+                source_flow=source_flow,
+                source_attempt=source_attempt,
+                target_attempt=target_attempt,
+                lease_snapshot=lease_snapshot,
+                observed_at=observed_at,
+            )
+        )
+        decision = ShadowAuthorizationEvaluator().evaluate(request, policy)
+        parity = (decision.effect.value == "permit") == legacy_executable
+        payload = {
+            "mode": "shadow",
+            "boundary": _PRE_DISPATCH_INTENT_BOUNDARY,
+            "action_scope": _PRE_DISPATCH_INTENT_ACTION_SCOPE,
+            "pre_dispatch_intent": intent,
+            "pre_dispatch_intent_digest": canonical_digest(intent),
+            "request": request.to_canonical(),
+            "request_digest": request.digest,
+            "decision": decision.to_canonical(),
+            "decision_digest": decision.digest,
+            "legacy_executable": legacy_executable,
+            "execution_parity": parity,
+        }
+        payload_json = _bounded_json(
+            payload,
+            "pre-dispatch intent authorization payload",
+        )
+        lease_snapshot_digest = intent["source"]["lease_snapshot_digest"]
+        values = (
+            self._new_id("pre_dispatch_intent_authorization"),
+            target_attempt.event_id,
+            source_attempt.event_id,
+            attempt.attempt_id,
+            attempt.flow_id,
+            source_flow.event_id,
+            source_flow.revision,
+            spec.request_digest,
+            attempt.input_digest,
+            lease_snapshot_digest,
+            request.digest,
+            decision.digest,
+            decision.effect.value,
+            int(decision.derived_permission_class),
+            int(legacy_executable),
+            int(parity),
+            payload_json,
+            float(observed_at),
+        )
+        connection.execute(
+            """
+            INSERT INTO supervisor_pre_dispatch_intent_authorization_observations (
+                observation_id, target_attempt_event_id, source_attempt_event_id,
+                attempt_id, flow_id, source_flow_event_id, source_flow_revision,
+                flow_request_digest, input_digest, lease_snapshot_digest,
+                request_digest, decision_digest, effect, derived_permission_class,
+                legacy_executable, execution_parity, payload_json, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+        row = connection.execute(
+            """
+            SELECT observation_id, target_attempt_event_id, source_attempt_event_id,
+                   attempt_id, flow_id, source_flow_event_id, source_flow_revision,
+                   flow_request_digest, input_digest, lease_snapshot_digest,
+                   request_digest, decision_digest, effect,
+                   derived_permission_class, legacy_executable, execution_parity,
+                   payload_json, observed_at
+            FROM supervisor_pre_dispatch_intent_authorization_observations
+            WHERE target_attempt_event_id = ?
+            """,
+            (target_attempt.event_id,),
+        ).fetchone()
+        if row is None or tuple(row) != values:
+            raise SupervisorError(
+                "pre-dispatch intent authorization persistence is uncertain"
+            )
+
     def mark_attempt_dispatching(
         self,
         claim: AttemptClaim,
@@ -2721,14 +2987,39 @@ class SQLiteSupervisorStore:
                 raise StaleRevisionError("attempt revision is stale")
             if current.state is not AttemptState.CREATED:
                 raise ValidationError("only a created attempt may begin dispatch")
-            return self._insert_attempt_event(
+            target_event_id = self._new_id("attempt_event")
+            target = self._insert_attempt_event(
                 connection,
                 attempt_id=attempt.attempt_id,
                 revision=current.revision + 1,
                 state=AttemptState.DISPATCHING,
                 reason_code="dispatch_intent_recorded",
                 occurred_at=timestamp,
+                event_id=target_event_id,
             )
+            try:
+                flow_row = connection.execute(
+                    "SELECT * FROM supervisor_flows WHERE flow_id = ?",
+                    (attempt.flow_id,),
+                ).fetchone()
+                if flow_row is None:
+                    raise SupervisorError("flow was not found")
+                self._append_pre_dispatch_intent_authorization_observation(
+                    connection,
+                    spec=_flow_from_row(flow_row),
+                    attempt=attempt,
+                    source_flow=current_flow,
+                    source_attempt=current,
+                    target_attempt=target,
+                    observed_at=timestamp,
+                    legacy_executable=True,
+                )
+            except Exception:
+                # Shadow evidence is deliberately non-authoritative.  The
+                # transition records local intent only; it never starts a
+                # worker, and a shadow failure cannot change that outcome.
+                pass
+            return target
 
     def renew_claim(
         self,
@@ -3666,12 +3957,16 @@ def _inspect_supervisor_authorization_connection(
     attempt_claim_enforcement = (
         _inspect_attempt_claim_enforcement_connection(connection)
     )
+    pre_dispatch_intent = (
+        _inspect_pre_dispatch_intent_authorization_connection(connection)
+    )
     findings = (
         *flow.findings,
         *bookkeeping.findings,
         *control_enforcement.findings,
         *flow_admission_enforcement.findings,
         *attempt_claim_enforcement.findings,
+        *pre_dispatch_intent.findings,
         *guard_findings,
     )
     return SupervisorAuthorizationAudit(
@@ -3682,12 +3977,18 @@ def _inspect_supervisor_authorization_connection(
             and control_enforcement.schema_present
             and flow_admission_enforcement.schema_present
             and attempt_claim_enforcement.schema_present
+            and pre_dispatch_intent.schema_present
             and not guard_findings
         ),
-        observation_count=flow.observation_count + bookkeeping.observation_count,
+        observation_count=(
+            flow.observation_count
+            + bookkeeping.observation_count
+            + pre_dispatch_intent.record_count
+        ),
         expected_observation_count=(
             flow.expected_observation_count
             + bookkeeping.expected_observation_count
+            + pre_dispatch_intent.expected_record_count
         ),
         findings=findings,
         control_enforcement_record_count=control_enforcement.record_count,
@@ -3705,6 +4006,10 @@ def _inspect_supervisor_authorization_connection(
         ),
         expected_attempt_claim_enforcement_record_count=(
             attempt_claim_enforcement.expected_record_count
+        ),
+        pre_dispatch_intent_observation_count=pre_dispatch_intent.record_count,
+        expected_pre_dispatch_intent_observation_count=(
+            pre_dispatch_intent.expected_record_count
         ),
     )
 
@@ -5136,6 +5441,272 @@ def _inspect_attempt_claim_enforcement_connection(
     )
 
 
+def _inspect_pre_dispatch_intent_authorization_connection(
+    connection: sqlite3.Connection,
+) -> _SupervisorPreDispatchIntentShadowAudit:
+    """Replay only post-v8 local ``dispatching`` intent shadows without repair."""
+
+    tables = _table_names(connection)
+    required = {
+        "supervisor_flows",
+        "supervisor_flow_revisions",
+        "supervisor_attempts",
+        "supervisor_attempt_events",
+        "supervisor_pre_dispatch_intent_authorization_baseline",
+        "supervisor_pre_dispatch_intent_authorization_observations",
+    }
+    if not required.issubset(tables):
+        return _SupervisorPreDispatchIntentShadowAudit(
+            False,
+            0,
+            0,
+            (
+                SupervisorAuthorizationFinding(
+                    "pre_dispatch_intent_authorization_schema_missing",
+                    None,
+                    _PRE_DISPATCH_INTENT_BOUNDARY,
+                    None,
+                ),
+            ),
+        )
+    try:
+        flow_rows = connection.execute(
+            "SELECT * FROM supervisor_flows ORDER BY flow_id"
+        ).fetchall()
+        flow_rows_by_id = {row["flow_id"]: row for row in flow_rows}
+        revision_rows_by_flow: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_flow_revisions ORDER BY flow_id, revision"
+        ).fetchall():
+            revision_rows_by_flow.setdefault(row["flow_id"], []).append(row)
+        attempt_rows = connection.execute(
+            "SELECT * FROM supervisor_attempts ORDER BY flow_id, attempt_number"
+        ).fetchall()
+        attempt_rows_by_id = {row["attempt_id"]: row for row in attempt_rows}
+        attempt_flow_ids = {
+            row["attempt_id"]: row["flow_id"] for row in attempt_rows
+        }
+        event_rows_by_attempt: dict[str, list[sqlite3.Row]] = {}
+        event_rows_by_id: dict[str, sqlite3.Row] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_attempt_events ORDER BY attempt_id, revision"
+        ).fetchall():
+            event_rows_by_attempt.setdefault(row["attempt_id"], []).append(row)
+            event_rows_by_id[row["event_id"]] = row
+        baseline = {
+            row["attempt_event_id"]
+            for row in connection.execute(
+                """
+                SELECT attempt_event_id
+                FROM supervisor_pre_dispatch_intent_authorization_baseline
+                """
+            ).fetchall()
+        }
+        observation_rows = connection.execute(
+            """
+            SELECT * FROM supervisor_pre_dispatch_intent_authorization_observations
+            ORDER BY sequence
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        return _SupervisorPreDispatchIntentShadowAudit(
+            False,
+            0,
+            0,
+            (
+                SupervisorAuthorizationFinding(
+                    "pre_dispatch_intent_authorization_schema_unreadable",
+                    None,
+                    _PRE_DISPATCH_INTENT_BOUNDARY,
+                    None,
+                ),
+            ),
+        )
+
+    findings: list[SupervisorAuthorizationFinding] = []
+    for event_id in sorted(baseline):
+        row = event_rows_by_id.get(event_id)
+        if (
+            row is None
+            or row["state"] != AttemptState.DISPATCHING.value
+            or row["reason_code"] != "dispatch_intent_recorded"
+        ):
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "pre_dispatch_intent_authorization_baseline_invalid",
+                    None,
+                    _PRE_DISPATCH_INTENT_BOUNDARY,
+                    None,
+                    _audit_attempt_event_reference(event_id),
+                )
+            )
+
+    dispatch_rows = [
+        row
+        for rows in event_rows_by_attempt.values()
+        for row in rows
+        if row["state"] == AttemptState.DISPATCHING.value
+    ]
+    dispatch_rows.sort(key=lambda row: (row["attempt_id"], row["revision"]))
+    expected_rows = [
+        row for row in dispatch_rows if row["event_id"] not in baseline
+    ]
+    expected_ids = {row["event_id"] for row in expected_rows}
+    observations_by_target: dict[str, list[sqlite3.Row]] = {}
+    for row in observation_rows:
+        observations_by_target.setdefault(row["target_attempt_event_id"], []).append(
+            row
+        )
+
+    for target_row in expected_rows:
+        target_id = target_row["event_id"]
+        target_reference = _audit_attempt_event_reference(target_id)
+        attempt_row = attempt_rows_by_id.get(target_row["attempt_id"])
+        flow_reference = (
+            None
+            if attempt_row is None
+            else _audit_flow_reference(attempt_row["flow_id"])
+        )
+        matches = observations_by_target.get(target_id, [])
+        if len(matches) != 1:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    (
+                        "pre_dispatch_intent_authorization_observation_missing"
+                        if not matches
+                        else "pre_dispatch_intent_authorization_observation_duplicated"
+                    ),
+                    flow_reference,
+                    _PRE_DISPATCH_INTENT_BOUNDARY,
+                    None,
+                    target_reference,
+                )
+            )
+            continue
+        source: tuple[
+            FlowSpec,
+            AttemptRecord,
+            FlowRevision,
+            AttemptEvent,
+            AttemptEvent,
+        ] | None = None
+        try:
+            if attempt_row is None:
+                raise ValidationError("attempt source is missing")
+            attempt = _attempt_from_row(attempt_row)
+            flow_row = flow_rows_by_id.get(attempt.flow_id)
+            if flow_row is None:
+                raise ValidationError("flow source is missing")
+            spec = _flow_from_row(flow_row)
+            _validate_flow_spec(spec)
+            if flow_row["request_digest"] != spec.request_digest:
+                raise ValidationError("flow request digest is invalid")
+            revisions = revision_rows_by_flow.get(attempt.flow_id, [])
+            _verify_flow_revision_lineage(
+                attempt.flow_id,
+                revisions,
+                attempt_flow_ids,
+            )
+            events = _verify_attempt_claim_history(
+                attempt=attempt,
+                spec=spec,
+                revision_rows=revisions,
+                event_rows=event_rows_by_attempt.get(attempt.attempt_id, []),
+            )
+            dispatch_events = _verify_pre_dispatch_intent_history(
+                attempt=attempt,
+                revision_rows=revisions,
+                events=events,
+            )
+            target = next(
+                event for event in dispatch_events if event.event_id == target_id
+            )
+            source_attempt = events[target.revision - 2]
+            source_flow = _flow_revision_from_row(
+                revisions[attempt.claimed_revision]
+            )
+            source = (spec, attempt, source_flow, source_attempt, target)
+        except Exception:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "pre_dispatch_intent_authorization_source_invalid",
+                    flow_reference,
+                    _PRE_DISPATCH_INTENT_BOUNDARY,
+                    None,
+                    target_reference,
+                )
+            )
+
+        if source is None:
+            continue
+        spec, attempt, source_flow, source_attempt, target = source
+        try:
+            expected_values = _expected_pre_dispatch_intent_observation_values(
+                matches[0],
+                spec=spec,
+                attempt=attempt,
+                source_flow=source_flow,
+                source_attempt=source_attempt,
+                target_attempt=target,
+            )
+        except Exception:
+            expected_values = None
+        if (
+            expected_values is None
+            or tuple(
+                matches[0][field]
+                for field in (
+                    "target_attempt_event_id",
+                    "source_attempt_event_id",
+                    "attempt_id",
+                    "flow_id",
+                    "source_flow_event_id",
+                    "source_flow_revision",
+                    "flow_request_digest",
+                    "input_digest",
+                    "lease_snapshot_digest",
+                    "request_digest",
+                    "decision_digest",
+                    "effect",
+                    "derived_permission_class",
+                    "legacy_executable",
+                    "execution_parity",
+                    "payload_json",
+                    "observed_at",
+                )
+            )
+            != expected_values
+        ):
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "pre_dispatch_intent_authorization_observation_invalid",
+                    flow_reference,
+                    _PRE_DISPATCH_INTENT_BOUNDARY,
+                    int(matches[0]["sequence"]),
+                    target_reference,
+                )
+            )
+
+    for target_id, rows in observations_by_target.items():
+        if target_id not in expected_ids:
+            for row in rows:
+                findings.append(
+                    SupervisorAuthorizationFinding(
+                        "pre_dispatch_intent_authorization_observation_unexpected",
+                        _audit_flow_reference(row["flow_id"]),
+                        _PRE_DISPATCH_INTENT_BOUNDARY,
+                        int(row["sequence"]),
+                        _audit_attempt_event_reference(target_id),
+                    )
+                )
+    return _SupervisorPreDispatchIntentShadowAudit(
+        True,
+        len(observation_rows),
+        len(expected_rows),
+        tuple(findings),
+    )
+
+
 def inspect_pending_completions(
     database_path: str | Path,
 ) -> tuple[CompletionIntent, ...]:
@@ -5201,6 +5772,7 @@ def _authorization_guard_findings(
             "control_authorization_migration_ledger_mismatch",
             "flow_admission_authorization_migration_ledger_mismatch",
             "attempt_claim_authorization_migration_ledger_mismatch",
+            "pre_dispatch_intent_authorization_migration_ledger_mismatch",
         ):
             findings.append(
                 SupervisorAuthorizationFinding(code, None, None, None)
@@ -5309,6 +5881,22 @@ def _authorization_guard_findings(
         findings.append(
             SupervisorAuthorizationFinding(
                 "attempt_claim_authorization_migration_ledger_mismatch",
+                None,
+                None,
+                None,
+            )
+        )
+    pre_dispatch_intent_migration = ledger.get(8)
+    if (
+        pre_dispatch_intent_migration is None
+        or pre_dispatch_intent_migration["name"]
+        != "supervisor_pre_dispatch_intent_authorization_shadow"
+        or pre_dispatch_intent_migration["script_sha256"]
+        != _sha256_text(_SCHEMA_V8)
+    ):
+        findings.append(
+            SupervisorAuthorizationFinding(
+                "pre_dispatch_intent_authorization_migration_ledger_mismatch",
                 None,
                 None,
                 None,
@@ -5488,10 +6076,21 @@ def _audit_flow_reference(value: Any) -> str:
     return canonical_digest({"flow_id_type": type(value).__name__})
 
 
+def _audit_attempt_event_reference(value: Any) -> str:
+    """Return a deterministic redacted target reference even for bad rows."""
+
+    if isinstance(value, str):
+        return f"sha256:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
+    if isinstance(value, bytes):
+        return f"sha256:{hashlib.sha256(value).hexdigest()}"
+    return canonical_digest({"attempt_event_id_type": type(value).__name__})
+
+
 def _audit_boundary_reference(value: Any) -> str | None:
     if value in {
         "flow_admission",
         "attempt_claim",
+        _PRE_DISPATCH_INTENT_BOUNDARY,
         "control_transition",
         "flow_cancellation",
     }:
@@ -6050,6 +6649,93 @@ def _verify_pre_v7_attempt_history(connection: sqlite3.Connection) -> None:
         ) from error
 
 
+def _verify_pre_v8_pre_dispatch_intent_history(
+    connection: sqlite3.Connection,
+) -> None:
+    """Refuse to baseline malformed local dispatch-intent history."""
+
+    try:
+        _verify_pre_v7_attempt_history(connection)
+        foreign_key_errors = tuple(
+            row
+            for table in (
+                "supervisor_control_events",
+                "supervisor_flows",
+                "supervisor_flow_revisions",
+                "supervisor_cancellation_requests",
+                "supervisor_attempts",
+                "supervisor_attempt_events",
+                "supervisor_completion_outbox",
+                "supervisor_completion_delivery_events",
+                "supervisor_completion_receipts",
+                "supervisor_authorization_observations",
+                "supervisor_bookkeeping_authorization_sources",
+                "supervisor_bookkeeping_authorization_observations",
+                "supervisor_control_authorization_baseline",
+                "supervisor_control_authorization_decisions",
+                "supervisor_control_authorization_action_receipts",
+                "supervisor_flow_admission_authorization_baseline",
+                "supervisor_flow_admission_authorization_decisions",
+                "supervisor_flow_admission_authorization_action_receipts",
+                "supervisor_attempt_claim_authorization_baseline",
+                "supervisor_attempt_claim_authorization_decisions",
+                "supervisor_attempt_claim_authorization_action_receipts",
+            )
+            for row in connection.execute(f'PRAGMA foreign_key_check("{table}")')
+        )
+        if foreign_key_errors:
+            raise ValidationError("supervisor history has invalid references")
+        specs_by_flow: dict[str, FlowSpec] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_flows ORDER BY flow_id"
+        ).fetchall():
+            spec = _flow_from_row(row)
+            _validate_flow_spec(spec)
+            if row["request_digest"] != spec.request_digest:
+                raise ValidationError("flow request digest is invalid")
+            specs_by_flow[spec.flow_id] = spec
+        revision_rows_by_flow: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_flow_revisions ORDER BY flow_id, revision"
+        ).fetchall():
+            revision_rows_by_flow.setdefault(row["flow_id"], []).append(row)
+        attempt_rows = connection.execute(
+            "SELECT * FROM supervisor_attempts ORDER BY flow_id, attempt_number"
+        ).fetchall()
+        event_rows_by_attempt: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_attempt_events ORDER BY attempt_id, revision"
+        ).fetchall():
+            event_rows_by_attempt.setdefault(row["attempt_id"], []).append(row)
+        for attempt_row in attempt_rows:
+            attempt = _attempt_from_row(attempt_row)
+            spec = specs_by_flow.get(attempt.flow_id)
+            if spec is None:
+                raise ValidationError("attempt flow is missing")
+            events = _verify_attempt_claim_history(
+                attempt=attempt,
+                spec=spec,
+                revision_rows=revision_rows_by_flow.get(attempt.flow_id, []),
+                event_rows=event_rows_by_attempt.get(attempt.attempt_id, []),
+            )
+            _verify_pre_dispatch_intent_history(
+                attempt=attempt,
+                revision_rows=revision_rows_by_flow[attempt.flow_id],
+                events=events,
+            )
+    except (
+        ConfigurationError,
+        KeyError,
+        TypeError,
+        ValueError,
+        ValidationError,
+        sqlite3.Error,
+    ) as error:
+        raise ConfigurationError(
+            "pre-v8 supervisor pre-dispatch intent history is invalid"
+        ) from error
+
+
 def _verify_attempt_claim_history(
     *,
     attempt: AttemptRecord,
@@ -6132,6 +6818,54 @@ def _verify_attempt_claim_history(
     if not events:
         raise ValidationError("attempt event history is missing")
     return tuple(events)
+
+
+def _verify_pre_dispatch_intent_history(
+    *,
+    attempt: AttemptRecord,
+    revision_rows: Sequence[sqlite3.Row],
+    events: Sequence[AttemptEvent],
+) -> tuple[AttemptEvent, ...]:
+    """Validate the narrow durable history that can yield a dispatch intent.
+
+    The check establishes only a local ``dispatching`` state transition. It
+    does not infer a worker launch, process invocation, or external effect.
+    """
+
+    if attempt.claimed_revision >= len(revision_rows):
+        raise ValidationError("pre-dispatch source flow is missing")
+    source_flow = _flow_revision_from_row(revision_rows[attempt.claimed_revision])
+    if (
+        source_flow.flow_id != attempt.flow_id
+        or source_flow.revision != attempt.claimed_revision + 1
+        or source_flow.state is not FlowState.RUNNING
+        or source_flow.cancellation_requested
+        or source_flow.active_attempt_id != attempt.attempt_id
+        or source_flow.reason_code != "attempt_claimed"
+        or source_flow.occurred_at != attempt.created_at
+    ):
+        raise ValidationError("pre-dispatch source flow is invalid")
+    targets: list[AttemptEvent] = []
+    for index, event in enumerate(events):
+        if event.state is not AttemptState.DISPATCHING:
+            continue
+        source = events[index - 1] if index else None
+        if (
+            source is None
+            or event.revision != 2
+            or source.revision != 1
+            or source.state is not AttemptState.CREATED
+            or source.reason_code != "claim_created"
+            or source.occurred_at != attempt.created_at
+            or event.reason_code != "dispatch_intent_recorded"
+            or event.occurred_at < source.occurred_at
+            or event.occurred_at >= attempt.deadline_at
+        ):
+            raise ValidationError("pre-dispatch intent transition is invalid")
+        targets.append(event)
+    if len(targets) > 1:
+        raise ValidationError("attempt has multiple pre-dispatch intents")
+    return tuple(targets)
 
 
 def _verify_pre_v4_bookkeeping_history(connection: sqlite3.Connection) -> None:
@@ -6307,6 +7041,8 @@ def _expected_supervisor_schema() -> dict[
             + _SCHEMA_V6
             + "\n"
             + _SCHEMA_V7
+            + "\n"
+            + _SCHEMA_V8
         )
         objects = _schema_objects(connection)
         return {
@@ -6407,6 +7143,37 @@ def _expected_pre_v7_supervisor_schema() -> dict[
         connection.close()
 
 
+@cache
+def _expected_pre_v8_supervisor_schema() -> dict[
+    tuple[str, str], tuple[str, str, str]
+]:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.executescript(
+            _SCHEMA_V2
+            + "\n"
+            + _SCHEMA_V3
+            + "\n"
+            + _SCHEMA_V4
+            + "\n"
+            + _SCHEMA_V5
+            + "\n"
+            + _SCHEMA_V6
+            + "\n"
+            + _SCHEMA_V7
+        )
+        objects = _schema_objects(connection)
+        return {
+            key: value
+            for key, value in objects.items()
+            if key[1].startswith("supervisor_")
+            or value[1].startswith("supervisor_")
+        }
+    finally:
+        connection.close()
+
+
 def _verify_pre_v4_supervisor_schema(connection: sqlite3.Connection) -> None:
     objects = _schema_objects(connection)
     actual = {
@@ -6453,6 +7220,18 @@ def _verify_pre_v7_supervisor_schema(connection: sqlite3.Connection) -> None:
     }
     if actual != _expected_pre_v7_supervisor_schema():
         raise ConfigurationError("pre-v7 supervisor schema is invalid")
+
+
+def _verify_pre_v8_supervisor_schema(connection: sqlite3.Connection) -> None:
+    objects = _schema_objects(connection)
+    actual = {
+        key: value
+        for key, value in objects.items()
+        if key[1].startswith("supervisor_")
+        or value[1].startswith("supervisor_")
+    }
+    if actual != _expected_pre_v8_supervisor_schema():
+        raise ConfigurationError("pre-v8 supervisor schema is invalid")
 
 
 def _verify_supervisor_schema(connection: sqlite3.Connection) -> None:
@@ -6804,6 +7583,457 @@ def _cancellation_effect_mapping(revision: FlowRevision) -> dict[str, Any]:
     }
 
 
+def _pre_dispatch_intent_lease_snapshot(
+    connection: sqlite3.Connection,
+    *,
+    attempt: AttemptRecord,
+    observed_at: float,
+) -> tuple[dict[str, Any], ...]:
+    """Capture only digest-bound lease facts needed for a shadow replay."""
+
+    snapshot: list[dict[str, Any]] = []
+    for lease_key in attempt.lease_keys:
+        row = connection.execute(
+            """
+            SELECT owner_id, acquired_at, renewed_at, expires_at
+            FROM leases WHERE lease_key = ?
+            """,
+            (lease_key,),
+        ).fetchone()
+        if row is None:
+            raise ValidationError("pre-dispatch lease source is missing")
+        snapshot.append(
+            {
+                "lease_key_ref": canonical_digest({"lease_key": lease_key}),
+                "lease_owner_ref": canonical_digest(
+                    {"lease_owner": row["owner_id"]}
+                ),
+                "acquired_at": float(row["acquired_at"]),
+                "renewed_at": float(row["renewed_at"]),
+                "expires_at": float(row["expires_at"]),
+            }
+        )
+    return _validate_pre_dispatch_intent_lease_snapshot(
+        snapshot,
+        attempt=attempt,
+        observed_at=observed_at,
+    )
+
+
+def _validate_pre_dispatch_intent_lease_snapshot(
+    snapshot: object,
+    *,
+    attempt: AttemptRecord,
+    observed_at: float,
+) -> tuple[dict[str, Any], ...]:
+    """Validate a privacy-safe snapshot against immutable claim inputs."""
+
+    timestamp = _timestamp(observed_at, "pre-dispatch observation timestamp")
+    if type(snapshot) not in {list, tuple}:
+        raise ValidationError("pre-dispatch lease snapshot is invalid")
+    expected_keys = tuple(attempt.lease_keys)
+    if len(snapshot) != len(expected_keys):
+        raise ValidationError("pre-dispatch lease snapshot is incomplete")
+    expected_owner_ref = canonical_digest({"lease_owner": attempt.lease_owner})
+    normalized: list[dict[str, Any]] = []
+    for lease_key, item in zip(expected_keys, snapshot, strict=True):
+        if type(item) is not dict or set(item) != {
+            "lease_key_ref",
+            "lease_owner_ref",
+            "acquired_at",
+            "renewed_at",
+            "expires_at",
+        }:
+            raise ValidationError("pre-dispatch lease snapshot is invalid")
+        if (
+            item["lease_key_ref"]
+            != canonical_digest({"lease_key": lease_key})
+            or item["lease_owner_ref"] != expected_owner_ref
+        ):
+            raise ValidationError("pre-dispatch lease snapshot does not match claim")
+        acquired_at = _timestamp(
+            item["acquired_at"], "pre-dispatch lease acquisition timestamp"
+        )
+        renewed_at = _timestamp(
+            item["renewed_at"], "pre-dispatch lease renewal timestamp"
+        )
+        expires_at = _timestamp(
+            item["expires_at"], "pre-dispatch lease expiry timestamp"
+        )
+        if not (
+            acquired_at <= renewed_at <= timestamp < expires_at <= attempt.deadline_at
+        ):
+            raise ValidationError("pre-dispatch lease snapshot is not active")
+        normalized.append(
+            {
+                "lease_key_ref": item["lease_key_ref"],
+                "lease_owner_ref": item["lease_owner_ref"],
+                "acquired_at": acquired_at,
+                "renewed_at": renewed_at,
+                "expires_at": expires_at,
+            }
+        )
+    return tuple(normalized)
+
+
+def _pre_dispatch_intent_mapping(
+    *,
+    spec: FlowSpec,
+    attempt: AttemptRecord,
+    source_flow: FlowRevision,
+    source_attempt: AttemptEvent,
+    target_attempt: AttemptEvent,
+    lease_snapshot: object,
+    observed_at: float,
+) -> dict[str, Any]:
+    """Build the exact redacted source/target mapping for one local intent."""
+
+    _validate_flow_spec(spec)
+    for field_name in ("attempt_id", "flow_id", "run_id", "lease_owner"):
+        _validate_text(getattr(attempt, field_name), field_name, maximum=256)
+    _validate_revision(attempt.attempt_number)
+    _validate_revision(attempt.claimed_revision)
+    _validate_digest(attempt.input_digest, "attempt input digest")
+    attempt_created_at = _timestamp(attempt.created_at, "attempt claim timestamp")
+    deadline_at = _timestamp(attempt.deadline_at, "attempt deadline")
+    if (
+        attempt.flow_id != spec.flow_id
+        or not 1 <= attempt.attempt_number <= spec.max_attempts
+        or attempt.lease_keys
+        != tuple(sorted({f"flow:{spec.flow_id}", *spec.resource_keys}))
+    ):
+        raise ValidationError("pre-dispatch attempt source is invalid")
+    expected_deadline = min(
+        attempt_created_at + spec.attempt_timeout_seconds,
+        (
+            spec.deadline_at
+            if spec.deadline_at is not None
+            else attempt_created_at + spec.attempt_timeout_seconds
+        ),
+    )
+    if deadline_at != expected_deadline or deadline_at <= attempt_created_at:
+        raise ValidationError("pre-dispatch attempt deadline is invalid")
+    for event in (source_attempt, target_attempt):
+        _validate_text(event.event_id, "attempt event identifier", maximum=256)
+        _validate_text(event.attempt_id, "attempt identifier", maximum=256)
+        _validate_revision(event.revision)
+        _validate_reason(event.reason_code)
+        _timestamp(event.occurred_at, "attempt event timestamp")
+    for field_name in ("event_id", "flow_id"):
+        _validate_text(
+            getattr(source_flow, field_name),
+            f"source flow {field_name}",
+            maximum=256,
+        )
+    _validate_revision(source_flow.revision)
+    _validate_reason(source_flow.reason_code)
+    source_flow_time = _timestamp(
+        source_flow.occurred_at, "source flow timestamp"
+    )
+    timestamp = _timestamp(observed_at, "pre-dispatch observation timestamp")
+    if (
+        source_flow.flow_id != attempt.flow_id
+        or source_flow.revision != attempt.claimed_revision + 1
+        or source_flow.state is not FlowState.RUNNING
+        or source_flow.cancellation_requested
+        or source_flow.active_attempt_id != attempt.attempt_id
+        or source_flow.reason_code != "attempt_claimed"
+        or source_flow_time != attempt_created_at
+        or source_attempt.attempt_id != attempt.attempt_id
+        or source_attempt.revision != 1
+        or source_attempt.state is not AttemptState.CREATED
+        or source_attempt.reason_code != "claim_created"
+        or source_attempt.occurred_at != attempt_created_at
+        or target_attempt.attempt_id != attempt.attempt_id
+        or target_attempt.revision != source_attempt.revision + 1
+        or target_attempt.state is not AttemptState.DISPATCHING
+        or target_attempt.reason_code != "dispatch_intent_recorded"
+        or target_attempt.occurred_at != timestamp
+        or target_attempt.occurred_at < source_attempt.occurred_at
+        or target_attempt.occurred_at >= deadline_at
+    ):
+        raise ValidationError("pre-dispatch intent source or target is invalid")
+    leases = _validate_pre_dispatch_intent_lease_snapshot(
+        lease_snapshot,
+        attempt=attempt,
+        observed_at=timestamp,
+    )
+    attempt_id_ref = canonical_digest({"attempt_id": attempt.attempt_id})
+    return {
+        "source": {
+            "flow_id_ref": canonical_digest({"flow_id": attempt.flow_id}),
+            "flow_event_ref": canonical_digest(
+                {"flow_event_id": source_flow.event_id}
+            ),
+            "flow_revision": source_flow.revision,
+            "flow_state": source_flow.state.value,
+            "cancellation_requested": False,
+            "active_attempt_ref": attempt_id_ref,
+            "attempt_id_ref": attempt_id_ref,
+            "run_id_ref": canonical_digest({"run_id": attempt.run_id}),
+            "attempt_event_ref": canonical_digest(
+                {"attempt_event_id": source_attempt.event_id}
+            ),
+            "attempt_revision": source_attempt.revision,
+            "attempt_state": source_attempt.state.value,
+            "attempt_reason_code": source_attempt.reason_code,
+            "attempt_occurred_at": float(source_attempt.occurred_at),
+            "flow_request_digest": spec.request_digest,
+            "input_digest": attempt.input_digest,
+            "lease_owner_ref": canonical_digest(
+                {"lease_owner": attempt.lease_owner}
+            ),
+            "lease_keys_digest": canonical_digest(
+                {"lease_keys": list(attempt.lease_keys)}
+            ),
+            "lease_snapshot": [dict(item) for item in leases],
+            "lease_snapshot_digest": canonical_digest({"leases": list(leases)}),
+            "deadline_at": float(deadline_at),
+        },
+        "target": {
+            "attempt_id_ref": attempt_id_ref,
+            "attempt_event_ref": canonical_digest(
+                {"attempt_event_id": target_attempt.event_id}
+            ),
+            "attempt_revision": target_attempt.revision,
+            "attempt_state": target_attempt.state.value,
+            "attempt_reason_code": target_attempt.reason_code,
+            "attempt_occurred_at": float(target_attempt.occurred_at),
+        },
+    }
+
+
+def _supervisor_pre_dispatch_intent_authorization_request(
+    *,
+    spec: FlowSpec,
+    attempt: AttemptRecord,
+    source_flow: FlowRevision,
+    source_attempt: AttemptEvent,
+    target_attempt: AttemptEvent,
+    lease_snapshot: object,
+    observed_at: float,
+) -> tuple[AuthorizationRequest, PolicyBundle, dict[str, Any]]:
+    """Build a fixed shadow-only ABAC request for local intent bookkeeping."""
+
+    intent = _pre_dispatch_intent_mapping(
+        spec=spec,
+        attempt=attempt,
+        source_flow=source_flow,
+        source_attempt=source_attempt,
+        target_attempt=target_attempt,
+        lease_snapshot=lease_snapshot,
+        observed_at=observed_at,
+    )
+    timestamp = _timestamp(observed_at, "pre-dispatch observation timestamp")
+    request = AuthorizationRequest(
+        request_id=(
+            f"supervisor:{_PRE_DISPATCH_INTENT_BOUNDARY}:"
+            f"{canonical_digest({'attempt_event_id': target_attempt.event_id})}"
+        ),
+        subject=SubjectAttributes(
+            principal_id="controller:local",
+            controller_id="agentops:local-controller",
+            role=Role.CONTROLLER,
+            role_version="1",
+            profile_id=canonical_digest({"profile_id": "controller_bookkeeping"}),
+            runner_id="local_non_ai",
+            session_id=None,
+        ),
+        action=ActionAttributes(
+            verb=ActionVerb.MODIFY,
+            operation=_PRE_DISPATCH_INTENT_OPERATION,
+            parameters_digest=canonical_digest(intent),
+            intended_effect="append_local_attempt_dispatch_intent_only",
+        ),
+        resource=ResourceAttributes(
+            resource_type="supervisor_attempt",
+            identifier=canonical_digest({"attempt_id": attempt.attempt_id}),
+            version=canonical_digest(
+                {
+                    "source_attempt_event_id": source_attempt.event_id,
+                    "source_attempt_revision": source_attempt.revision,
+                    "source_flow_event_id": source_flow.event_id,
+                    "source_flow_revision": source_flow.revision,
+                }
+            ),
+            owner="operator:local",
+            trust_boundary="local_control_plane",
+            protected=False,
+            sensitivity=ImpactLevel.LOW,
+            content_digest=canonical_digest(
+                {
+                    "flow_request_digest": spec.request_digest,
+                    "source": intent["source"],
+                }
+            ),
+        ),
+        environment=EnvironmentAttributes(
+            evaluated_at=timestamp,
+            isolation_state=IsolationState.VERIFIED,
+            network_state=NetworkState.DISABLED,
+            billing_route=BillingRoute.LOCAL_NON_AI,
+            capacity_state=CapacityState.NOT_APPLICABLE,
+            paid_continuation_protection=PaidContinuationProtection.NOT_APPLICABLE,
+            circuit_state=CircuitState.CLOSED,
+            flow_state=source_flow.state.value,
+        ),
+        consequences=ConsequenceVector(
+            confidentiality=ImpactLevel.LOW,
+            integrity=ImpactLevel.LOW,
+            availability=ImpactLevel.LOW,
+            reach=Reach.LOCAL,
+            destructive=False,
+            reversible=True,
+            sensitivity=ImpactLevel.LOW,
+            blast_radius=BlastRadius.SINGLE_RESOURCE,
+        ),
+    )
+    sources = {
+        "subject": EvidenceSource.CONTROLLER,
+        "action": EvidenceSource.CONTROLLER,
+        "resource": EvidenceSource.CONTROLLER,
+        "environment": EvidenceSource.CONTROLLER,
+        "consequences": EvidenceSource.CONTROLLER,
+    }
+    evidence = tuple(
+        AttributeEvidence.bind(
+            evidence_id=(
+                f"supervisor:{_PRE_DISPATCH_INTENT_BOUNDARY}:{attribute}"
+            ),
+            attribute=attribute,
+            value=request.attribute_value(attribute),
+            source=source,
+            source_id="agentops:controller",
+            observed_at=timestamp,
+            expires_at=timestamp + 60.0,
+            authenticated=True,
+        )
+        for attribute, source in sources.items()
+    )
+    request = AuthorizationRequest(
+        request.request_id,
+        request.subject,
+        request.action,
+        request.resource,
+        request.environment,
+        request.consequences,
+        evidence,
+    )
+    base = PolicyBundle.current_stage(issued_at=timestamp)
+    policy = PolicyBundle(
+        bundle_id=base.bundle_id,
+        version=base.version,
+        issued_at=base.issued_at,
+        evidence_requirements=base.evidence_requirements,
+        enabled_classes=base.enabled_classes,
+        allowed_verbs=base.allowed_verbs,
+        allowed_roles=tuple(dict.fromkeys((*base.allowed_roles, Role.CONTROLLER))),
+        allowed_operations=tuple(
+            dict.fromkeys((*base.allowed_operations, _PRE_DISPATCH_INTENT_OPERATION))
+        ),
+        allowed_resource_types=tuple(
+            dict.fromkeys((*base.allowed_resource_types, "supervisor_attempt"))
+        ),
+        allowed_trust_boundaries=tuple(
+            dict.fromkeys((*base.allowed_trust_boundaries, "local_control_plane"))
+        ),
+        allowed_flow_states=tuple(
+            dict.fromkeys((*base.allowed_flow_states, source_flow.state.value))
+        ),
+        allowed_network_states=base.allowed_network_states,
+        allowed_billing_routes=base.allowed_billing_routes,
+        approval_requirements=base.approval_requirements,
+        decision_ttl_seconds=base.decision_ttl_seconds,
+    )
+    return request, policy, intent
+
+
+def _expected_pre_dispatch_intent_observation_values(
+    row: sqlite3.Row,
+    *,
+    spec: FlowSpec,
+    attempt: AttemptRecord,
+    source_flow: FlowRevision,
+    source_attempt: AttemptEvent,
+    target_attempt: AttemptEvent,
+) -> tuple[Any, ...]:
+    """Independently rebuild one durable shadow observation from its sources."""
+
+    _validate_text(
+        row["observation_id"],
+        "pre-dispatch authorization observation identifier",
+        maximum=256,
+    )
+    payload_text = row["payload_json"]
+    if (
+        not isinstance(payload_text, str)
+        or len(payload_text.encode("utf-8")) > _MAX_JSON_BYTES
+    ):
+        raise ValidationError("pre-dispatch authorization payload is invalid")
+    payload = parse_json_document(payload_text)
+    if type(payload) is not dict:
+        raise ValidationError("pre-dispatch authorization payload is invalid")
+    supplied_intent = payload.get("pre_dispatch_intent")
+    if type(supplied_intent) is not dict:
+        raise ValidationError("pre-dispatch authorization intent is invalid")
+    supplied_source = supplied_intent.get("source")
+    if type(supplied_source) is not dict:
+        raise ValidationError("pre-dispatch authorization source is invalid")
+    lease_snapshot = supplied_source.get("lease_snapshot")
+    request, policy, intent = _supervisor_pre_dispatch_intent_authorization_request(
+        spec=spec,
+        attempt=attempt,
+        source_flow=source_flow,
+        source_attempt=source_attempt,
+        target_attempt=target_attempt,
+        lease_snapshot=lease_snapshot,
+        observed_at=target_attempt.occurred_at,
+    )
+    decision = _BUILTIN_PRE_DISPATCH_SHADOW_EVALUATE(
+        ShadowAuthorizationEvaluator(),
+        request,
+        policy,
+    )
+    parity = decision.effect.value == "permit"
+    expected_payload = {
+        "mode": "shadow",
+        "boundary": _PRE_DISPATCH_INTENT_BOUNDARY,
+        "action_scope": _PRE_DISPATCH_INTENT_ACTION_SCOPE,
+        "pre_dispatch_intent": intent,
+        "pre_dispatch_intent_digest": canonical_digest(intent),
+        "request": request.to_canonical(),
+        "request_digest": request.digest,
+        "decision": decision.to_canonical(),
+        "decision_digest": decision.digest,
+        "legacy_executable": True,
+        "execution_parity": parity,
+    }
+    if payload != expected_payload:
+        raise ValidationError("pre-dispatch authorization payload is inconsistent")
+    return (
+        target_attempt.event_id,
+        source_attempt.event_id,
+        attempt.attempt_id,
+        attempt.flow_id,
+        source_flow.event_id,
+        source_flow.revision,
+        spec.request_digest,
+        attempt.input_digest,
+        intent["source"]["lease_snapshot_digest"],
+        request.digest,
+        decision.digest,
+        decision.effect.value,
+        int(decision.derived_permission_class),
+        1,
+        int(parity),
+        _bounded_json(
+            expected_payload,
+            "pre-dispatch intent authorization audit payload",
+        ),
+        float(target_attempt.occurred_at),
+    )
+
+
 def _supervisor_bookkeeping_authorization_request(
     *,
     boundary: str,
@@ -7030,6 +8260,29 @@ def _bookkeeping_authorization_observation_from_row(
     )
 
 
+def _pre_dispatch_intent_authorization_observation_from_row(
+    row: sqlite3.Row,
+) -> SupervisorPreDispatchIntentAuthorizationObservation:
+    return SupervisorPreDispatchIntentAuthorizationObservation(
+        sequence=row["sequence"],
+        observation_id=row["observation_id"],
+        flow_id=row["flow_id"],
+        attempt_id=row["attempt_id"],
+        source_flow_event_id=row["source_flow_event_id"],
+        source_flow_revision=row["source_flow_revision"],
+        source_attempt_event_id=row["source_attempt_event_id"],
+        target_attempt_event_id=row["target_attempt_event_id"],
+        request_digest=row["request_digest"],
+        decision_digest=row["decision_digest"],
+        effect=row["effect"],
+        derived_permission_class=PermissionClass(row["derived_permission_class"]),
+        legacy_executable=bool(row["legacy_executable"]),
+        execution_parity=bool(row["execution_parity"]),
+        payload=json.loads(row["payload_json"]),
+        observed_at=row["observed_at"],
+    )
+
+
 def _initial_control_revision() -> SupervisorControlRevision:
     return SupervisorControlRevision(
         sequence=0,
@@ -7125,6 +8378,7 @@ __all__ = [
     "StaleRevisionError",
     "SupervisorControlRevision",
     "SupervisorBookkeepingAuthorizationObservation",
+    "SupervisorPreDispatchIntentAuthorizationObservation",
     "SUPERVISOR_DISPATCH_BLOCKERS",
     "SupervisorAuthorizationObservation",
     "SupervisorAuthorizationAudit",

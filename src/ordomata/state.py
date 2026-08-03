@@ -92,6 +92,10 @@ _KNOWN_STATE_MIGRATIONS: Mapping[int, tuple[str, str]] = {
         "supervisor_attempt_claim_authorization_enforcement",
         "781efe437e66c760736f075e885d1cc82041a292a322cbc74f16737e569bf900",
     ),
+    8: (
+        "supervisor_pre_dispatch_intent_authorization_shadow",
+        "93fd9caccb9ca7a92d737f0a3eaa0ea8ce5f9c64adb02d01532d678158b8df50",
+    ),
 }
 _CURRENT_STATE_SCHEMA_VERSION = max(_KNOWN_STATE_MIGRATIONS)
 _BASELINE_SCHEMA_SCRIPT_FINGERPRINT = (
@@ -157,6 +161,12 @@ _SUPERVISOR_REQUIRED_TABLES_BY_VERSION: Mapping[int, frozenset[str]] = {
             "supervisor_attempt_claim_authorization_baseline",
             "supervisor_attempt_claim_authorization_decisions",
             "supervisor_attempt_claim_authorization_action_receipts",
+        }
+    ),
+    8: frozenset(
+        {
+            "supervisor_pre_dispatch_intent_authorization_baseline",
+            "supervisor_pre_dispatch_intent_authorization_observations",
         }
     ),
 }

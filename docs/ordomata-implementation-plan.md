@@ -1480,7 +1480,7 @@ Extend the existing SQLite state rather than replacing it. Migrations must be ve
 exact pre-ledger baseline execute statement-by-statement in one explicit
 transaction. Every ordinary state open verifies the exact baseline schema,
 baseline foreign-key and run-status lineage, append-only migration guards, a
-contiguous frozen v1-v7 identity prefix, and agreement between the recorded
+contiguous frozen v1-v8 identity prefix, and agreement between the recorded
 version and installed supervisor tables before use. Partial schemas, missing
 guards, gaps, future versions, or changed identities fail closed without
 automatic repair. Read-only authorization inspection exposes only bounded
@@ -1668,16 +1668,18 @@ admission, append-only optimistic control/flow/attempt state, sticky
 cancellation, fenced multi-resource claim library APIs, internal local
 completion outbox and receipts, read-only status/audit, digest-bound
 reconciliation, operator control commands, and foreground `ordomata supervise`
-loop are implemented. Admission, library-only claim, and sticky cancellation
-emit append-only authorization shadows. Reversible operator control transitions
-and local mock attempt claims retain their compatibility shadows but each pass
+loop are implemented. Admission, library-only claim, local `created` →
+`dispatching` pre-dispatch intent, and sticky cancellation emit append-only
+authorization shadows. Reversible operator control transitions and local mock
+attempt claims retain their compatibility shadows but each pass
 an authoritative fixed Class 1 PEP; each immutable deterministic-mock flow
 admission also passes its own exact fixed Class 1 PEP before the flow write and
 initial queued revision. The read-only audit independently verifies the shadow
-digests/parity plus post-v5 control, post-v6 flow-admission, and post-v7
-attempt-claim decision/receipt coverage, alongside order, schema guards, and
-migration provenance. The loop deliberately uses the shared verified migration
-ledger; missing v2-v7 schema statements and their immutable
+digests/parity plus post-v5 control, post-v6 flow-admission, post-v7
+attempt-claim decision/receipt coverage, and v8 pre-dispatch-intent shadow
+coverage, alongside order, schema guards, and migration provenance. The loop
+deliberately uses the shared verified migration ledger; missing v2-v8 schema
+statements and their immutable
 ledger rows commit atomically or roll back together. It
 deliberately
 does not call the claim API or any
