@@ -2060,7 +2060,9 @@ post-v5 control-PEP, post-v6 flow-admission-PEP, post-v7 attempt-claim-PEP,
 and post-v9 pre-dispatch-intent-PEP decision/receipt pairs, plus post-v10
 completion, post-v11 expired-claim reconciliation, and post-v12 queued-deadline
 reconciliation shadow evidence, then checks coverage, order, parity, append-only
-guards, and migration provenance.
+guards, and migration provenance. It also verifies that each local completion
+receipt has its outbox's exact idempotency key and one matching local `delivered`
+event; a delivered event without a receipt is reported without modifying state.
 The v9 PEP binds the local intent transition, running source revision, and
 redacted active-lease facts before the target write; the v8 shadow remains
 best-effort afterward. The v10 shadow is post-write, binds only the durable

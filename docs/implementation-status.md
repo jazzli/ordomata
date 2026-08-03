@@ -1669,7 +1669,9 @@ control, post-v6 flow-admission, post-v7 attempt-claim, post-v9 pre-dispatch
 decision/receipt pairs, post-v10 completion-shadow coverage, and post-v11
 reconciliation-shadow coverage, and post-v12 queued-deadline
 reconciliation-shadow coverage from one consistent SQLite snapshot, checking
-coverage/order, exact append-only schema, and migration provenance. A v11
+coverage/order, exact append-only schema, and migration provenance. It also
+checks each local completion acknowledgement against its outbox idempotency key
+and its one matching delivered event. A v11
 migration separately records post-write,
 non-authoritative evidence when previewed reconciliation closes an expired
 pre-dispatch claim as `lost` or `cancelled`. It binds the terminal

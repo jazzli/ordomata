@@ -3714,6 +3714,78 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         self.assertEqual(receipt.idempotency_key, outbox.idempotency_key)
         self.assertEqual(self.store.list_pending_completions(), ())
 
+    def test_completion_receipt_idempotency_tampering_is_reported_by_audit(
+        self,
+    ) -> None:
+        claim = self._start_and_claim()
+        _, outbox = self.store.complete_attempt(
+            claim,
+            expected_flow_revision=claim.flow_revision.revision,
+            outcome=FlowState.SUCCEEDED,
+            reason_code="checks_passed",
+            now=101.0,
+        )
+        self.store.acknowledge_completion(
+            outbox.outbox_id,
+            consumer_id="controller/local-consumer",
+            result_digest="c" * 64,
+            delivery_id="delivery-one",
+            now=102.0,
+        )
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean, audit.to_mapping())
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.executescript(
+                """
+                DROP TRIGGER supervisor_completion_receipts_no_update;
+                UPDATE supervisor_completion_receipts
+                SET idempotency_key = 'f000000000000000000000000000000000000000000000000000000000000000';
+                CREATE TRIGGER supervisor_completion_receipts_no_update
+                BEFORE UPDATE ON supervisor_completion_receipts BEGIN
+                    SELECT RAISE(ABORT, 'supervisor completion receipts are append-only');
+                END;
+                """
+            )
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertIn(
+            "completion_delivery_receipt_invalid",
+            {finding.code for finding in audit.findings},
+        )
+
+    def test_orphan_delivered_completion_event_is_reported_by_audit(
+        self,
+    ) -> None:
+        claim = self._start_and_claim()
+        _, outbox = self.store.complete_attempt(
+            claim,
+            expected_flow_revision=claim.flow_revision.revision,
+            outcome=FlowState.SUCCEEDED,
+            reason_code="checks_passed",
+            now=101.0,
+        )
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                """
+                INSERT INTO supervisor_completion_delivery_events (
+                    event_id, outbox_id, delivery_id, event_type, reason_code, occurred_at
+                ) VALUES (?, ?, ?, 'delivered', 'local_consumer_acknowledged', ?)
+                """,
+                ("orphan-delivery", outbox.outbox_id, "delivery-one", 102.0),
+            )
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertIn(
+            "completion_delivery_event_invalid",
+            {finding.code for finding in audit.findings},
+        )
+
     def test_forged_claim_fields_cannot_bypass_durable_fencing(self) -> None:
         claim = self._start_and_claim()
         forged = replace(
