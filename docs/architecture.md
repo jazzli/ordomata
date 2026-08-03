@@ -2032,7 +2032,7 @@ object and fails closed on missing, replaced, or unexpected triggers. A new
 baseline, or the migration-ledger adoption of an exact legacy baseline, is
 created statement-by-statement in one explicit transaction. Existing state is
 verified before any schema DDL: the ledger must be a contiguous prefix of the
-frozen v1-v7 identities, its version must agree with the installed supervisor
+frozen v1-v8 identities, its version must agree with the installed supervisor
 tables, baseline foreign keys and run-status lineage must remain valid, and a
 rejected database is not repaired. WAL mode is selected only after baseline
 acceptance.
@@ -2041,8 +2041,9 @@ absent state without creating it.
 Reconciliation is preview-first and its apply step must present the exact
 current plan digest.
 
-Flow admission, library-only attempt claims, and sticky cancellation append
-separate, non-enforcing ABAC shadow observations. Reversible operator control
+Flow admission, library-only attempt claims, the local `created` → `dispatching`
+pre-dispatch intent, and sticky cancellation append separate, non-enforcing
+ABAC shadow observations. Reversible operator control
 transitions and local mock attempt claims retain their compatibility shadows,
 but each first passes its separate authoritative Class 1 PEP.
 The read-only authorization inspector and supervisor audit each hold one
@@ -2050,10 +2051,12 @@ SQLite snapshot while checking baseline and migration integrity. The
 supervisor audit independently recomputes both the shadow observations and
 post-v5 control-PEP, post-v6 flow-admission-PEP, and post-v7 attempt-claim-PEP
 decision/receipt pairs, then checks coverage, order, parity, append-only
-guards, and migration provenance. Frozen migration baselines exclude history
-created before each applicable schema. None of the narrow supervisor PEPs
-authorizes a worker, and their shadows do not replace the deterministic control
-path.
+guards, and migration provenance. The v8 pre-dispatch shadow binds only the
+local intent transition, a running source revision, and redacted active-lease
+facts; it is best-effort after the local write and cannot authorize a worker.
+Frozen migration baselines exclude history created before each applicable
+schema. None of the narrow supervisor PEPs authorizes a worker, and their
+shadows do not replace the deterministic control path.
 Control observations bind the exact previous control revision. Cancellation
 observations bind the exact source flow revision and resulting local state/
 outbox writes. The original flow remains irreversibly sticky-cancelled;
