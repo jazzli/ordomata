@@ -779,14 +779,18 @@ def _root_path_matches(
     expected_identity: tuple[int, int, int, int, int],
 ) -> bool:
     descriptor: int | None = None
+    matched = False
     try:
         descriptor = _BUILTIN_OPEN_ABSOLUTE_DIRECTORY(canonical_root)
-        return _BUILTIN_ROOT_IDENTITY(os.fstat(descriptor)) == expected_identity
+        matched = (
+            _BUILTIN_ROOT_IDENTITY(os.fstat(descriptor)) == expected_identity
+        )
     except (OSError, _InvalidCandidateSnapshot):
-        return False
+        pass
     finally:
-        if descriptor is not None:
-            _BUILTIN_CLOSE_DESCRIPTOR(descriptor)
+        if descriptor is not None and not _BUILTIN_CLOSE_DESCRIPTOR(descriptor):
+            matched = False
+    return matched
 
 
 _BUILTIN_ROOT_PATH_MATCHES = _root_path_matches
@@ -893,8 +897,8 @@ def _read_candidate_file(
     except (OSError, _InvalidCandidateSnapshot, ValidationError):
         raise _InvalidCandidateSnapshot from None
     finally:
-        if descriptor is not None:
-            _BUILTIN_CLOSE_DESCRIPTOR(descriptor)
+        if descriptor is not None and not _BUILTIN_CLOSE_DESCRIPTOR(descriptor):
+            raise _InvalidCandidateSnapshot
 
 
 _BUILTIN_READ_CANDIDATE_FILE = _read_candidate_file

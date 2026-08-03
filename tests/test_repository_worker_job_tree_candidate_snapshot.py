@@ -291,6 +291,46 @@ class RepositoryWorkerJobTreeCandidateSnapshotTests(unittest.TestCase):
         self.assertEqual(first.candidate_file_count, 3)
         self.assertEqual(second.candidate_file_count, 3)
 
+    def test_descriptor_close_failure_never_reports_a_clean_read(self) -> None:
+        original_close = candidate_module._BUILTIN_CLOSE_DESCRIPTOR
+
+        def close_but_report_failure(descriptor: int | None) -> bool:
+            original_close(descriptor)
+            return False
+
+        parent_descriptor = os.open(
+            self.job_root / "docs",
+            candidate_module._directory_flags(),
+        )
+        try:
+            with patch.object(
+                candidate_module,
+                "_BUILTIN_CLOSE_DESCRIPTOR",
+                side_effect=close_but_report_failure,
+            ):
+                with self.assertRaises(candidate_module._InvalidCandidateSnapshot):
+                    candidate_module._read_candidate_file(
+                        parent_descriptor,
+                        name="guide.md",
+                        relative_path="docs/guide.md",
+                        remaining_workspace_bytes=self.resource_limits[
+                            "workspace_bytes"
+                        ],
+                    )
+            with patch.object(
+                candidate_module,
+                "_BUILTIN_CLOSE_DESCRIPTOR",
+                side_effect=close_but_report_failure,
+            ):
+                self.assertFalse(
+                    candidate_module._root_path_matches(
+                        self.lease._canonical_root,
+                        self.lease._root_identity,
+                    )
+                )
+        finally:
+            os.close(parent_descriptor)
+
     def test_unsafe_candidate_entries_and_mode_drift_fail_closed(self) -> None:
         generated_directory = self.job_root / "source" / "generated"
         generated_directory.mkdir(mode=0o700)
