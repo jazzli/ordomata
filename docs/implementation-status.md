@@ -1656,11 +1656,19 @@ snapshot, and generated dispatching target; persists and rereads its decision
 before the target write; replays the fixed evaluator; and appends and rereads
 its receipt before commit. The separate v8 shadow remains post-write and
 non-authoritative, so its failure cannot alter an authorized bookkeeping
-outcome. Neither record grants worker authority. The read-only supervisor audit
-verifies the shadow records and independently replays post-v5 control, post-v6
-flow-admission, post-v7 attempt-claim, and post-v9 pre-dispatch
-decision/receipt pairs from one consistent SQLite snapshot, checking
-coverage/order, exact append-only schema, and migration provenance.
+outcome. Neither record grants worker authority. A later v10 migration adds a
+separate post-write, non-authoritative completion shadow for new
+`complete_attempt` flow/attempt/outbox appends. It binds the durable selected
+outcome, exact source and target records, redacted active-lease snapshot, and
+opaque operation digest; cancellation therefore records the selected
+`cancelled` state rather than reconstructing an unavailable requested outcome.
+Its failure leaves the local transition and outbox durable, and it cannot
+deliver an outbox, dispatch a worker, or execute a task. The read-only
+supervisor audit verifies the shadow records and independently replays post-v5
+control, post-v6 flow-admission, post-v7 attempt-claim, post-v9 pre-dispatch
+decision/receipt pairs, and post-v10 completion-shadow coverage from one
+consistent SQLite snapshot, checking coverage/order, exact append-only schema,
+and migration provenance.
 Frozen migration baselines exclude pre-shadow flow, attempt, control-event, and
 cancellation-request identifiers so historical records are not falsely treated
 as missing evidence. Control transitions bind the previous control revision;
@@ -1673,7 +1681,7 @@ Startup verifies canonical baseline, migration-ledger, and supervisor schema
 objects, including non-prefixed triggers targeting owned tables, before use.
 Fresh baseline creation and exact pre-ledger baseline adoption are atomic; all
 schema statements and frozen migration rows commit together or not at all.
-Existing databases must carry a contiguous known v1-v9 migration prefix whose
+Existing databases must carry a contiguous known v1-v10 migration prefix whose
 identities agree with the installed supervisor tables. Baseline foreign keys,
 the atomic first `created` event, and subsequent status-transition lineage are
 also checked. Missing guards, partial schemas, ledger gaps, future versions,

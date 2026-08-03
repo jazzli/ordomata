@@ -62,7 +62,28 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         self.store = self._open_store()
 
     @staticmethod
+    def _remove_v10_schema(connection: sqlite3.Connection) -> None:
+        connection.executescript(
+            """
+            DROP TRIGGER supervisor_attempt_completion_authorization_observations_no_update;
+            DROP TRIGGER supervisor_attempt_completion_authorization_observations_no_delete;
+            DROP TRIGGER supervisor_attempt_completion_authorization_baseline_no_update;
+            DROP TRIGGER supervisor_attempt_completion_authorization_baseline_no_delete;
+            DROP TRIGGER supervisor_attempt_completion_authorization_baseline_no_insert;
+            DROP TABLE supervisor_attempt_completion_authorization_observations;
+            DROP TABLE supervisor_attempt_completion_authorization_baseline;
+            DROP TRIGGER state_schema_migrations_no_delete;
+            DELETE FROM state_schema_migrations WHERE version = 10;
+            CREATE TRIGGER state_schema_migrations_no_delete
+            BEFORE DELETE ON state_schema_migrations BEGIN
+                SELECT RAISE(ABORT, 'schema migrations are append-only');
+            END;
+            """
+        )
+
+    @staticmethod
     def _remove_v9_schema(connection: sqlite3.Connection) -> None:
+        SQLiteSupervisorStoreTests._remove_v10_schema(connection)
         connection.executescript(
             """
             DROP TRIGGER supervisor_pre_dispatch_intent_authorization_action_receipts_no_update;
@@ -288,6 +309,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
                 (7, "supervisor_attempt_claim_authorization_enforcement"),
                 (8, "supervisor_pre_dispatch_intent_authorization_shadow"),
                 (9, "supervisor_pre_dispatch_intent_authorization_enforcement"),
+                (10, "supervisor_attempt_completion_authorization_shadow"),
             ],
         )
         self.assertEqual(
@@ -468,7 +490,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
             value = connection.execute(
                 "SELECT parent_id FROM private_child"
             ).fetchone()[0]
-        self.assertEqual(version, 9)
+        self.assertEqual(version, 10)
         self.assertEqual(value, "private-value")
 
     def test_missing_v3_schema_is_a_finding_even_without_flows(self) -> None:
@@ -1612,6 +1634,105 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         ):
             self._open_store()
 
+    def test_v10_migration_baselines_existing_attempt_completions(self) -> None:
+        legacy = self._start_and_claim()
+        _, legacy_outbox = self.store.complete_attempt(
+            legacy,
+            expected_flow_revision=legacy.flow_revision.revision,
+            outcome=FlowState.SUCCEEDED,
+            reason_code="legacy_completion",
+            now=101.0,
+        )
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v10_schema(connection)
+
+        self.store = self._open_store()
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean, audit.to_mapping())
+        self.assertEqual(audit.attempt_completion_observation_count, 0)
+        self.assertEqual(
+            audit.expected_attempt_completion_observation_count,
+            0,
+        )
+        current = self._flow(
+            "flow-completion-current",
+            resource_keys=("repo:current-completion",),
+        )
+        self.store.admit_flow(current)
+        current_claim = self.store.try_claim_next(
+            instance_owner="supervisor/instance-000000000001",
+            expected_control_revision=1,
+            ttl_seconds=20.0,
+            now=102.0,
+        )
+        self.assertIsNotNone(current_claim)
+        assert current_claim is not None
+        self.store.complete_attempt(
+            current_claim,
+            expected_flow_revision=current_claim.flow_revision.revision,
+            outcome=FlowState.SUCCEEDED,
+            reason_code="current_completion",
+            now=103.0,
+        )
+        with closing(sqlite3.connect(self.database)) as connection:
+            baseline = connection.execute(
+                """
+                SELECT outbox_id
+                FROM supervisor_attempt_completion_authorization_baseline
+                """
+            ).fetchall()
+        self.assertEqual(baseline, [(legacy_outbox.outbox_id,)])
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean, audit.to_mapping())
+        self.assertEqual(audit.attempt_completion_observation_count, 1)
+        self.assertEqual(
+            audit.expected_attempt_completion_observation_count,
+            1,
+        )
+
+    def test_malformed_pre_v10_completion_history_is_rejected_before_baseline(
+        self,
+    ) -> None:
+        claim = self._start_and_claim()
+        _, outbox = self.store.complete_attempt(
+            claim,
+            expected_flow_revision=claim.flow_revision.revision,
+            outcome=FlowState.SUCCEEDED,
+            reason_code="checks_passed",
+            now=101.0,
+        )
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v10_schema(connection)
+            connection.executescript(
+                """
+                DROP TRIGGER supervisor_completion_outbox_no_update;
+                """
+            )
+            connection.execute(
+                """
+                UPDATE supervisor_completion_outbox
+                SET envelope_json = '{"forged":true}'
+                WHERE outbox_id = ?
+                """,
+                (outbox.outbox_id,),
+            )
+            connection.executescript(
+                """
+                CREATE TRIGGER supervisor_completion_outbox_no_update
+                BEFORE UPDATE ON supervisor_completion_outbox BEGIN
+                    SELECT RAISE(ABORT, 'supervisor completion outbox is append-only');
+                END;
+                """
+            )
+
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "pre-v10 supervisor attempt completion history is invalid",
+        ):
+            self._open_store()
+
     def test_pre_dispatch_intent_shadow_persists_redacted_parity(self) -> None:
         claim = self._start_and_claim(
             self._flow(
@@ -1752,6 +1873,217 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         self.assertFalse(audit.clean)
         self.assertIn("authorization_schema_mismatch", codes)
         self.assertIn("pre_dispatch_intent_authorization_observation_invalid", codes)
+
+    def test_attempt_completion_shadow_persists_redacted_parity(self) -> None:
+        claim = self._start_and_claim(
+            self._flow(
+                "flow-completion-private",
+                resource_keys=("repo:private-completion",),
+            )
+        )
+        source_attempt = self.store.mark_attempt_dispatching(claim, now=101.0)
+        completed, outbox = self.store.complete_attempt(
+            claim,
+            expected_flow_revision=claim.flow_revision.revision,
+            outcome=FlowState.SUCCEEDED,
+            reason_code="checks_passed",
+            now=102.0,
+        )
+
+        observations = self.store.list_attempt_completion_authorization_observations(
+            claim.attempt.attempt_id
+        )
+        self.assertEqual(len(observations), 1)
+        observation = observations[0]
+        self.assertEqual(observation.flow_id, claim.flow.flow_id)
+        self.assertEqual(observation.attempt_id, claim.attempt.attempt_id)
+        self.assertEqual(observation.source_flow_revision, claim.flow_revision.revision)
+        self.assertEqual(observation.source_attempt_event_id, source_attempt.event_id)
+        self.assertEqual(observation.target_flow_event_id, completed.event_id)
+        self.assertEqual(observation.outbox_id, outbox.outbox_id)
+        self.assertEqual(observation.effect, "permit")
+        self.assertEqual(
+            observation.derived_permission_class,
+            PermissionClass.LOCAL_DRAFT,
+        )
+        self.assertTrue(observation.legacy_executable)
+        self.assertTrue(observation.execution_parity)
+        serialized = json.dumps(observation.payload, sort_keys=True)
+        for private_value in (
+            claim.flow.flow_id,
+            claim.attempt.attempt_id,
+            claim.attempt.run_id,
+            claim.attempt.lease_owner,
+            claim.flow_revision.event_id,
+            source_attempt.event_id,
+            completed.event_id,
+            outbox.outbox_id,
+            "repo:private-completion",
+        ):
+            self.assertNotIn(private_value, serialized)
+        self.assertEqual(
+            observation.payload["action_scope"],
+            "supervisor_local_attempt_completion_only",
+        )
+        self.assertEqual(
+            observation.payload["attempt_completion"]["target"]["flow_state"],
+            "succeeded",
+        )
+        self.assertEqual(
+            observation.payload["attempt_completion"]["completion"]["state"],
+            "succeeded",
+        )
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean, audit.to_mapping())
+        self.assertEqual(audit.attempt_completion_observation_count, 1)
+        self.assertEqual(
+            audit.expected_attempt_completion_observation_count,
+            1,
+        )
+        with closing(sqlite3.connect(self.database)) as connection:
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "append-only"):
+                connection.execute(
+                    """
+                    UPDATE supervisor_attempt_completion_authorization_observations
+                    SET effect = 'deny'
+                    """
+                )
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "frozen"):
+                connection.execute(
+                    """
+                    INSERT INTO supervisor_attempt_completion_authorization_baseline (
+                        outbox_id
+                    ) VALUES ('forged-exemption')
+                    """
+                )
+
+    def test_attempt_completion_shadow_failure_cannot_block_local_completion(
+        self,
+    ) -> None:
+        claim = self._start_and_claim()
+
+        with patch(
+            "ordomata.supervisor.ShadowAuthorizationEvaluator.evaluate",
+            side_effect=RuntimeError("private shadow failure"),
+        ):
+            completed, outbox = self.store.complete_attempt(
+                claim,
+                expected_flow_revision=claim.flow_revision.revision,
+                outcome=FlowState.SUCCEEDED,
+                reason_code="checks_passed",
+                now=101.0,
+            )
+
+        self.assertEqual(completed.state, FlowState.SUCCEEDED)
+        self.assertEqual(self.store.list_pending_completions(), (outbox,))
+        self.assertEqual(
+            self.store.list_attempt_completion_authorization_observations(),
+            (),
+        )
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertIn(
+            "attempt_completion_authorization_observation_missing",
+            {finding.code for finding in audit.findings},
+        )
+
+    def test_attempt_completion_shadow_binds_selected_cancellation_outcome(
+        self,
+    ) -> None:
+        claim = self._start_and_claim()
+        cancellation = self.store.request_cancellation(
+            claim.flow.flow_id,
+            requested_by="operator/session-000000000001",
+            reason_code="operator_cancelled",
+            now=101.0,
+        )
+        completed, outbox = self.store.complete_attempt(
+            claim,
+            expected_flow_revision=cancellation.revision,
+            outcome=FlowState.SUCCEEDED,
+            reason_code="worker_finished_after_cancel",
+            now=102.0,
+        )
+
+        self.assertEqual(completed.state, FlowState.CANCELLED)
+        self.assertEqual(outbox.envelope["state"], "cancelled")
+        observation = self.store.list_attempt_completion_authorization_observations()[0]
+        completion = observation.payload["attempt_completion"]
+        self.assertTrue(completion["source"]["cancellation_requested"])
+        self.assertEqual(completion["target"]["flow_state"], "cancelled")
+        self.assertEqual(completion["completion"]["state"], "cancelled")
+        self.assertNotIn("requested_outcome", completion)
+        audit = inspect_supervisor_authorization(self.database)
+        codes = {finding.code for finding in audit.findings}
+        self.assertNotIn("attempt_completion_authorization_source_invalid", codes)
+        self.assertNotIn("attempt_completion_authorization_observation_invalid", codes)
+
+    def test_attempt_completion_shadow_audit_replays_builtin_evaluator(self) -> None:
+        claim = self._start_and_claim()
+        original = supervisor_module.ShadowAuthorizationEvaluator.evaluate
+
+        def forged_first_pass(request, policy):
+            return replace(
+                original(
+                    supervisor_module.ShadowAuthorizationEvaluator(),
+                    request,
+                    policy,
+                ),
+                effect=AuthorizationEffect.DENY,
+            )
+
+        with patch(
+            "ordomata.supervisor.ShadowAuthorizationEvaluator.evaluate",
+            side_effect=forged_first_pass,
+        ):
+            completed, _ = self.store.complete_attempt(
+                claim,
+                expected_flow_revision=claim.flow_revision.revision,
+                outcome=FlowState.SUCCEEDED,
+                reason_code="checks_passed",
+                now=101.0,
+            )
+
+        self.assertEqual(completed.state, FlowState.SUCCEEDED)
+        observation = self.store.list_attempt_completion_authorization_observations()[0]
+        self.assertEqual(observation.effect, "deny")
+        self.assertFalse(observation.execution_parity)
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertIn(
+            "attempt_completion_authorization_observation_invalid",
+            {finding.code for finding in audit.findings},
+        )
+
+    def test_attempt_completion_shadow_audit_detects_tampering(self) -> None:
+        claim = self._start_and_claim()
+        self.store.complete_attempt(
+            claim,
+            expected_flow_revision=claim.flow_revision.revision,
+            outcome=FlowState.SUCCEEDED,
+            reason_code="checks_passed",
+            now=101.0,
+        )
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                """
+                DROP TRIGGER supervisor_attempt_completion_authorization_observations_no_update
+                """
+            )
+            connection.execute(
+                """
+                UPDATE supervisor_attempt_completion_authorization_observations
+                SET payload_json = '{"tampered":true}'
+                """
+            )
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+        codes = {finding.code for finding in audit.findings}
+        self.assertFalse(audit.clean)
+        self.assertIn("authorization_schema_mismatch", codes)
+        self.assertIn("attempt_completion_authorization_observation_invalid", codes)
 
     def test_v8_migration_baselines_existing_pre_dispatch_intents(self) -> None:
         legacy = self._start_and_claim()
@@ -2351,7 +2683,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
                 """
                 INSERT INTO state_schema_migrations (
                     version, name, script_sha256, applied_at
-                ) VALUES (10, 'future_unknown', ?, 100.0)
+                ) VALUES (11, 'future_unknown', ?, 100.0)
                 """,
                 ("0" * 64,),
             )
