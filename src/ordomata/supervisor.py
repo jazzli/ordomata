@@ -5661,8 +5661,8 @@ def _inspect_completion_delivery_integrity(
     for event in event_rows:
         outbox_id = event["outbox_id"]
         if (
-            event["event_type"] == _COMPLETION_DELIVERY_EVENT_TYPE
-            and outbox_id not in receipts_by_outbox
+            event["event_type"] != _COMPLETION_DELIVERY_EVENT_TYPE
+            or outbox_id not in receipts_by_outbox
         ):
             findings.append(
                 finding(

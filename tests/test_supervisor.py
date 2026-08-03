@@ -3786,6 +3786,44 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
             {finding.code for finding in audit.findings},
         )
 
+    def test_unsupported_completion_delivery_events_are_reported_by_audit(
+        self,
+    ) -> None:
+        claim = self._start_and_claim()
+        _, outbox = self.store.complete_attempt(
+            claim,
+            expected_flow_revision=claim.flow_revision.revision,
+            outcome=FlowState.SUCCEEDED,
+            reason_code="checks_passed",
+            now=101.0,
+        )
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            for event_type in ("failed", "unknown"):
+                connection.execute(
+                    """
+                    INSERT INTO supervisor_completion_delivery_events (
+                        event_id, outbox_id, delivery_id, event_type, reason_code, occurred_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"unsupported-delivery-{event_type}",
+                        outbox.outbox_id,
+                        f"delivery-{event_type}",
+                        event_type,
+                        f"local_delivery_{event_type}",
+                        102.0,
+                    ),
+                )
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertFalse(audit.clean)
+        self.assertIn(
+            "completion_delivery_event_invalid",
+            {finding.code for finding in audit.findings},
+        )
+
     def test_non_running_cancellation_outbox_tampering_is_reported_by_audit(
         self,
     ) -> None:

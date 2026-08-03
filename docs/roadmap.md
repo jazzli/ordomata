@@ -1077,8 +1077,9 @@ reconciliation-shadow, and post-v12 queued-deadline reconciliation-shadow
 coverage, checking coverage, order, exact schema guards, and migration
 provenance without altering reconciliation plan digests. It also verifies that
 each local completion acknowledgement has one matching delivered event and an
-exact outbox idempotency key, and that a non-running cancellation's terminal
-revision and local outbox match its durable cancellation source. Ordinary
+exact outbox idempotency key, rejects other delivery-event dispositions, and
+checks that a non-running cancellation's terminal revision and local outbox
+match its durable cancellation source. Ordinary
 state opens now validate the exact baseline and run history plus a frozen,
 contiguous v1-v12 migration prefix
 before use; creation and exact legacy adoption are
