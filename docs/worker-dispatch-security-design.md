@@ -1,7 +1,8 @@
 # Worker-dispatch security design
 
-**Status:** proposed, non-enabling design. This document does not authorize a
-worker, a container, a subprocess, a repository mutation, or a live model run.
+**Status:** operator-approved, non-enabling design with preliminary laboratory
+evidence. This document does not authorize a worker, a container backend, a
+subprocess, a repository mutation, or a live model run.
 
 ## Purpose and current boundary
 
@@ -176,10 +177,17 @@ changed argv/cwd/environment/input replay. A single false green, out-of-cell
 write, credential disclosure, paid-route start, or escaped process resets the
 affected gate.
 
-## Decision required before implementation of a real backend
+## Operator decision and remaining implementation boundary
 
-Before any VM, container runtime, image, or launcher is configured, the
-operator must approve the proposed local VM-contained-container approach (or
-select an equivalent backend) and authorize a non-production adversarial probe
-on the chosen host. Until then, implementation is limited to deterministic,
-non-enabling controller and test work.
+The operator approved the proposed local VM-contained-container direction and
+authorized a bounded non-production laboratory probe. The resulting
+[`laboratory record`](worker-dispatch-laboratory-probe-2026-08-03.md) shows
+that selected Docker Desktop restrictions held for the exact test, but also
+that resolver configuration was injected. It is preliminary evidence, not a
+containment proof or approval of a production backend.
+
+That approval permits only further deterministic controller and test work. A
+real backend still needs its own review of VM configuration, image provenance,
+launcher behavior, resolver/proxy suppression, observed preflight/postflight
+evidence, and the adversarial suite above. Worker dispatch remains disabled
+until every stated predecessor is demonstrated.
