@@ -454,16 +454,17 @@ def _root_path_matches(
     expected_identity: tuple[int, int, int, int, int],
 ) -> bool:
     descriptor: int | None = None
+    matched = False
     try:
         descriptor, reopened = _open_absolute_directory(canonical_root)
-        if reopened != canonical_root:
-            return False
-        return _root_identity(os.fstat(descriptor)) == expected_identity
+        if reopened == canonical_root:
+            matched = _root_identity(os.fstat(descriptor)) == expected_identity
     except (OSError, _InvalidMaterialization):
-        return False
+        pass
     finally:
-        if descriptor is not None:
-            _close_descriptor(descriptor)
+        if descriptor is not None and not _close_descriptor(descriptor):
+            matched = False
+    return matched
 
 
 def _prepare_target_root(
@@ -868,6 +869,10 @@ def _materialize_file(
             expected_mode=expected_mode,
             content=source_file.content,
         )
+        if not _close_descriptor(descriptor):
+            descriptor = None
+            raise _InvalidMaterialization
+        descriptor = None
         return record
     except BaseException as exc:
         if identity is not None:
@@ -938,8 +943,8 @@ def _verify_file(
     except (OSError, _InvalidMaterialization):
         raise _InvalidMaterialization from None
     finally:
-        if descriptor is not None:
-            _close_descriptor(descriptor)
+        if descriptor is not None and not _close_descriptor(descriptor):
+            raise _InvalidMaterialization
 
 
 def _verify_materialized_tree(

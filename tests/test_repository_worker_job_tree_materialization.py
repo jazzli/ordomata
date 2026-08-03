@@ -447,6 +447,62 @@ class RepositoryWorkerJobTreeMaterializationTests(unittest.TestCase):
         self.assertEqual(list(self.job_root.iterdir()), [])
         self.assertEqual(lease.state, "new")
 
+    def test_descriptor_close_failure_never_reports_clean_materialization(
+        self,
+    ) -> None:
+        original_close = materialization_module._close_descriptor
+
+        def close_but_report_failure(descriptor: int | None) -> bool:
+            original_close(descriptor)
+            return False
+
+        with patch.object(
+            materialization_module,
+            "_close_descriptor",
+            side_effect=close_but_report_failure,
+        ):
+            self.assertFalse(
+                materialization_module._root_path_matches(
+                    self.job_root,
+                    materialization_module._root_identity(
+                        self.job_root.stat()
+                    ),
+                )
+            )
+
+        def close_regular_file_but_report_failure(
+            descriptor: int | None,
+        ) -> bool:
+            is_regular_file = False
+            if descriptor is not None:
+                try:
+                    is_regular_file = stat.S_ISREG(
+                        os.fstat(descriptor).st_mode
+                    )
+                except OSError:
+                    pass
+            closed = original_close(descriptor)
+            return False if is_regular_file else closed
+
+        lease = RepositoryWorkerJobTreeMaterializationLease(self.job_root)
+        with patch.object(
+            materialization_module,
+            "_close_descriptor",
+            side_effect=close_regular_file_but_report_failure,
+        ):
+            with self.assertRaisesRegex(
+                ValidationError,
+                "^repository worker job tree materialization is invalid$",
+            ):
+                materialize_repository_worker_job_tree(
+                    self.snapshot,
+                    contract=self.contract,
+                    lease=lease,
+                )
+
+        self.assertEqual(list(self.job_root.iterdir()), [])
+        self.assertEqual(lease.state, "new")
+
     def test_unknown_post_write_entry_is_never_deleted_or_reported_clean(self) -> None:
         original_verify = materialization_module._verify_materialized_tree
         calls = 0
