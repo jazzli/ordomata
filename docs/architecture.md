@@ -2063,6 +2063,8 @@ reconciliation shadow evidence, then checks coverage, order, parity, append-only
 guards, and migration provenance. It also verifies that each local completion
 receipt has its outbox's exact idempotency key and one matching local `delivered`
 event; a delivered event without a receipt is reported without modifying state.
+For a non-running cancellation, it also binds the terminal revision and local
+outbox to the durable cancellation source without modifying state.
 The v9 PEP binds the local intent transition, running source revision, and
 redacted active-lease facts before the target write; the v8 shadow remains
 best-effort afterward. The v10 shadow is post-write, binds only the durable

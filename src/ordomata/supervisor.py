@@ -278,6 +278,7 @@ _BUILTIN_ATTEMPT_COMPLETION_SHADOW_EVALUATE = ShadowAuthorizationEvaluator.evalu
 _COMPLETION_DELIVERY_BOUNDARY = "completion_delivery"
 _COMPLETION_DELIVERY_EVENT_TYPE = "delivered"
 _COMPLETION_DELIVERY_REASON = "local_consumer_acknowledged"
+_CANCELLATION_COMPLETION_REASON = "cancellation_requested"
 _PRE_DISPATCH_RECONCILIATION_BOUNDARY = "attempt_pre_dispatch_reconciliation"
 _PRE_DISPATCH_RECONCILIATION_ACTION_SCOPE = (
     "supervisor_local_pre_dispatch_reconciliation_only"
@@ -5411,6 +5412,9 @@ def _inspect_supervisor_authorization_connection(
     completion_delivery_findings = _inspect_completion_delivery_integrity(
         connection
     )
+    cancellation_completion_findings = (
+        _inspect_non_running_cancellation_completion_integrity(connection)
+    )
     findings = (
         *flow.findings,
         *bookkeeping.findings,
@@ -5423,6 +5427,7 @@ def _inspect_supervisor_authorization_connection(
         *pre_dispatch_reconciliation.findings,
         *queued_timeout_reconciliation.findings,
         *completion_delivery_findings,
+        *cancellation_completion_findings,
         *guard_findings,
     )
     return SupervisorAuthorizationAudit(
@@ -5667,6 +5672,236 @@ def _inspect_completion_delivery_integrity(
                 )
             )
     return tuple(findings)
+
+
+def _inspect_non_running_cancellation_completion_integrity(
+    connection: sqlite3.Connection,
+) -> tuple[SupervisorAuthorizationFinding, ...]:
+    """Verify terminal cancellation outboxes without changing state.
+
+    Cancelling a non-running, non-final flow appends its cancellation request,
+    terminal flow revision, and local completion outbox in one transaction.
+    The existing bookkeeping audit validates the request's shadow evidence, but
+    this read-only check independently binds that local outbox to the durable
+    cancellation transition.
+    """
+
+    required = {
+        "supervisor_cancellation_requests",
+        "supervisor_bookkeeping_authorization_sources",
+        "supervisor_completion_outbox",
+        "supervisor_flow_revisions",
+    }
+    if not required.issubset(_table_names(connection)):
+        return (
+            SupervisorAuthorizationFinding(
+                "cancellation_completion_schema_missing",
+                None,
+                "flow_cancellation",
+                None,
+            ),
+        )
+    try:
+        cancellation_rows = connection.execute(
+            """
+            SELECT * FROM supervisor_cancellation_requests
+            ORDER BY requested_at, request_id
+            """
+        ).fetchall()
+        source_rows = connection.execute(
+            """
+            SELECT * FROM supervisor_bookkeeping_authorization_sources
+            ORDER BY cancellation_request_id
+            """
+        ).fetchall()
+        revision_rows_by_flow: dict[Any, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_flow_revisions ORDER BY flow_id, revision"
+        ).fetchall():
+            revision_rows_by_flow.setdefault(row["flow_id"], []).append(row)
+        outbox_rows_by_target: dict[tuple[Any, Any], list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            """
+            SELECT * FROM supervisor_completion_outbox
+            ORDER BY flow_id, source_revision, outbox_id
+            """
+        ).fetchall():
+            outbox_rows_by_target.setdefault(
+                (row["flow_id"], row["source_revision"]), []
+            ).append(row)
+    except sqlite3.Error:
+        return (
+            SupervisorAuthorizationFinding(
+                "cancellation_completion_schema_unreadable",
+                None,
+                "flow_cancellation",
+                None,
+            ),
+        )
+
+    source_rows_by_request = {
+        row["cancellation_request_id"]: row for row in source_rows
+    }
+    findings: list[SupervisorAuthorizationFinding] = []
+    for cancellation in cancellation_rows:
+        flow_reference: str | None = None
+        target_reference: str | None = None
+        try:
+            request_id = cancellation["request_id"]
+            flow_id = cancellation["flow_id"]
+            flow_reference = _audit_flow_reference(flow_id)
+            source_row = source_rows_by_request.get(request_id)
+            # A missing source is already a fixed bookkeeping-audit finding.
+            # Do not mislabel a valid post-write cancellation as a malformed
+            # completion merely because its non-authoritative shadow failed.
+            if source_row is None:
+                continue
+            _validate_text(request_id, "cancellation request identifier", maximum=256)
+            _validate_text(flow_id, "cancellation flow identifier", maximum=256)
+            _validate_reason(cancellation["reason_code"])
+            _validate_text(
+                cancellation["requested_by"],
+                "cancellation requester",
+                maximum=256,
+            )
+            requested_at = _timestamp(
+                cancellation["requested_at"], "cancellation request timestamp"
+            )
+            if source_row["flow_id"] != flow_id:
+                raise ValidationError("cancellation source flow is invalid")
+            source_revision = source_row["source_flow_revision"]
+            _validate_revision(source_revision)
+            revisions = revision_rows_by_flow.get(flow_id, ())
+            source = _flow_revision_from_row(revisions[source_revision - 1])
+            if source.state is FlowState.RUNNING or source.state in _FINAL_FLOW_STATES:
+                continue
+            target_revision = source.revision + 1
+            outbox_rows = outbox_rows_by_target.get(
+                (flow_id, target_revision), ()
+            )
+            target_reference = (
+                _audit_completion_outbox_reference(outbox_rows[0]["outbox_id"])
+                if len(outbox_rows) == 1
+                else canonical_digest(
+                    {
+                        "cancellation_completion_target": {
+                            "flow_id": flow_id,
+                            "source_revision": target_revision,
+                        }
+                    }
+                )
+            )
+            if len(outbox_rows) != 1:
+                raise ValidationError("cancellation completion outbox is missing")
+            target = _flow_revision_from_row(revisions[target_revision - 1])
+            completion = _completion_from_row(outbox_rows[0])
+            _validate_non_running_cancellation_completion(
+                cancellation=cancellation,
+                source=source,
+                target=target,
+                completion=completion,
+                requested_at=requested_at,
+            )
+        except (
+            IndexError,
+            KeyError,
+            TypeError,
+            UnicodeError,
+            ValidationError,
+            ValueError,
+        ):
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "cancellation_completion_outbox_invalid",
+                    flow_reference,
+                    "flow_cancellation",
+                    None,
+                    target_reference,
+                )
+            )
+    return tuple(findings)
+
+
+def _validate_non_running_cancellation_completion(
+    *,
+    cancellation: sqlite3.Row,
+    source: FlowRevision,
+    target: FlowRevision,
+    completion: CompletionIntent,
+    requested_at: float,
+) -> None:
+    """Validate one cancellation terminal revision and its local outbox."""
+
+    for revision, description in ((source, "source"), (target, "target")):
+        _validate_text(
+            revision.event_id,
+            f"cancellation {description} flow event identifier",
+            maximum=256,
+        )
+        _validate_text(
+            revision.flow_id,
+            f"cancellation {description} flow identifier",
+            maximum=256,
+        )
+        _validate_revision(revision.revision)
+        _validate_reason(revision.reason_code)
+        _timestamp(
+            revision.occurred_at,
+            f"cancellation {description} flow timestamp",
+        )
+        if type(revision.cancellation_requested) is not bool:
+            raise ValidationError("cancellation flow flag is invalid")
+    for field_name in ("outbox_id", "idempotency_key", "flow_id"):
+        _validate_text(
+            getattr(completion, field_name),
+            f"cancellation completion {field_name}",
+            maximum=256,
+        )
+    _validate_revision(completion.source_revision)
+    for field_name in ("intent_digest", "operation_digest"):
+        _validate_digest(
+            getattr(completion, field_name),
+            f"cancellation completion {field_name}",
+        )
+    created_at = _timestamp(
+        completion.created_at,
+        "cancellation completion timestamp",
+    )
+    expected_envelope_json = _bounded_json(
+        {
+            "flow_id": target.flow_id,
+            "source_revision": target.revision,
+            "state": target.state.value,
+            "attempt_id": None,
+            "reason_code": target.reason_code,
+        },
+        "cancellation completion envelope",
+    )
+    if (
+        cancellation["flow_id"] != source.flow_id
+        or source.state is FlowState.RUNNING
+        or source.state in _FINAL_FLOW_STATES
+        or source.cancellation_requested
+        or source.active_attempt_id is not None
+        or target.flow_id != source.flow_id
+        or target.revision != source.revision + 1
+        or target.state is not FlowState.CANCELLED
+        or not target.cancellation_requested
+        or target.active_attempt_id is not None
+        or target.reason_code != _CANCELLATION_COMPLETION_REASON
+        or target.occurred_at != requested_at
+        or requested_at < source.occurred_at
+        or completion.flow_id != target.flow_id
+        or completion.source_revision != target.revision
+        or completion.attempt_id is not None
+        or completion.idempotency_key
+        != f"flow:{target.flow_id}:revision:{target.revision}"
+        or completion.envelope_json != expected_envelope_json
+        or completion.intent_digest != _sha256_text(expected_envelope_json)
+        or completion.operation_digest != completion.intent_digest
+        or created_at != requested_at
+    ):
+        raise ValidationError("cancellation completion source or target is invalid")
 
 
 def _supervisor_table_shapes_safe(connection: sqlite3.Connection) -> bool:

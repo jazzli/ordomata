@@ -3786,6 +3786,53 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
             {finding.code for finding in audit.findings},
         )
 
+    def test_non_running_cancellation_outbox_tampering_is_reported_by_audit(
+        self,
+    ) -> None:
+        spec = self._flow()
+        self.store.admit_flow(spec)
+        cancelled = self.store.request_cancellation(
+            spec.flow_id,
+            requested_by="operator/session-000000000001",
+            reason_code="operator_cancelled",
+            now=101.0,
+        )
+        self.assertEqual(cancelled.state, FlowState.CANCELLED)
+        (outbox,) = self.store.list_pending_completions()
+        self.store.close()
+
+        before = inspect_supervisor_authorization(self.database)
+        self.assertNotIn(
+            "cancellation_completion_outbox_invalid",
+            {finding.code for finding in before.findings},
+        )
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                "DROP TRIGGER supervisor_completion_outbox_no_update"
+            )
+            connection.execute(
+                """
+                UPDATE supervisor_completion_outbox
+                SET idempotency_key = ? WHERE outbox_id = ?
+                """,
+                ("flow:tampered:revision:2", outbox.outbox_id),
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER supervisor_completion_outbox_no_update
+                BEFORE UPDATE ON supervisor_completion_outbox BEGIN
+                    SELECT RAISE(ABORT, 'supervisor completion outbox is append-only');
+                END;
+                """
+            )
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertIn(
+            "cancellation_completion_outbox_invalid",
+            {finding.code for finding in audit.findings},
+        )
+
     def test_forged_claim_fields_cannot_bypass_durable_fencing(self) -> None:
         claim = self._start_and_claim()
         forged = replace(
@@ -3838,6 +3885,11 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         self.assertEqual(replayed, waiting)
         self.assertEqual(replayed_outbox, waiting_outbox)
         self.assertNotEqual(replayed.revision, cancelled.revision)
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertNotIn(
+            "cancellation_completion_outbox_invalid",
+            {finding.code for finding in audit.findings},
+        )
 
     def test_pre_dispatch_cancellation_finishes_without_a_worker(self) -> None:
         spec = self._flow()
