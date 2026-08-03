@@ -1038,10 +1038,12 @@ additive SQLite migration, immutable flow admission, append-only optimistic
 control/flow/attempt state, sticky cancellation, fenced multi-resource claim
 library APIs, an internal local completion outbox and receipts, read-only
 status/audit, digest-bound reconciliation, operator control commands, and a
-foreground `ordomata supervise` loop. The library-only attempt-claim boundary,
-the `created` → `dispatching` pre-dispatch-intent transition, and sticky
-cancellation retain typed, non-enforcing compatibility-shadow observations with
-an explicit legacy-parity comparison. Flow admission retains
+foreground `ordomata supervise` loop. The library-only attempt-claim boundary
+and sticky cancellation retain typed, non-enforcing compatibility-shadow
+observations with an explicit legacy-parity comparison. The `created` →
+`dispatching` pre-dispatch-intent transition retains its v8 compatibility
+shadow but first passes its own authoritative fixed Class 1 PEP. Flow admission
+retains
 its compatibility shadow but first passes an authoritative fixed Class 1 PEP
 that can authorize only the immutable local mock-flow and initial-revision
 write. Reversible operator control transitions and local mock attempt claims
@@ -1050,16 +1052,18 @@ authoritative fixed Class 1 PEPs. The claim PEP covers only local attempt,
 lease, and flow-revision bookkeeping; it does not dispatch a worker. Worker
 dispatch is deliberately disabled until the exact worker boundary has
 authoritative ABAC coverage and verified repository containment; none of the
-narrow supervisor PEPs supplies it. The v8 pre-dispatch shadow binds the local
+narrow supervisor PEPs supplies it. The v9 pre-dispatch PEP binds the local
 created source, running flow revision, redacted active-lease snapshot, and
-dispatching target after the legacy bookkeeping write; a shadow failure cannot
-block that write and never authorizes a worker. The read-only supervisor audit
-independently recomputes the shadows, post-v5 control decision/receipt pairs,
-post-v6 flow-admission decision/receipt pairs, and post-v7 attempt-claim
+dispatching target; it persists and rereads its exact permit before the local
+write and its receipt before commit. The v8 shadow remains post-write, so a
+shadow failure cannot block an authorized append and never authorizes a worker.
+The read-only supervisor audit independently recomputes the shadows, post-v5
+control decision/receipt pairs, post-v6 flow-admission decision/receipt pairs,
+post-v7 attempt-claim decision/receipt pairs, and post-v9 pre-dispatch
 decision/receipt pairs, checking coverage, order, exact schema guards, and
 migration provenance without altering reconciliation plan digests. Ordinary
 state opens now validate the exact baseline and run history plus a frozen,
-contiguous v1-v8 migration prefix before use; creation and exact legacy adoption are
+contiguous v1-v9 migration prefix before use; creation and exact legacy adoption are
 transactional, while partial or tampered state fails closed without repair. This does
 not implement a repository
 worker, live model loop, subprocess execution, network access, Class 2/3

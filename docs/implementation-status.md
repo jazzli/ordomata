@@ -56,7 +56,8 @@ Detailed component and verification status is updated in the session completion 
 
 ## Authorization status
 
-**Implemented foundations, shadow coverage, and three narrow PEPs:** deterministic controller-owned
+**Implemented foundations, shadow coverage, three ordinary PEPs, and four
+supervisor bookkeeping PEPs:** deterministic controller-owned
 fail-closed gates; the current Class 0/1 approval ceiling; role, task,
 capability, route, billing, identity, capacity, environment, isolation, and
 circuit checks; narrow harness configurations; and append-only run evidence.
@@ -1648,15 +1649,18 @@ attempt/flow event references, control revision, and bounded lease references;
 persists and rereads its permit before claim effects; and appends and rereads
 its receipt before commit. It authorizes only those local claim records and
 leases, never worker dispatch, task execution, cancellation, repository work,
-network access, or a Class 2/3 effect. A separate v8 shadow now observes the
-library-only `created` → `dispatching` intent after its local state write. It
-binds the created event, running flow revision, redacted active-lease snapshot,
-and dispatching target; it is non-authoritative, cannot block the legacy
-bookkeeping outcome, and grants no worker authority. The read-only supervisor
-audit verifies the shadow records and independently replays post-v5 control,
-post-v6 flow-admission, and post-v7 attempt-claim decision/receipt pairs from
-one consistent SQLite snapshot, checking coverage/order, exact append-only
-schema, and migration provenance.
+network access, or a Class 2/3 effect. A fourth fixed Class 1 PEP makes each
+new library-only `created` → `dispatching` bookkeeping append pass an exact
+permit: it binds the created event, running flow revision, redacted active-lease
+snapshot, and generated dispatching target; persists and rereads its decision
+before the target write; replays the fixed evaluator; and appends and rereads
+its receipt before commit. The separate v8 shadow remains post-write and
+non-authoritative, so its failure cannot alter an authorized bookkeeping
+outcome. Neither record grants worker authority. The read-only supervisor audit
+verifies the shadow records and independently replays post-v5 control, post-v6
+flow-admission, post-v7 attempt-claim, and post-v9 pre-dispatch
+decision/receipt pairs from one consistent SQLite snapshot, checking
+coverage/order, exact append-only schema, and migration provenance.
 Frozen migration baselines exclude pre-shadow flow, attempt, control-event, and
 cancellation-request identifiers so historical records are not falsely treated
 as missing evidence. Control transitions bind the previous control revision;
@@ -1669,7 +1673,7 @@ Startup verifies canonical baseline, migration-ledger, and supervisor schema
 objects, including non-prefixed triggers targeting owned tables, before use.
 Fresh baseline creation and exact pre-ledger baseline adoption are atomic; all
 schema statements and frozen migration rows commit together or not at all.
-Existing databases must carry a contiguous known v1-v8 migration prefix whose
+Existing databases must carry a contiguous known v1-v9 migration prefix whose
 identities agree with the installed supervisor tables. Baseline foreign keys,
 the atomic first `created` event, and subsequent status-transition lineage are
 also checked. Missing guards, partial schemas, ledger gaps, future versions,

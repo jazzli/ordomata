@@ -1462,12 +1462,16 @@ persisted and exactly reread before any claim lease, attempt, or flow-revision
 write; its action receipt is appended and reread before commit. It grants no
 worker dispatch, task execution, cancellation, repository, network, or Class
 2/3 authority, and the foreground loop still does not invoke the claim API.
-The separate v8 pre-dispatch shadow binds the exact local `created` source,
-running-flow source revision, redacted active-lease snapshot, and `dispatching`
-target. It is a post-write, non-authoritative observation: evaluator or
-evidence failures leave the local intent outcome unchanged, and it never
-authorizes a worker, task execution, repository action, network access, or a
-Class 2/3 effect. Cancellation requests
+A fourth fixed Class 1 PEP authorizes only the local `created` →
+`dispatching` bookkeeping append. It binds the exact running-flow and created
+attempt sources, redacted active-lease snapshot, and generated dispatching
+target; persists and exactly rereads its permit before the target write;
+replays the fixed built-in evaluator; and appends and rereads a succeeded
+receipt before commit. The separate v8 shadow remains a post-write,
+non-authoritative compatibility observation: its failure cannot alter an
+already-authorized local intent. Neither the PEP nor shadow authorizes a
+worker, task execution, repository action, network access, or a Class 2/3
+effect. Cancellation requests
 bind the exact source flow revision and deterministic local writes that follow,
 including whether a completion intent is appended. Cancellation is irreversible
 on the original flow; explicitly admitting a replacement is compensation, not
