@@ -1057,13 +1057,18 @@ created source, running flow revision, redacted active-lease snapshot, and
 dispatching target; it persists and rereads its exact permit before the local
 write and its receipt before commit. The v8 shadow remains post-write, so a
 shadow failure cannot block an authorized append and never authorizes a worker.
+The v10 completion shadow separately records only already-written local
+flow/attempt/outbox completion evidence, including the durable selected outcome
+and redacted lease snapshot; it cannot deliver an outbox, dispatch a worker, or
+execute a task, and its failure cannot change the completion.
 The read-only supervisor audit independently recomputes the shadows, post-v5
 control decision/receipt pairs, post-v6 flow-admission decision/receipt pairs,
 post-v7 attempt-claim decision/receipt pairs, and post-v9 pre-dispatch
-decision/receipt pairs, checking coverage, order, exact schema guards, and
-migration provenance without altering reconciliation plan digests. Ordinary
-state opens now validate the exact baseline and run history plus a frozen,
-contiguous v1-v9 migration prefix before use; creation and exact legacy adoption are
+decision/receipt pairs plus post-v10 completion-shadow coverage, checking
+coverage, order, exact schema guards, and migration provenance without altering
+reconciliation plan digests. Ordinary state opens now validate the exact
+baseline and run history plus a frozen, contiguous v1-v10 migration prefix
+before use; creation and exact legacy adoption are
 transactional, while partial or tampered state fails closed without repair. This does
 not implement a repository
 worker, live model loop, subprocess execution, network access, Class 2/3

@@ -2039,7 +2039,7 @@ object and fails closed on missing, replaced, or unexpected triggers. A new
 baseline, or the migration-ledger adoption of an exact legacy baseline, is
 created statement-by-statement in one explicit transaction. Existing state is
 verified before any schema DDL: the ledger must be a contiguous prefix of the
-frozen v1-v9 identities, its version must agree with the installed supervisor
+frozen v1-v10 identities, its version must agree with the installed supervisor
 tables, baseline foreign keys and run-status lineage must remain valid, and a
 rejected database is not repaired. WAL mode is selected only after baseline
 acceptance.
@@ -2057,11 +2057,14 @@ The read-only authorization inspector and supervisor audit each hold one
 SQLite snapshot while checking baseline and migration integrity. The
 supervisor audit independently recomputes both the shadow observations and
 post-v5 control-PEP, post-v6 flow-admission-PEP, post-v7 attempt-claim-PEP,
-and post-v9 pre-dispatch-intent-PEP decision/receipt pairs, then checks
-coverage, order, parity, append-only guards, and migration provenance. The v9
-PEP binds the local intent transition, running source revision, and redacted
-active-lease facts before the target write; the v8 shadow remains best-effort
-afterward. Neither can authorize a worker.
+and post-v9 pre-dispatch-intent-PEP decision/receipt pairs, plus the post-v10
+completion-shadow evidence, then checks coverage, order, parity, append-only
+guards, and migration provenance. The v9 PEP binds the local intent transition,
+running source revision, and redacted active-lease facts before the target
+write; the v8 shadow remains best-effort afterward. The v10 shadow is
+post-write, binds only the durable local completion flow/attempt/outbox effect
+and redacted pre-release lease facts, and cannot deliver or execute anything.
+None can authorize a worker.
 Frozen migration baselines exclude history created before each applicable
 schema. None of the narrow supervisor PEPs authorizes a worker, and their
 shadows do not replace the deterministic control path.

@@ -1487,7 +1487,7 @@ Extend the existing SQLite state rather than replacing it. Migrations must be ve
 exact pre-ledger baseline execute statement-by-statement in one explicit
 transaction. Every ordinary state open verifies the exact baseline schema,
 baseline foreign-key and run-status lineage, append-only migration guards, a
-contiguous frozen v1-v9 identity prefix, and agreement between the recorded
+contiguous frozen v1-v10 identity prefix, and agreement between the recorded
 version and installed supervisor tables before use. Partial schemas, missing
 guards, gaps, future versions, or changed identities fail closed without
 automatic repair. Read-only authorization inspection exposes only bounded
@@ -1686,10 +1686,13 @@ pre-dispatch PEP persists and exactly rereads its permit before the dispatching
 append, replays the fixed evaluator, and appends and rereads its receipt before
 commit; the v8 shadow remains post-write. The read-only audit independently
 verifies the shadow digests/parity plus post-v5 control, post-v6 flow-admission,
-post-v7 attempt-claim, and post-v9 pre-dispatch decision/receipt coverage,
-alongside order, schema guards, and migration provenance. The loop deliberately
-uses the shared verified migration ledger; missing v2-v9 schema statements and
-their immutable ledger rows commit atomically or roll back together. It
+post-v7 attempt-claim, post-v9 pre-dispatch decision/receipt, and post-v10
+completion-shadow coverage, alongside order, schema guards, and migration
+provenance. The v10 shadow is post-write and binds only the local completion
+flow/attempt/outbox effect with redacted lease evidence; it neither delivers
+the outbox nor enables execution. The loop deliberately uses the shared
+verified migration ledger; missing v2-v10 schema statements and their immutable
+ledger rows commit atomically or roll back together. It
 deliberately
 does not call the claim API or any
 runner. Authoritative coverage at the exact worker dispatch/tool boundaries

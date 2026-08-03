@@ -261,7 +261,7 @@ _REASON_CODE = re.compile(r"[a-z0-9_]{1,100}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _RESOURCE_KEY = re.compile(r"[a-z0-9][a-z0-9._:/-]{0,199}")
 _MAX_JSON_BYTES = 262_144
-_SCHEMA_VERSION = 9
+_SCHEMA_VERSION = 10
 _FOREGROUND_LEASE_KEY = "supervisor:foreground"
 _PRE_DISPATCH_INTENT_BOUNDARY = "attempt_pre_dispatch_intent"
 _PRE_DISPATCH_INTENT_ACTION_SCOPE = (
@@ -270,6 +270,11 @@ _PRE_DISPATCH_INTENT_ACTION_SCOPE = (
 _PRE_DISPATCH_INTENT_OPERATION = "supervisor.attempt_pre_dispatch_intent"
 # The read-only audit must not inherit a patched first-pass shadow evaluator.
 _BUILTIN_PRE_DISPATCH_SHADOW_EVALUATE = ShadowAuthorizationEvaluator.evaluate
+_ATTEMPT_COMPLETION_BOUNDARY = "attempt_completion"
+_ATTEMPT_COMPLETION_ACTION_SCOPE = "supervisor_local_attempt_completion_only"
+_ATTEMPT_COMPLETION_OPERATION = "supervisor.attempt_completion"
+# As above, historical completion-shadow replay must use the shipped evaluator.
+_BUILTIN_ATTEMPT_COMPLETION_SHADOW_EVALUATE = ShadowAuthorizationEvaluator.evaluate
 SUPERVISOR_DISPATCH_BLOCKERS = (
     "runtime_abac_enforcement_not_implemented",
     "repository_worker_containment_not_proven",
@@ -395,6 +400,30 @@ class SupervisorPreDispatchIntentAuthorizationObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class SupervisorAttemptCompletionAuthorizationObservation:
+    """One non-authoritative, privacy-bounded local completion observation."""
+
+    sequence: int
+    observation_id: str
+    flow_id: str
+    attempt_id: str
+    source_flow_event_id: str
+    source_flow_revision: int
+    source_attempt_event_id: str
+    target_flow_event_id: str
+    target_attempt_event_id: str
+    outbox_id: str
+    request_digest: str
+    decision_digest: str
+    effect: str
+    derived_permission_class: PermissionClass
+    legacy_executable: bool
+    execution_parity: bool
+    payload: Mapping[str, Any]
+    observed_at: float
+
+
+@dataclass(frozen=True, slots=True)
 class SupervisorAuthorizationFinding:
     code: str
     flow_id: str | None
@@ -429,6 +458,8 @@ class SupervisorAuthorizationAudit:
     expected_pre_dispatch_intent_observation_count: int = 0
     pre_dispatch_intent_enforcement_record_count: int = 0
     expected_pre_dispatch_intent_enforcement_record_count: int = 0
+    attempt_completion_observation_count: int = 0
+    expected_attempt_completion_observation_count: int = 0
 
     @property
     def clean(self) -> bool:
@@ -469,6 +500,12 @@ class SupervisorAuthorizationAudit:
             ),
             "expected_pre_dispatch_intent_enforcement_record_count": (
                 self.expected_pre_dispatch_intent_enforcement_record_count
+            ),
+            "attempt_completion_observation_count": (
+                self.attempt_completion_observation_count
+            ),
+            "expected_attempt_completion_observation_count": (
+                self.expected_attempt_completion_observation_count
             ),
             "finding_count": len(self.findings),
             "clean": self.clean,
@@ -519,6 +556,16 @@ class _SupervisorPreDispatchIntentShadowAudit:
 @dataclass(frozen=True, slots=True)
 class _SupervisorPreDispatchIntentEnforcementAudit:
     """Internal read-only replay summary for the local intent PEP."""
+
+    schema_present: bool
+    record_count: int
+    expected_record_count: int
+    findings: tuple[SupervisorAuthorizationFinding, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _SupervisorAttemptCompletionShadowAudit:
+    """Internal read-only replay summary for the completion shadow."""
 
     schema_present: bool
     record_count: int
@@ -1532,6 +1579,91 @@ END;
 """
 
 
+_SCHEMA_V10 = """
+CREATE TABLE supervisor_attempt_completion_authorization_baseline (
+    outbox_id TEXT PRIMARY KEY
+        REFERENCES supervisor_completion_outbox(outbox_id)
+);
+INSERT INTO supervisor_attempt_completion_authorization_baseline (outbox_id)
+    SELECT outbox_id FROM supervisor_completion_outbox
+    WHERE attempt_id IS NOT NULL AND operation_digest != intent_digest;
+
+CREATE TABLE supervisor_attempt_completion_authorization_observations (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    observation_id TEXT NOT NULL UNIQUE CHECK (length(observation_id) <= 256),
+    outbox_id TEXT NOT NULL UNIQUE CHECK (length(outbox_id) <= 256)
+        REFERENCES supervisor_completion_outbox(outbox_id),
+    target_flow_event_id TEXT NOT NULL UNIQUE CHECK (
+        length(target_flow_event_id) <= 256
+    ) REFERENCES supervisor_flow_revisions(event_id),
+    target_attempt_event_id TEXT NOT NULL UNIQUE CHECK (
+        length(target_attempt_event_id) <= 256
+    ) REFERENCES supervisor_attempt_events(event_id),
+    source_flow_event_id TEXT NOT NULL UNIQUE CHECK (
+        length(source_flow_event_id) <= 256
+    ) REFERENCES supervisor_flow_revisions(event_id),
+    source_flow_revision INTEGER NOT NULL CHECK (source_flow_revision >= 1),
+    source_attempt_event_id TEXT NOT NULL UNIQUE CHECK (
+        length(source_attempt_event_id) <= 256
+    ) REFERENCES supervisor_attempt_events(event_id),
+    attempt_id TEXT NOT NULL REFERENCES supervisor_attempts(attempt_id),
+    flow_id TEXT NOT NULL REFERENCES supervisor_flows(flow_id),
+    flow_request_digest TEXT NOT NULL CHECK (length(flow_request_digest) = 64),
+    input_digest TEXT NOT NULL CHECK (length(input_digest) = 64),
+    lease_snapshot_digest TEXT NOT NULL CHECK (
+        length(lease_snapshot_digest) = 71
+    ),
+    completion_intent_digest TEXT NOT NULL CHECK (
+        length(completion_intent_digest) = 64
+    ),
+    completion_operation_digest TEXT NOT NULL CHECK (
+        length(completion_operation_digest) = 64
+    ),
+    request_digest TEXT NOT NULL CHECK (length(request_digest) = 71),
+    decision_digest TEXT NOT NULL CHECK (length(decision_digest) = 71),
+    effect TEXT NOT NULL CHECK (effect IN ('permit', 'defer', 'deny', 'indeterminate')),
+    derived_permission_class INTEGER NOT NULL CHECK (
+        derived_permission_class IN (0, 1, 2, 3)
+    ),
+    legacy_executable INTEGER NOT NULL CHECK (legacy_executable IN (0, 1)),
+    execution_parity INTEGER NOT NULL CHECK (execution_parity IN (0, 1)),
+    payload_json TEXT NOT NULL CHECK (length(payload_json) <= 262144),
+    observed_at REAL NOT NULL CHECK (observed_at >= 0),
+    CHECK (source_flow_event_id != target_flow_event_id),
+    CHECK (source_attempt_event_id != target_attempt_event_id),
+    CHECK (completion_intent_digest != completion_operation_digest)
+);
+CREATE INDEX supervisor_attempt_completion_authorization_attempt
+    ON supervisor_attempt_completion_authorization_observations(
+        attempt_id, sequence
+    );
+CREATE INDEX supervisor_attempt_completion_authorization_target
+    ON supervisor_attempt_completion_authorization_observations(
+        outbox_id, sequence
+    );
+CREATE TRIGGER supervisor_attempt_completion_authorization_baseline_no_update
+BEFORE UPDATE ON supervisor_attempt_completion_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor attempt completion authorization baseline is append-only');
+END;
+CREATE TRIGGER supervisor_attempt_completion_authorization_baseline_no_delete
+BEFORE DELETE ON supervisor_attempt_completion_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor attempt completion authorization baseline is append-only');
+END;
+CREATE TRIGGER supervisor_attempt_completion_authorization_baseline_no_insert
+BEFORE INSERT ON supervisor_attempt_completion_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor attempt completion authorization baseline is frozen');
+END;
+CREATE TRIGGER supervisor_attempt_completion_authorization_observations_no_update
+BEFORE UPDATE ON supervisor_attempt_completion_authorization_observations BEGIN
+    SELECT RAISE(ABORT, 'supervisor attempt completion authorization observations are append-only');
+END;
+CREATE TRIGGER supervisor_attempt_completion_authorization_observations_no_delete
+BEFORE DELETE ON supervisor_attempt_completion_authorization_observations BEGIN
+    SELECT RAISE(ABORT, 'supervisor attempt completion authorization observations are append-only');
+END;
+"""
+
+
 class SQLiteSupervisorStore:
     """Supervisor-specific event store sharing the existing local SQLite file."""
 
@@ -1638,6 +1770,7 @@ class SQLiteSupervisorStore:
                     7: _SCHEMA_V7,
                     8: _SCHEMA_V8,
                     9: _SCHEMA_V9,
+                    10: _SCHEMA_V10,
                 }
                 for version, script in migration_scripts.items():
                     if _sha256_text(script) != _KNOWN_STATE_MIGRATIONS[version][1]:
@@ -1670,6 +1803,11 @@ class SQLiteSupervisorStore:
                     if version == 9:
                         _verify_pre_v9_supervisor_schema(self._connection)
                         _verify_pre_v9_pre_dispatch_intent_history(
+                            self._connection
+                        )
+                    if version == 10:
+                        _verify_pre_v10_supervisor_schema(self._connection)
+                        _verify_pre_v10_attempt_completion_history(
                             self._connection
                         )
                     _execute_schema_script(
@@ -2036,6 +2174,40 @@ class SQLiteSupervisorStore:
                 ).fetchall()
         return tuple(
             _pre_dispatch_intent_authorization_observation_from_row(row)
+            for row in rows
+        )
+
+    def list_attempt_completion_authorization_observations(
+        self,
+        attempt_id: str | None = None,
+    ) -> tuple[SupervisorAttemptCompletionAuthorizationObservation, ...]:
+        """Return non-authoritative local attempt-completion shadow records.
+
+        The observations bind only an already-committed local flow/attempt
+        completion and its local outbox intent. They do not authorize, send,
+        deliver, dispatch, or execute anything.
+        """
+
+        if attempt_id is not None:
+            _validate_text(attempt_id, "attempt_id", maximum=256)
+        with self._lock:
+            if attempt_id is None:
+                rows = self._connection.execute(
+                    """
+                    SELECT * FROM supervisor_attempt_completion_authorization_observations
+                    ORDER BY sequence
+                    """
+                ).fetchall()
+            else:
+                rows = self._connection.execute(
+                    """
+                    SELECT * FROM supervisor_attempt_completion_authorization_observations
+                    WHERE attempt_id = ? ORDER BY sequence
+                    """,
+                    (attempt_id,),
+                ).fetchall()
+        return tuple(
+            _attempt_completion_authorization_observation_from_row(row)
             for row in rows
         )
 
@@ -3326,6 +3498,119 @@ class SQLiteSupervisorStore:
                 "pre-dispatch intent authorization persistence is uncertain"
             )
 
+    def _append_attempt_completion_authorization_observation(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        spec: FlowSpec,
+        attempt: AttemptRecord,
+        source_flow: FlowRevision,
+        source_attempt: AttemptEvent,
+        target_flow: FlowRevision,
+        target_attempt: AttemptEvent,
+        completion: CompletionIntent,
+        lease_snapshot: object,
+        observed_at: float,
+        legacy_executable: bool,
+    ) -> None:
+        """Append a best-effort shadow for an already-written local completion.
+
+        The caller deliberately invokes this only after the terminal flow,
+        attempt, outbox, and lease writes have succeeded. A shadow evaluator or
+        evidence-persistence failure is therefore unable to change the
+        deterministic bookkeeping result, and this method cannot deliver an
+        outbox, dispatch a worker, or execute a task.
+        """
+
+        request, policy, intent = _supervisor_attempt_completion_authorization_request(
+            spec=spec,
+            attempt=attempt,
+            source_flow=source_flow,
+            source_attempt=source_attempt,
+            target_flow=target_flow,
+            target_attempt=target_attempt,
+            completion=completion,
+            lease_snapshot=lease_snapshot,
+            observed_at=observed_at,
+        )
+        decision = ShadowAuthorizationEvaluator().evaluate(request, policy)
+        parity = (decision.effect.value == "permit") == legacy_executable
+        payload = {
+            "mode": "shadow",
+            "boundary": _ATTEMPT_COMPLETION_BOUNDARY,
+            "action_scope": _ATTEMPT_COMPLETION_ACTION_SCOPE,
+            "attempt_completion": intent,
+            "attempt_completion_digest": canonical_digest(intent),
+            "request": request.to_canonical(),
+            "request_digest": request.digest,
+            "decision": decision.to_canonical(),
+            "decision_digest": decision.digest,
+            "legacy_executable": legacy_executable,
+            "execution_parity": parity,
+        }
+        payload_json = _bounded_json(
+            payload,
+            "attempt completion authorization payload",
+        )
+        values = (
+            self._new_id("attempt_completion_authorization"),
+            completion.outbox_id,
+            target_flow.event_id,
+            target_attempt.event_id,
+            source_flow.event_id,
+            source_flow.revision,
+            source_attempt.event_id,
+            attempt.attempt_id,
+            attempt.flow_id,
+            spec.request_digest,
+            attempt.input_digest,
+            intent["source"]["lease_snapshot_digest"],
+            completion.intent_digest,
+            completion.operation_digest,
+            request.digest,
+            decision.digest,
+            decision.effect.value,
+            int(decision.derived_permission_class),
+            int(legacy_executable),
+            int(parity),
+            payload_json,
+            float(observed_at),
+        )
+        connection.execute(
+            """
+            INSERT INTO supervisor_attempt_completion_authorization_observations (
+                observation_id, outbox_id, target_flow_event_id,
+                target_attempt_event_id, source_flow_event_id,
+                source_flow_revision, source_attempt_event_id, attempt_id,
+                flow_id, flow_request_digest, input_digest, lease_snapshot_digest,
+                completion_intent_digest, completion_operation_digest,
+                request_digest, decision_digest, effect,
+                derived_permission_class, legacy_executable, execution_parity,
+                payload_json, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+        row = connection.execute(
+            """
+            SELECT observation_id, outbox_id, target_flow_event_id,
+                   target_attempt_event_id, source_flow_event_id,
+                   source_flow_revision, source_attempt_event_id, attempt_id,
+                   flow_id, flow_request_digest, input_digest,
+                   lease_snapshot_digest, completion_intent_digest,
+                   completion_operation_digest, request_digest, decision_digest,
+                   effect, derived_permission_class, legacy_executable,
+                   execution_parity, payload_json, observed_at
+            FROM supervisor_attempt_completion_authorization_observations
+            WHERE outbox_id = ?
+            """,
+            (completion.outbox_id,),
+        ).fetchone()
+        if row is None or tuple(row) != values:
+            raise SupervisorError(
+                "attempt completion authorization persistence is uncertain"
+            )
+
     def mark_attempt_dispatching(
         self,
         claim: AttemptClaim,
@@ -3632,10 +3917,21 @@ class SQLiteSupervisorStore:
             )
             if selected_outcome not in _FLOW_TRANSITIONS[current.state]:
                 raise ValidationError("attempt outcome violates the flow state machine")
+            flow_row = connection.execute(
+                "SELECT * FROM supervisor_flows WHERE flow_id = ?",
+                (attempt.flow_id,),
+            ).fetchone()
+            if flow_row is None:
+                raise SupervisorError("flow was not found")
+            lease_snapshot = _attempt_completion_lease_snapshot(
+                connection,
+                attempt=attempt,
+                observed_at=timestamp,
+            )
             attempt_current = self._current_attempt_event_in(
                 connection, attempt.attempt_id
             )
-            self._insert_attempt_event(
+            completed_attempt = self._insert_attempt_event(
                 connection,
                 attempt_id=attempt.attempt_id,
                 revision=attempt_current.revision + 1,
@@ -3665,6 +3961,25 @@ class SQLiteSupervisorStore:
                     "DELETE FROM leases WHERE lease_key = ? AND owner_id = ?",
                     (key, attempt.lease_owner),
                 )
+            try:
+                self._append_attempt_completion_authorization_observation(
+                    connection,
+                    spec=_flow_from_row(flow_row),
+                    attempt=attempt,
+                    source_flow=current,
+                    source_attempt=attempt_current,
+                    target_flow=completed,
+                    target_attempt=completed_attempt,
+                    completion=outbox,
+                    lease_snapshot=lease_snapshot,
+                    observed_at=timestamp,
+                    legacy_executable=True,
+                )
+            except Exception:
+                # This post-write shadow is compatibility evidence only. The
+                # local transition and outbox stay durable even if evidence
+                # construction, evaluation, or persistence fails.
+                pass
         return completed, outbox
 
     def list_pending_completions(self) -> tuple[CompletionIntent, ...]:
@@ -4395,6 +4710,9 @@ def _inspect_supervisor_authorization_connection(
     pre_dispatch_intent_enforcement = (
         _inspect_pre_dispatch_intent_enforcement_connection(connection)
     )
+    attempt_completion = _inspect_attempt_completion_authorization_connection(
+        connection
+    )
     findings = (
         *flow.findings,
         *bookkeeping.findings,
@@ -4403,6 +4721,7 @@ def _inspect_supervisor_authorization_connection(
         *attempt_claim_enforcement.findings,
         *pre_dispatch_intent.findings,
         *pre_dispatch_intent_enforcement.findings,
+        *attempt_completion.findings,
         *guard_findings,
     )
     return SupervisorAuthorizationAudit(
@@ -4415,17 +4734,20 @@ def _inspect_supervisor_authorization_connection(
             and attempt_claim_enforcement.schema_present
             and pre_dispatch_intent.schema_present
             and pre_dispatch_intent_enforcement.schema_present
+            and attempt_completion.schema_present
             and not guard_findings
         ),
         observation_count=(
             flow.observation_count
             + bookkeeping.observation_count
             + pre_dispatch_intent.record_count
+            + attempt_completion.record_count
         ),
         expected_observation_count=(
             flow.expected_observation_count
             + bookkeeping.expected_observation_count
             + pre_dispatch_intent.expected_record_count
+            + attempt_completion.expected_record_count
         ),
         findings=findings,
         control_enforcement_record_count=control_enforcement.record_count,
@@ -4453,6 +4775,10 @@ def _inspect_supervisor_authorization_connection(
         ),
         expected_pre_dispatch_intent_enforcement_record_count=(
             pre_dispatch_intent_enforcement.expected_record_count
+        ),
+        attempt_completion_observation_count=attempt_completion.record_count,
+        expected_attempt_completion_observation_count=(
+            attempt_completion.expected_record_count
         ),
     )
 
@@ -6544,6 +6870,380 @@ def _inspect_pre_dispatch_intent_enforcement_connection(
     )
 
 
+def _is_attempt_completion_outbox_row(row: sqlite3.Row) -> bool:
+    """Return whether an outbox row came from ``complete_attempt`` semantics."""
+
+    try:
+        return (
+            row["attempt_id"] is not None
+            and row["operation_digest"] != row["intent_digest"]
+        )
+    except (IndexError, KeyError):
+        return False
+
+
+def _structural_attempt_completion_lease_snapshot(
+    attempt: AttemptRecord,
+) -> tuple[dict[str, Any], ...]:
+    """Make a non-persisted shape solely for legacy lineage validation.
+
+    Historical completion rows retain no active lease records because a valid
+    completion releases them. This placeholder proves only that the durable
+    flow/attempt/outbox lineage can fit the frozen redacted shape; it is never
+    evidence for an observation and is never persisted.
+    """
+
+    return tuple(
+        {
+            "lease_key_ref": canonical_digest({"lease_key": lease_key}),
+            "lease_owner_ref": canonical_digest(
+                {"lease_owner": attempt.lease_owner}
+            ),
+            "acquired_at": float(attempt.created_at),
+            "renewed_at": float(attempt.created_at),
+            "expires_at": float(attempt.deadline_at),
+        }
+        for lease_key in attempt.lease_keys
+    )
+
+
+def _attempt_completion_source_from_outbox(
+    *,
+    outbox_row: sqlite3.Row,
+    flow_rows_by_id: Mapping[str, sqlite3.Row],
+    revision_rows_by_flow: Mapping[str, Sequence[sqlite3.Row]],
+    attempt_rows_by_id: Mapping[str, sqlite3.Row],
+    event_rows_by_attempt: Mapping[str, Sequence[sqlite3.Row]],
+    attempt_flow_ids: Mapping[str, str],
+) -> tuple[
+    FlowSpec,
+    AttemptRecord,
+    FlowRevision,
+    AttemptEvent,
+    FlowRevision,
+    AttemptEvent,
+    CompletionIntent,
+]:
+    """Rebuild one local completion source from immutable durable records."""
+
+    completion = _completion_from_row(outbox_row)
+    if (
+        type(completion.flow_id) is not str
+        or type(completion.attempt_id) is not str
+    ):
+        raise ValidationError("attempt completion outbox source is invalid")
+    _validate_revision(completion.source_revision)
+    if completion.source_revision < 2:
+        raise ValidationError("attempt completion source revision is invalid")
+    attempt_row = attempt_rows_by_id.get(completion.attempt_id)
+    flow_row = flow_rows_by_id.get(completion.flow_id)
+    if attempt_row is None or flow_row is None:
+        raise ValidationError("attempt completion source is missing")
+    attempt = _attempt_from_row(attempt_row)
+    spec = _flow_from_row(flow_row)
+    _validate_flow_spec(spec)
+    if flow_row["request_digest"] != spec.request_digest:
+        raise ValidationError("attempt completion flow request digest is invalid")
+    if attempt.flow_id != spec.flow_id:
+        raise ValidationError("attempt completion attempt flow is invalid")
+    revisions = revision_rows_by_flow.get(spec.flow_id, ())
+    _verify_flow_revision_lineage(spec.flow_id, revisions, attempt_flow_ids)
+    if completion.source_revision > len(revisions):
+        raise ValidationError("attempt completion target flow is missing")
+    events = _verify_attempt_claim_history(
+        attempt=attempt,
+        spec=spec,
+        revision_rows=revisions,
+        event_rows=event_rows_by_attempt.get(attempt.attempt_id, ()),
+    )
+    if len(events) < 2:
+        raise ValidationError("attempt completion target event is missing")
+    source_flow = _flow_revision_from_row(
+        revisions[completion.source_revision - 2]
+    )
+    target_flow = _flow_revision_from_row(
+        revisions[completion.source_revision - 1]
+    )
+    source_attempt = events[-2]
+    target_attempt = events[-1]
+    _attempt_completion_mapping(
+        spec=spec,
+        attempt=attempt,
+        source_flow=source_flow,
+        source_attempt=source_attempt,
+        target_flow=target_flow,
+        target_attempt=target_attempt,
+        completion=completion,
+        lease_snapshot=_structural_attempt_completion_lease_snapshot(attempt),
+        observed_at=target_flow.occurred_at,
+    )
+    return (
+        spec,
+        attempt,
+        source_flow,
+        source_attempt,
+        target_flow,
+        target_attempt,
+        completion,
+    )
+
+
+def _inspect_attempt_completion_authorization_connection(
+    connection: sqlite3.Connection,
+) -> _SupervisorAttemptCompletionShadowAudit:
+    """Replay only post-v10 local completion shadows without repair."""
+
+    tables = _table_names(connection)
+    required = {
+        "supervisor_flows",
+        "supervisor_flow_revisions",
+        "supervisor_attempts",
+        "supervisor_attempt_events",
+        "supervisor_completion_outbox",
+        "supervisor_attempt_completion_authorization_baseline",
+        "supervisor_attempt_completion_authorization_observations",
+    }
+    if not required.issubset(tables):
+        return _SupervisorAttemptCompletionShadowAudit(
+            False,
+            0,
+            0,
+            (
+                SupervisorAuthorizationFinding(
+                    "attempt_completion_authorization_schema_missing",
+                    None,
+                    _ATTEMPT_COMPLETION_BOUNDARY,
+                    None,
+                ),
+            ),
+        )
+    try:
+        flow_rows = connection.execute(
+            "SELECT * FROM supervisor_flows ORDER BY flow_id"
+        ).fetchall()
+        flow_rows_by_id = {row["flow_id"]: row for row in flow_rows}
+        revision_rows_by_flow: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_flow_revisions ORDER BY flow_id, revision"
+        ).fetchall():
+            revision_rows_by_flow.setdefault(row["flow_id"], []).append(row)
+        attempt_rows = connection.execute(
+            "SELECT * FROM supervisor_attempts ORDER BY flow_id, attempt_number"
+        ).fetchall()
+        attempt_rows_by_id = {row["attempt_id"]: row for row in attempt_rows}
+        attempt_flow_ids = {
+            row["attempt_id"]: row["flow_id"] for row in attempt_rows
+        }
+        event_rows_by_attempt: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_attempt_events ORDER BY attempt_id, revision"
+        ).fetchall():
+            event_rows_by_attempt.setdefault(row["attempt_id"], []).append(row)
+        outbox_rows = connection.execute(
+            """
+            SELECT * FROM supervisor_completion_outbox
+            ORDER BY flow_id, source_revision, outbox_id
+            """
+        ).fetchall()
+        outbox_rows_by_id = {row["outbox_id"]: row for row in outbox_rows}
+        baseline = {
+            row["outbox_id"]
+            for row in connection.execute(
+                """
+                SELECT outbox_id
+                FROM supervisor_attempt_completion_authorization_baseline
+                """
+            ).fetchall()
+        }
+        observation_rows = connection.execute(
+            """
+            SELECT * FROM supervisor_attempt_completion_authorization_observations
+            ORDER BY sequence
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        return _SupervisorAttemptCompletionShadowAudit(
+            False,
+            0,
+            0,
+            (
+                SupervisorAuthorizationFinding(
+                    "attempt_completion_authorization_schema_unreadable",
+                    None,
+                    _ATTEMPT_COMPLETION_BOUNDARY,
+                    None,
+                ),
+            ),
+        )
+
+    findings: list[SupervisorAuthorizationFinding] = []
+    for outbox_id in sorted(baseline):
+        row = outbox_rows_by_id.get(outbox_id)
+        try:
+            if row is None or not _is_attempt_completion_outbox_row(row):
+                raise ValidationError("attempt completion baseline is invalid")
+            _attempt_completion_source_from_outbox(
+                outbox_row=row,
+                flow_rows_by_id=flow_rows_by_id,
+                revision_rows_by_flow=revision_rows_by_flow,
+                attempt_rows_by_id=attempt_rows_by_id,
+                event_rows_by_attempt=event_rows_by_attempt,
+                attempt_flow_ids=attempt_flow_ids,
+            )
+        except Exception:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "attempt_completion_authorization_baseline_invalid",
+                    None if row is None else _audit_flow_reference(row["flow_id"]),
+                    _ATTEMPT_COMPLETION_BOUNDARY,
+                    None,
+                    _audit_completion_outbox_reference(outbox_id),
+                )
+            )
+
+    expected_rows = [
+        row
+        for row in outbox_rows
+        if _is_attempt_completion_outbox_row(row)
+        and row["outbox_id"] not in baseline
+    ]
+    expected_ids = {row["outbox_id"] for row in expected_rows}
+    observations_by_outbox: dict[str, list[sqlite3.Row]] = {}
+    for row in observation_rows:
+        observations_by_outbox.setdefault(row["outbox_id"], []).append(row)
+
+    for outbox_row in expected_rows:
+        outbox_id = outbox_row["outbox_id"]
+        target_reference = _audit_completion_outbox_reference(outbox_id)
+        flow_reference = _audit_flow_reference(outbox_row["flow_id"])
+        matches = observations_by_outbox.get(outbox_id, [])
+        if len(matches) != 1:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    (
+                        "attempt_completion_authorization_observation_missing"
+                        if not matches
+                        else "attempt_completion_authorization_observation_duplicated"
+                    ),
+                    flow_reference,
+                    _ATTEMPT_COMPLETION_BOUNDARY,
+                    None,
+                    target_reference,
+                )
+            )
+            continue
+        source: tuple[
+            FlowSpec,
+            AttemptRecord,
+            FlowRevision,
+            AttemptEvent,
+            FlowRevision,
+            AttemptEvent,
+            CompletionIntent,
+        ] | None = None
+        try:
+            source = _attempt_completion_source_from_outbox(
+                outbox_row=outbox_row,
+                flow_rows_by_id=flow_rows_by_id,
+                revision_rows_by_flow=revision_rows_by_flow,
+                attempt_rows_by_id=attempt_rows_by_id,
+                event_rows_by_attempt=event_rows_by_attempt,
+                attempt_flow_ids=attempt_flow_ids,
+            )
+        except Exception:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "attempt_completion_authorization_source_invalid",
+                    flow_reference,
+                    _ATTEMPT_COMPLETION_BOUNDARY,
+                    None,
+                    target_reference,
+                )
+            )
+        if source is None:
+            continue
+        (
+            spec,
+            attempt,
+            source_flow,
+            source_attempt,
+            target_flow,
+            target_attempt,
+            completion,
+        ) = source
+        try:
+            expected_values = _expected_attempt_completion_observation_values(
+                matches[0],
+                spec=spec,
+                attempt=attempt,
+                source_flow=source_flow,
+                source_attempt=source_attempt,
+                target_flow=target_flow,
+                target_attempt=target_attempt,
+                completion=completion,
+            )
+        except Exception:
+            expected_values = None
+        if (
+            expected_values is None
+            or tuple(
+                matches[0][field]
+                for field in (
+                    "outbox_id",
+                    "target_flow_event_id",
+                    "target_attempt_event_id",
+                    "source_flow_event_id",
+                    "source_flow_revision",
+                    "source_attempt_event_id",
+                    "attempt_id",
+                    "flow_id",
+                    "flow_request_digest",
+                    "input_digest",
+                    "lease_snapshot_digest",
+                    "completion_intent_digest",
+                    "completion_operation_digest",
+                    "request_digest",
+                    "decision_digest",
+                    "effect",
+                    "derived_permission_class",
+                    "legacy_executable",
+                    "execution_parity",
+                    "payload_json",
+                    "observed_at",
+                )
+            )
+            != expected_values
+        ):
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "attempt_completion_authorization_observation_invalid",
+                    flow_reference,
+                    _ATTEMPT_COMPLETION_BOUNDARY,
+                    int(matches[0]["sequence"]),
+                    target_reference,
+                )
+            )
+
+    for outbox_id, rows in observations_by_outbox.items():
+        if outbox_id not in expected_ids:
+            for row in rows:
+                findings.append(
+                    SupervisorAuthorizationFinding(
+                        "attempt_completion_authorization_observation_unexpected",
+                        _audit_flow_reference(row["flow_id"]),
+                        _ATTEMPT_COMPLETION_BOUNDARY,
+                        int(row["sequence"]),
+                        _audit_completion_outbox_reference(outbox_id),
+                    )
+                )
+    return _SupervisorAttemptCompletionShadowAudit(
+        True,
+        len(observation_rows),
+        len(expected_rows),
+        tuple(findings),
+    )
+
+
 def inspect_pending_completions(
     database_path: str | Path,
 ) -> tuple[CompletionIntent, ...]:
@@ -6611,6 +7311,7 @@ def _authorization_guard_findings(
             "attempt_claim_authorization_migration_ledger_mismatch",
             "pre_dispatch_intent_authorization_migration_ledger_mismatch",
             "pre_dispatch_intent_enforcement_migration_ledger_mismatch",
+            "attempt_completion_authorization_migration_ledger_mismatch",
         ):
             findings.append(
                 SupervisorAuthorizationFinding(code, None, None, None)
@@ -6751,6 +7452,22 @@ def _authorization_guard_findings(
         findings.append(
             SupervisorAuthorizationFinding(
                 "pre_dispatch_intent_enforcement_migration_ledger_mismatch",
+                None,
+                None,
+                None,
+            )
+        )
+    attempt_completion_migration = ledger.get(10)
+    if (
+        attempt_completion_migration is None
+        or attempt_completion_migration["name"]
+        != "supervisor_attempt_completion_authorization_shadow"
+        or attempt_completion_migration["script_sha256"]
+        != _sha256_text(_SCHEMA_V10)
+    ):
+        findings.append(
+            SupervisorAuthorizationFinding(
+                "attempt_completion_authorization_migration_ledger_mismatch",
                 None,
                 None,
                 None,
@@ -6940,11 +7657,22 @@ def _audit_attempt_event_reference(value: Any) -> str:
     return canonical_digest({"attempt_event_id_type": type(value).__name__})
 
 
+def _audit_completion_outbox_reference(value: Any) -> str:
+    """Return a deterministic redacted completion target reference."""
+
+    if isinstance(value, str):
+        return f"sha256:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
+    if isinstance(value, bytes):
+        return f"sha256:{hashlib.sha256(value).hexdigest()}"
+    return canonical_digest({"completion_outbox_id_type": type(value).__name__})
+
+
 def _audit_boundary_reference(value: Any) -> str | None:
     if value in {
         "flow_admission",
         "attempt_claim",
         _PRE_DISPATCH_INTENT_BOUNDARY,
+        _ATTEMPT_COMPLETION_BOUNDARY,
         "control_transition",
         "flow_cancellation",
     }:
@@ -7615,6 +8343,75 @@ def _verify_pre_v9_pre_dispatch_intent_history(
         ) from error
 
 
+def _verify_pre_v10_attempt_completion_history(
+    connection: sqlite3.Connection,
+) -> None:
+    """Refuse to baseline malformed durable local completion history."""
+
+    try:
+        _verify_pre_v9_pre_dispatch_intent_history(connection)
+        foreign_key_errors = tuple(
+            row
+            for table in (
+                "supervisor_pre_dispatch_intent_authorization_enforcement_baseline",
+                "supervisor_pre_dispatch_intent_authorization_decisions",
+                "supervisor_pre_dispatch_intent_authorization_action_receipts",
+            )
+            for row in connection.execute(f'PRAGMA foreign_key_check("{table}")')
+        )
+        if foreign_key_errors:
+            raise ValidationError(
+                "supervisor pre-dispatch enforcement has invalid references"
+            )
+        flow_rows = connection.execute(
+            "SELECT * FROM supervisor_flows ORDER BY flow_id"
+        ).fetchall()
+        flow_rows_by_id = {row["flow_id"]: row for row in flow_rows}
+        revision_rows_by_flow: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_flow_revisions ORDER BY flow_id, revision"
+        ).fetchall():
+            revision_rows_by_flow.setdefault(row["flow_id"], []).append(row)
+        attempt_rows = connection.execute(
+            "SELECT * FROM supervisor_attempts ORDER BY flow_id, attempt_number"
+        ).fetchall()
+        attempt_rows_by_id = {row["attempt_id"]: row for row in attempt_rows}
+        attempt_flow_ids = {
+            row["attempt_id"]: row["flow_id"] for row in attempt_rows
+        }
+        event_rows_by_attempt: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_attempt_events ORDER BY attempt_id, revision"
+        ).fetchall():
+            event_rows_by_attempt.setdefault(row["attempt_id"], []).append(row)
+        for outbox_row in connection.execute(
+            """
+            SELECT * FROM supervisor_completion_outbox
+            WHERE attempt_id IS NOT NULL AND operation_digest != intent_digest
+            ORDER BY flow_id, source_revision, outbox_id
+            """
+        ).fetchall():
+            _attempt_completion_source_from_outbox(
+                outbox_row=outbox_row,
+                flow_rows_by_id=flow_rows_by_id,
+                revision_rows_by_flow=revision_rows_by_flow,
+                attempt_rows_by_id=attempt_rows_by_id,
+                event_rows_by_attempt=event_rows_by_attempt,
+                attempt_flow_ids=attempt_flow_ids,
+            )
+    except (
+        ConfigurationError,
+        KeyError,
+        TypeError,
+        ValueError,
+        ValidationError,
+        sqlite3.Error,
+    ) as error:
+        raise ConfigurationError(
+            "pre-v10 supervisor attempt completion history is invalid"
+        ) from error
+
+
 def _verify_attempt_claim_history(
     *,
     attempt: AttemptRecord,
@@ -7924,6 +8721,8 @@ def _expected_supervisor_schema() -> dict[
             + _SCHEMA_V8
             + "\n"
             + _SCHEMA_V9
+            + "\n"
+            + _SCHEMA_V10
         )
         objects = _schema_objects(connection)
         return {
@@ -8088,6 +8887,41 @@ def _expected_pre_v9_supervisor_schema() -> dict[
         connection.close()
 
 
+@cache
+def _expected_pre_v10_supervisor_schema() -> dict[
+    tuple[str, str], tuple[str, str, str]
+]:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.executescript(
+            _SCHEMA_V2
+            + "\n"
+            + _SCHEMA_V3
+            + "\n"
+            + _SCHEMA_V4
+            + "\n"
+            + _SCHEMA_V5
+            + "\n"
+            + _SCHEMA_V6
+            + "\n"
+            + _SCHEMA_V7
+            + "\n"
+            + _SCHEMA_V8
+            + "\n"
+            + _SCHEMA_V9
+        )
+        objects = _schema_objects(connection)
+        return {
+            key: value
+            for key, value in objects.items()
+            if key[1].startswith("supervisor_")
+            or value[1].startswith("supervisor_")
+        }
+    finally:
+        connection.close()
+
+
 def _verify_pre_v4_supervisor_schema(connection: sqlite3.Connection) -> None:
     objects = _schema_objects(connection)
     actual = {
@@ -8158,6 +8992,18 @@ def _verify_pre_v9_supervisor_schema(connection: sqlite3.Connection) -> None:
     }
     if actual != _expected_pre_v9_supervisor_schema():
         raise ConfigurationError("pre-v9 supervisor schema is invalid")
+
+
+def _verify_pre_v10_supervisor_schema(connection: sqlite3.Connection) -> None:
+    objects = _schema_objects(connection)
+    actual = {
+        key: value
+        for key, value in objects.items()
+        if key[1].startswith("supervisor_")
+        or value[1].startswith("supervisor_")
+    }
+    if actual != _expected_pre_v10_supervisor_schema():
+        raise ConfigurationError("pre-v10 supervisor schema is invalid")
 
 
 def _verify_supervisor_schema(connection: sqlite3.Connection) -> None:
@@ -8960,6 +9806,479 @@ def _expected_pre_dispatch_intent_observation_values(
     )
 
 
+def _attempt_completion_lease_snapshot(
+    connection: sqlite3.Connection,
+    *,
+    attempt: AttemptRecord,
+    observed_at: float,
+) -> tuple[dict[str, Any], ...]:
+    """Capture the active claim facts before a completion releases its leases."""
+
+    # The frozen v8 lease shape is already the minimal digest-only active-lease
+    # representation. Reusing it prevents this parallel shadow from widening
+    # what completion evidence retains.
+    return _pre_dispatch_intent_lease_snapshot(
+        connection,
+        attempt=attempt,
+        observed_at=observed_at,
+    )
+
+
+def _attempt_completion_mapping(
+    *,
+    spec: FlowSpec,
+    attempt: AttemptRecord,
+    source_flow: FlowRevision,
+    source_attempt: AttemptEvent,
+    target_flow: FlowRevision,
+    target_attempt: AttemptEvent,
+    completion: CompletionIntent,
+    lease_snapshot: object,
+    observed_at: float,
+) -> dict[str, Any]:
+    """Build the exact redacted mapping for one local completion append.
+
+    This is deliberately an effect record, not a reconstruction of the
+    caller's requested outcome. Sticky cancellation may replace that requested
+    outcome before it is persisted, so the durable selected state and opaque
+    operation digest are the only authoritative completion facts.
+    """
+
+    _validate_flow_spec(spec)
+    for field_name in ("attempt_id", "flow_id", "run_id", "lease_owner"):
+        _validate_text(getattr(attempt, field_name), field_name, maximum=256)
+    _validate_revision(attempt.attempt_number)
+    _validate_revision(attempt.claimed_revision)
+    _validate_digest(attempt.input_digest, "attempt input digest")
+    attempt_created_at = _timestamp(attempt.created_at, "attempt claim timestamp")
+    deadline_at = _timestamp(attempt.deadline_at, "attempt deadline")
+    if (
+        attempt.flow_id != spec.flow_id
+        or not 1 <= attempt.attempt_number <= spec.max_attempts
+        or attempt.lease_keys
+        != tuple(sorted({f"flow:{spec.flow_id}", *spec.resource_keys}))
+    ):
+        raise ValidationError("attempt completion source is invalid")
+    expected_deadline = min(
+        attempt_created_at + spec.attempt_timeout_seconds,
+        (
+            spec.deadline_at
+            if spec.deadline_at is not None
+            else attempt_created_at + spec.attempt_timeout_seconds
+        ),
+    )
+    if deadline_at != expected_deadline or deadline_at <= attempt_created_at:
+        raise ValidationError("attempt completion deadline is invalid")
+
+    for event in (source_attempt, target_attempt):
+        _validate_text(event.event_id, "attempt event identifier", maximum=256)
+        _validate_text(event.attempt_id, "attempt identifier", maximum=256)
+        _validate_revision(event.revision)
+        _validate_reason(event.reason_code)
+        _timestamp(event.occurred_at, "attempt event timestamp")
+    for flow, description in (
+        (source_flow, "source"),
+        (target_flow, "target"),
+    ):
+        for field_name in ("event_id", "flow_id"):
+            _validate_text(
+                getattr(flow, field_name),
+                f"{description} flow {field_name}",
+                maximum=256,
+            )
+        _validate_revision(flow.revision)
+        _validate_reason(flow.reason_code)
+        _timestamp(flow.occurred_at, f"{description} flow timestamp")
+        if type(flow.cancellation_requested) is not bool:
+            raise ValidationError("attempt completion cancellation source is invalid")
+    timestamp = _timestamp(observed_at, "attempt completion observation timestamp")
+
+    for field_name in ("outbox_id", "idempotency_key", "flow_id"):
+        _validate_text(
+            getattr(completion, field_name),
+            f"completion {field_name}",
+            maximum=256,
+        )
+    _validate_revision(completion.source_revision)
+    if completion.attempt_id is None:
+        raise ValidationError("attempt completion outbox is missing its attempt")
+    _validate_text(completion.attempt_id, "completion attempt identifier", maximum=256)
+    for field_name in ("intent_digest", "operation_digest"):
+        _validate_digest(
+            getattr(completion, field_name),
+            f"completion {field_name}",
+        )
+    completion_created_at = _timestamp(
+        completion.created_at,
+        "completion outbox timestamp",
+    )
+    expected_envelope_json = _bounded_json(
+        {
+            "flow_id": target_flow.flow_id,
+            "source_revision": target_flow.revision,
+            "state": target_flow.state.value,
+            "attempt_id": attempt.attempt_id,
+            "reason_code": target_flow.reason_code,
+        },
+        "attempt completion envelope",
+    )
+    if (
+        source_flow.flow_id != attempt.flow_id
+        or source_flow.state is not FlowState.RUNNING
+        or source_flow.active_attempt_id != attempt.attempt_id
+        or target_flow.flow_id != attempt.flow_id
+        or target_flow.revision != source_flow.revision + 1
+        or target_flow.state not in _TERMINAL_ATTEMPT_FOR_FLOW
+        or target_flow.cancellation_requested
+        != source_flow.cancellation_requested
+        or target_flow.active_attempt_id is not None
+        or target_flow.reason_code != target_attempt.reason_code
+        or source_attempt.attempt_id != attempt.attempt_id
+        or source_attempt.state
+        not in {AttemptState.CREATED, AttemptState.DISPATCHING, AttemptState.RUNNING}
+        or target_attempt.attempt_id != attempt.attempt_id
+        or target_attempt.revision != source_attempt.revision + 1
+        or target_attempt.state
+        is not _TERMINAL_ATTEMPT_FOR_FLOW[target_flow.state]
+        or target_attempt.state not in _ATTEMPT_TRANSITIONS[source_attempt.state]
+        or target_attempt.occurred_at != timestamp
+        or target_flow.occurred_at != timestamp
+        or completion_created_at != timestamp
+        or timestamp < source_flow.occurred_at
+        or timestamp < source_attempt.occurred_at
+        or timestamp >= deadline_at
+        or (
+            source_flow.cancellation_requested
+            and target_flow.state is not FlowState.CANCELLED
+        )
+        or completion.flow_id != target_flow.flow_id
+        or completion.source_revision != target_flow.revision
+        or completion.attempt_id != attempt.attempt_id
+        or completion.idempotency_key
+        != f"flow:{target_flow.flow_id}:revision:{target_flow.revision}"
+        or completion.envelope_json != expected_envelope_json
+        or completion.intent_digest != _sha256_text(expected_envelope_json)
+        or completion.operation_digest == completion.intent_digest
+    ):
+        raise ValidationError("attempt completion source or target is invalid")
+    leases = _validate_pre_dispatch_intent_lease_snapshot(
+        lease_snapshot,
+        attempt=attempt,
+        observed_at=timestamp,
+    )
+    attempt_id_ref = canonical_digest({"attempt_id": attempt.attempt_id})
+    return {
+        "source": {
+            "flow_id_ref": canonical_digest({"flow_id": attempt.flow_id}),
+            "flow_event_ref": canonical_digest(
+                {"flow_event_id": source_flow.event_id}
+            ),
+            "flow_revision": source_flow.revision,
+            "flow_state": source_flow.state.value,
+            "flow_reason_code": source_flow.reason_code,
+            "cancellation_requested": source_flow.cancellation_requested,
+            "active_attempt_ref": attempt_id_ref,
+            "attempt_id_ref": attempt_id_ref,
+            "run_id_ref": canonical_digest({"run_id": attempt.run_id}),
+            "attempt_event_ref": canonical_digest(
+                {"attempt_event_id": source_attempt.event_id}
+            ),
+            "attempt_revision": source_attempt.revision,
+            "attempt_state": source_attempt.state.value,
+            "attempt_reason_code": source_attempt.reason_code,
+            "attempt_occurred_at": float(source_attempt.occurred_at),
+            "flow_request_digest": spec.request_digest,
+            "input_digest": attempt.input_digest,
+            "lease_owner_ref": canonical_digest(
+                {"lease_owner": attempt.lease_owner}
+            ),
+            "lease_keys_digest": canonical_digest(
+                {"lease_keys": list(attempt.lease_keys)}
+            ),
+            "lease_snapshot": [dict(item) for item in leases],
+            "lease_snapshot_digest": canonical_digest({"leases": list(leases)}),
+            "deadline_at": float(deadline_at),
+        },
+        "target": {
+            "flow_id_ref": canonical_digest({"flow_id": target_flow.flow_id}),
+            "flow_event_ref": canonical_digest(
+                {"flow_event_id": target_flow.event_id}
+            ),
+            "flow_revision": target_flow.revision,
+            "flow_state": target_flow.state.value,
+            "flow_reason_code": target_flow.reason_code,
+            "cancellation_requested": target_flow.cancellation_requested,
+            "active_attempt_absent": True,
+            "attempt_id_ref": attempt_id_ref,
+            "attempt_event_ref": canonical_digest(
+                {"attempt_event_id": target_attempt.event_id}
+            ),
+            "attempt_revision": target_attempt.revision,
+            "attempt_state": target_attempt.state.value,
+            "attempt_reason_code": target_attempt.reason_code,
+            "attempt_occurred_at": float(target_attempt.occurred_at),
+        },
+        "completion": {
+            "outbox_ref": canonical_digest({"outbox_id": completion.outbox_id}),
+            "idempotency_key_ref": canonical_digest(
+                {"idempotency_key": completion.idempotency_key}
+            ),
+            "source_revision": completion.source_revision,
+            "state": target_flow.state.value,
+            "attempt_id_ref": attempt_id_ref,
+            "intent_digest": completion.intent_digest,
+            "operation_digest": completion.operation_digest,
+            "created_at": float(completion_created_at),
+        },
+    }
+
+
+def _supervisor_attempt_completion_authorization_request(
+    *,
+    spec: FlowSpec,
+    attempt: AttemptRecord,
+    source_flow: FlowRevision,
+    source_attempt: AttemptEvent,
+    target_flow: FlowRevision,
+    target_attempt: AttemptEvent,
+    completion: CompletionIntent,
+    lease_snapshot: object,
+    observed_at: float,
+) -> tuple[AuthorizationRequest, PolicyBundle, dict[str, Any]]:
+    """Build a fixed shadow-only request for local completion bookkeeping."""
+
+    intent = _attempt_completion_mapping(
+        spec=spec,
+        attempt=attempt,
+        source_flow=source_flow,
+        source_attempt=source_attempt,
+        target_flow=target_flow,
+        target_attempt=target_attempt,
+        completion=completion,
+        lease_snapshot=lease_snapshot,
+        observed_at=observed_at,
+    )
+    timestamp = _timestamp(observed_at, "attempt completion observation timestamp")
+    request = AuthorizationRequest(
+        request_id=(
+            f"supervisor:{_ATTEMPT_COMPLETION_BOUNDARY}:"
+            f"{canonical_digest({'outbox_id': completion.outbox_id})}"
+        ),
+        subject=SubjectAttributes(
+            principal_id="controller:local",
+            controller_id="agentops:local-controller",
+            role=Role.CONTROLLER,
+            role_version="1",
+            profile_id=canonical_digest({"profile_id": "controller_bookkeeping"}),
+            runner_id="local_non_ai",
+            session_id=None,
+        ),
+        action=ActionAttributes(
+            verb=ActionVerb.MODIFY,
+            operation=_ATTEMPT_COMPLETION_OPERATION,
+            parameters_digest=canonical_digest(intent),
+            intended_effect="append_local_attempt_completion_and_outbox_only",
+        ),
+        resource=ResourceAttributes(
+            resource_type="supervisor_attempt",
+            identifier=canonical_digest({"attempt_id": attempt.attempt_id}),
+            version=canonical_digest(
+                {
+                    "source_attempt_event_id": source_attempt.event_id,
+                    "source_attempt_revision": source_attempt.revision,
+                    "source_flow_event_id": source_flow.event_id,
+                    "source_flow_revision": source_flow.revision,
+                    "target_attempt_event_id": target_attempt.event_id,
+                    "target_flow_event_id": target_flow.event_id,
+                    "outbox_id": completion.outbox_id,
+                }
+            ),
+            owner="operator:local",
+            trust_boundary="local_control_plane",
+            protected=False,
+            sensitivity=ImpactLevel.LOW,
+            content_digest=canonical_digest(
+                {
+                    "flow_request_digest": spec.request_digest,
+                    "source": intent["source"],
+                    "target": intent["target"],
+                    "completion": intent["completion"],
+                }
+            ),
+        ),
+        environment=EnvironmentAttributes(
+            evaluated_at=timestamp,
+            isolation_state=IsolationState.VERIFIED,
+            network_state=NetworkState.DISABLED,
+            billing_route=BillingRoute.LOCAL_NON_AI,
+            capacity_state=CapacityState.NOT_APPLICABLE,
+            paid_continuation_protection=PaidContinuationProtection.NOT_APPLICABLE,
+            circuit_state=CircuitState.CLOSED,
+            flow_state=source_flow.state.value,
+        ),
+        consequences=ConsequenceVector(
+            confidentiality=ImpactLevel.LOW,
+            integrity=ImpactLevel.LOW,
+            availability=ImpactLevel.LOW,
+            reach=Reach.LOCAL,
+            destructive=False,
+            reversible=True,
+            sensitivity=ImpactLevel.LOW,
+            blast_radius=BlastRadius.SINGLE_RESOURCE,
+        ),
+    )
+    sources = {
+        "subject": EvidenceSource.CONTROLLER,
+        "action": EvidenceSource.CONTROLLER,
+        "resource": EvidenceSource.CONTROLLER,
+        "environment": EvidenceSource.CONTROLLER,
+        "consequences": EvidenceSource.CONTROLLER,
+    }
+    evidence = tuple(
+        AttributeEvidence.bind(
+            evidence_id=f"supervisor:{_ATTEMPT_COMPLETION_BOUNDARY}:{attribute}",
+            attribute=attribute,
+            value=request.attribute_value(attribute),
+            source=source,
+            source_id="agentops:controller",
+            observed_at=timestamp,
+            expires_at=timestamp + 60.0,
+            authenticated=True,
+        )
+        for attribute, source in sources.items()
+    )
+    request = AuthorizationRequest(
+        request.request_id,
+        request.subject,
+        request.action,
+        request.resource,
+        request.environment,
+        request.consequences,
+        evidence,
+    )
+    base = PolicyBundle.current_stage(issued_at=timestamp)
+    policy = PolicyBundle(
+        bundle_id=base.bundle_id,
+        version=base.version,
+        issued_at=base.issued_at,
+        evidence_requirements=base.evidence_requirements,
+        enabled_classes=base.enabled_classes,
+        allowed_verbs=base.allowed_verbs,
+        allowed_roles=tuple(dict.fromkeys((*base.allowed_roles, Role.CONTROLLER))),
+        allowed_operations=tuple(
+            dict.fromkeys((*base.allowed_operations, _ATTEMPT_COMPLETION_OPERATION))
+        ),
+        allowed_resource_types=tuple(
+            dict.fromkeys((*base.allowed_resource_types, "supervisor_attempt"))
+        ),
+        allowed_trust_boundaries=tuple(
+            dict.fromkeys((*base.allowed_trust_boundaries, "local_control_plane"))
+        ),
+        allowed_flow_states=tuple(
+            dict.fromkeys((*base.allowed_flow_states, source_flow.state.value))
+        ),
+        allowed_network_states=base.allowed_network_states,
+        allowed_billing_routes=base.allowed_billing_routes,
+        approval_requirements=base.approval_requirements,
+        decision_ttl_seconds=base.decision_ttl_seconds,
+    )
+    return request, policy, intent
+
+
+def _expected_attempt_completion_observation_values(
+    row: sqlite3.Row,
+    *,
+    spec: FlowSpec,
+    attempt: AttemptRecord,
+    source_flow: FlowRevision,
+    source_attempt: AttemptEvent,
+    target_flow: FlowRevision,
+    target_attempt: AttemptEvent,
+    completion: CompletionIntent,
+) -> tuple[Any, ...]:
+    """Independently rebuild a durable completion shadow from its sources."""
+
+    _validate_text(
+        row["observation_id"],
+        "attempt completion authorization observation identifier",
+        maximum=256,
+    )
+    payload_text = row["payload_json"]
+    if (
+        not isinstance(payload_text, str)
+        or len(payload_text.encode("utf-8")) > _MAX_JSON_BYTES
+    ):
+        raise ValidationError("attempt completion authorization payload is invalid")
+    payload = parse_json_document(payload_text)
+    if type(payload) is not dict:
+        raise ValidationError("attempt completion authorization payload is invalid")
+    supplied_intent = payload.get("attempt_completion")
+    if type(supplied_intent) is not dict:
+        raise ValidationError("attempt completion authorization intent is invalid")
+    supplied_source = supplied_intent.get("source")
+    if type(supplied_source) is not dict:
+        raise ValidationError("attempt completion authorization source is invalid")
+    lease_snapshot = supplied_source.get("lease_snapshot")
+    request, policy, intent = _supervisor_attempt_completion_authorization_request(
+        spec=spec,
+        attempt=attempt,
+        source_flow=source_flow,
+        source_attempt=source_attempt,
+        target_flow=target_flow,
+        target_attempt=target_attempt,
+        completion=completion,
+        lease_snapshot=lease_snapshot,
+        observed_at=target_flow.occurred_at,
+    )
+    decision = _BUILTIN_ATTEMPT_COMPLETION_SHADOW_EVALUATE(
+        ShadowAuthorizationEvaluator(),
+        request,
+        policy,
+    )
+    parity = decision.effect.value == "permit"
+    expected_payload = {
+        "mode": "shadow",
+        "boundary": _ATTEMPT_COMPLETION_BOUNDARY,
+        "action_scope": _ATTEMPT_COMPLETION_ACTION_SCOPE,
+        "attempt_completion": intent,
+        "attempt_completion_digest": canonical_digest(intent),
+        "request": request.to_canonical(),
+        "request_digest": request.digest,
+        "decision": decision.to_canonical(),
+        "decision_digest": decision.digest,
+        "legacy_executable": True,
+        "execution_parity": parity,
+    }
+    if payload != expected_payload:
+        raise ValidationError("attempt completion authorization payload is inconsistent")
+    return (
+        completion.outbox_id,
+        target_flow.event_id,
+        target_attempt.event_id,
+        source_flow.event_id,
+        source_flow.revision,
+        source_attempt.event_id,
+        attempt.attempt_id,
+        attempt.flow_id,
+        spec.request_digest,
+        attempt.input_digest,
+        intent["source"]["lease_snapshot_digest"],
+        completion.intent_digest,
+        completion.operation_digest,
+        request.digest,
+        decision.digest,
+        decision.effect.value,
+        int(decision.derived_permission_class),
+        1,
+        int(parity),
+        _bounded_json(
+            expected_payload,
+            "attempt completion authorization audit payload",
+        ),
+        float(target_flow.occurred_at),
+    )
+
+
 def _supervisor_bookkeeping_authorization_request(
     *,
     boundary: str,
@@ -9209,6 +10528,31 @@ def _pre_dispatch_intent_authorization_observation_from_row(
     )
 
 
+def _attempt_completion_authorization_observation_from_row(
+    row: sqlite3.Row,
+) -> SupervisorAttemptCompletionAuthorizationObservation:
+    return SupervisorAttemptCompletionAuthorizationObservation(
+        sequence=row["sequence"],
+        observation_id=row["observation_id"],
+        flow_id=row["flow_id"],
+        attempt_id=row["attempt_id"],
+        source_flow_event_id=row["source_flow_event_id"],
+        source_flow_revision=row["source_flow_revision"],
+        source_attempt_event_id=row["source_attempt_event_id"],
+        target_flow_event_id=row["target_flow_event_id"],
+        target_attempt_event_id=row["target_attempt_event_id"],
+        outbox_id=row["outbox_id"],
+        request_digest=row["request_digest"],
+        decision_digest=row["decision_digest"],
+        effect=row["effect"],
+        derived_permission_class=PermissionClass(row["derived_permission_class"]),
+        legacy_executable=bool(row["legacy_executable"]),
+        execution_parity=bool(row["execution_parity"]),
+        payload=json.loads(row["payload_json"]),
+        observed_at=row["observed_at"],
+    )
+
+
 def _initial_control_revision() -> SupervisorControlRevision:
     return SupervisorControlRevision(
         sequence=0,
@@ -9304,6 +10648,7 @@ __all__ = [
     "StaleRevisionError",
     "SupervisorControlRevision",
     "SupervisorBookkeepingAuthorizationObservation",
+    "SupervisorAttemptCompletionAuthorizationObservation",
     "SupervisorPreDispatchIntentAuthorizationObservation",
     "SUPERVISOR_DISPATCH_BLOCKERS",
     "SupervisorAuthorizationObservation",
