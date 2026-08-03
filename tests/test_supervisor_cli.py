@@ -85,6 +85,7 @@ class SupervisorCLITests(unittest.TestCase):
                     "expected_pre_dispatch_intent_observation_count": 0,
                     "expected_pre_dispatch_intent_enforcement_record_count": 0,
                     "expected_pre_dispatch_reconciliation_observation_count": 0,
+                    "expected_queued_timeout_reconciliation_observation_count": 0,
                     "finding_count": 0,
                     "flow_admission_enforcement_record_count": 0,
                     "findings": [],
@@ -92,6 +93,7 @@ class SupervisorCLITests(unittest.TestCase):
                     "pre_dispatch_intent_observation_count": 0,
                     "pre_dispatch_intent_enforcement_record_count": 0,
                     "pre_dispatch_reconciliation_observation_count": 0,
+                    "queued_timeout_reconciliation_observation_count": 0,
                     "schema_present": False,
                 },
             )

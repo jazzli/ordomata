@@ -108,6 +108,10 @@ _KNOWN_STATE_MIGRATIONS: Mapping[int, tuple[str, str]] = {
         "supervisor_pre_dispatch_reconciliation_authorization_shadow",
         "3c29ff1cfcb327bb35a0f94157b4f4816d979be0f39122cd51b4d451b9dc0d4f",
     ),
+    12: (
+        "supervisor_queued_timeout_reconciliation_authorization_shadow",
+        "316499645e5ec0e8a273047f6296c81ffc9373bfd1d729f235ad1168179f2bd5",
+    ),
 }
 _CURRENT_STATE_SCHEMA_VERSION = max(_KNOWN_STATE_MIGRATIONS)
 _BASELINE_SCHEMA_SCRIPT_FINGERPRINT = (
@@ -198,6 +202,12 @@ _SUPERVISOR_REQUIRED_TABLES_BY_VERSION: Mapping[int, frozenset[str]] = {
         {
             "supervisor_pre_dispatch_reconciliation_authorization_baseline",
             "supervisor_pre_dispatch_reconciliation_authorization_observations",
+        }
+    ),
+    12: frozenset(
+        {
+            "supervisor_queued_timeout_reconciliation_authorization_baseline",
+            "supervisor_queued_timeout_reconciliation_authorization_observations",
         }
     ),
 }
