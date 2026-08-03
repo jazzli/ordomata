@@ -62,7 +62,10 @@ disabled.
   neither record dispatches a worker. Local attempt completion also records a
   redacted post-write compatibility shadow for the flow, attempt, and local
   outbox append; it cannot deliver an outbox, dispatch a worker, or execute a
-  task. Other paths remain shadow-only or disabled.
+  task. Expired pre-dispatch claim reconciliation records a separate redacted
+  post-write shadow for its terminal repair, owned-lease cleanup, and local outbox;
+  it carries no delivery or execution authority. Other paths remain shadow-only
+  or disabled.
 - Read-only authorization and supervisor inspection that reports fixed,
   privacy-bounded findings without repairing history.
 - A foreground, dispatch-disabled supervisor control-plane tracer with
@@ -250,8 +253,9 @@ architecture, status, policy, routing, roadmap, plan, and research sources.
   narrow exact built-in-mock Class 1 admission, dispatch, and private
   publication path, plus mock-only supervisor flow admission, reversible local
   supervisor control transitions, local mock attempt claims, and the local
-  pre-dispatch bookkeeping append. Its permit, v8 shadow, and v10 local
-  completion shadow grant no worker authority. Live,
+  pre-dispatch bookkeeping append. Its permit, v8 shadow, v10 local completion
+  shadow, and v11 expired-claim reconciliation shadow grant no worker
+  authority. Live,
   comparison, supervisor worker dispatch/execution, shared-publication,
   promotion, and general mediated-tool paths remain shadow-only or disabled.
 - No production inbox, calendar, Drive, Slack, deployment, or other connector

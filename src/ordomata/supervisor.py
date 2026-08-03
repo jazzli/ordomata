@@ -261,7 +261,7 @@ _REASON_CODE = re.compile(r"[a-z0-9_]{1,100}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _RESOURCE_KEY = re.compile(r"[a-z0-9][a-z0-9._:/-]{0,199}")
 _MAX_JSON_BYTES = 262_144
-_SCHEMA_VERSION = 10
+_SCHEMA_VERSION = 11
 _FOREGROUND_LEASE_KEY = "supervisor:foreground"
 _PRE_DISPATCH_INTENT_BOUNDARY = "attempt_pre_dispatch_intent"
 _PRE_DISPATCH_INTENT_ACTION_SCOPE = (
@@ -275,6 +275,18 @@ _ATTEMPT_COMPLETION_ACTION_SCOPE = "supervisor_local_attempt_completion_only"
 _ATTEMPT_COMPLETION_OPERATION = "supervisor.attempt_completion"
 # As above, historical completion-shadow replay must use the shipped evaluator.
 _BUILTIN_ATTEMPT_COMPLETION_SHADOW_EVALUATE = ShadowAuthorizationEvaluator.evaluate
+_PRE_DISPATCH_RECONCILIATION_BOUNDARY = "attempt_pre_dispatch_reconciliation"
+_PRE_DISPATCH_RECONCILIATION_ACTION_SCOPE = (
+    "supervisor_local_pre_dispatch_reconciliation_only"
+)
+_PRE_DISPATCH_RECONCILIATION_OPERATION = (
+    "supervisor.attempt_pre_dispatch_reconciliation"
+)
+# As above, historical reconciliation-shadow replay must use the shipped
+# evaluator rather than a mutable first-pass seam.
+_BUILTIN_PRE_DISPATCH_RECONCILIATION_SHADOW_EVALUATE = (
+    ShadowAuthorizationEvaluator.evaluate
+)
 SUPERVISOR_DISPATCH_BLOCKERS = (
     "runtime_abac_enforcement_not_implemented",
     "repository_worker_containment_not_proven",
@@ -424,6 +436,31 @@ class SupervisorAttemptCompletionAuthorizationObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class SupervisorPreDispatchReconciliationAuthorizationObservation:
+    """One non-authoritative, privacy-bounded pre-dispatch repair observation."""
+
+    sequence: int
+    observation_id: str
+    flow_id: str
+    attempt_id: str
+    source_flow_event_id: str
+    source_flow_revision: int
+    source_attempt_event_id: str
+    target_flow_event_id: str
+    target_attempt_event_id: str
+    outbox_id: str
+    reconciliation_action: str
+    request_digest: str
+    decision_digest: str
+    effect: str
+    derived_permission_class: PermissionClass
+    legacy_executable: bool
+    execution_parity: bool
+    payload: Mapping[str, Any]
+    observed_at: float
+
+
+@dataclass(frozen=True, slots=True)
 class SupervisorAuthorizationFinding:
     code: str
     flow_id: str | None
@@ -460,6 +497,8 @@ class SupervisorAuthorizationAudit:
     expected_pre_dispatch_intent_enforcement_record_count: int = 0
     attempt_completion_observation_count: int = 0
     expected_attempt_completion_observation_count: int = 0
+    pre_dispatch_reconciliation_observation_count: int = 0
+    expected_pre_dispatch_reconciliation_observation_count: int = 0
 
     @property
     def clean(self) -> bool:
@@ -506,6 +545,12 @@ class SupervisorAuthorizationAudit:
             ),
             "expected_attempt_completion_observation_count": (
                 self.expected_attempt_completion_observation_count
+            ),
+            "pre_dispatch_reconciliation_observation_count": (
+                self.pre_dispatch_reconciliation_observation_count
+            ),
+            "expected_pre_dispatch_reconciliation_observation_count": (
+                self.expected_pre_dispatch_reconciliation_observation_count
             ),
             "finding_count": len(self.findings),
             "clean": self.clean,
@@ -566,6 +611,16 @@ class _SupervisorPreDispatchIntentEnforcementAudit:
 @dataclass(frozen=True, slots=True)
 class _SupervisorAttemptCompletionShadowAudit:
     """Internal read-only replay summary for the completion shadow."""
+
+    schema_present: bool
+    record_count: int
+    expected_record_count: int
+    findings: tuple[SupervisorAuthorizationFinding, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _SupervisorPreDispatchReconciliationShadowAudit:
+    """Internal replay summary for pre-dispatch reconciliation shadows."""
 
     schema_present: bool
     record_count: int
@@ -1664,6 +1719,99 @@ END;
 """
 
 
+_SCHEMA_V11 = """
+CREATE TABLE supervisor_pre_dispatch_reconciliation_authorization_baseline (
+    outbox_id TEXT PRIMARY KEY
+        REFERENCES supervisor_completion_outbox(outbox_id)
+);
+INSERT INTO supervisor_pre_dispatch_reconciliation_authorization_baseline (
+    outbox_id
+)
+    SELECT outbox_id FROM supervisor_completion_outbox
+    WHERE attempt_id IS NOT NULL AND operation_digest = intent_digest;
+
+CREATE TABLE supervisor_pre_dispatch_reconciliation_authorization_observations (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    observation_id TEXT NOT NULL UNIQUE CHECK (length(observation_id) <= 256),
+    outbox_id TEXT NOT NULL UNIQUE CHECK (length(outbox_id) <= 256)
+        REFERENCES supervisor_completion_outbox(outbox_id),
+    target_flow_event_id TEXT NOT NULL UNIQUE CHECK (
+        length(target_flow_event_id) <= 256
+    ) REFERENCES supervisor_flow_revisions(event_id),
+    target_attempt_event_id TEXT NOT NULL UNIQUE CHECK (
+        length(target_attempt_event_id) <= 256
+    ) REFERENCES supervisor_attempt_events(event_id),
+    source_flow_event_id TEXT NOT NULL UNIQUE CHECK (
+        length(source_flow_event_id) <= 256
+    ) REFERENCES supervisor_flow_revisions(event_id),
+    source_flow_revision INTEGER NOT NULL CHECK (source_flow_revision >= 1),
+    source_attempt_event_id TEXT NOT NULL UNIQUE CHECK (
+        length(source_attempt_event_id) <= 256
+    ) REFERENCES supervisor_attempt_events(event_id),
+    attempt_id TEXT NOT NULL REFERENCES supervisor_attempts(attempt_id),
+    flow_id TEXT NOT NULL REFERENCES supervisor_flows(flow_id),
+    flow_request_digest TEXT NOT NULL CHECK (length(flow_request_digest) = 64),
+    input_digest TEXT NOT NULL CHECK (length(input_digest) = 64),
+    lease_snapshot_digest TEXT NOT NULL CHECK (
+        length(lease_snapshot_digest) = 71
+    ),
+    completion_intent_digest TEXT NOT NULL CHECK (
+        length(completion_intent_digest) = 64
+    ),
+    completion_operation_digest TEXT NOT NULL CHECK (
+        length(completion_operation_digest) = 64
+    ),
+    reconciliation_action TEXT NOT NULL CHECK (
+        reconciliation_action IN (
+            'finalize_cancelled_pre_dispatch',
+            'mark_lost_pre_dispatch'
+        )
+    ),
+    request_digest TEXT NOT NULL CHECK (length(request_digest) = 71),
+    decision_digest TEXT NOT NULL CHECK (length(decision_digest) = 71),
+    effect TEXT NOT NULL CHECK (effect IN ('permit', 'defer', 'deny', 'indeterminate')),
+    derived_permission_class INTEGER NOT NULL CHECK (
+        derived_permission_class IN (0, 1, 2, 3)
+    ),
+    legacy_executable INTEGER NOT NULL CHECK (legacy_executable IN (0, 1)),
+    execution_parity INTEGER NOT NULL CHECK (execution_parity IN (0, 1)),
+    payload_json TEXT NOT NULL CHECK (length(payload_json) <= 262144),
+    observed_at REAL NOT NULL CHECK (observed_at >= 0),
+    CHECK (source_flow_event_id != target_flow_event_id),
+    CHECK (source_attempt_event_id != target_attempt_event_id),
+    CHECK (completion_intent_digest = completion_operation_digest)
+);
+CREATE INDEX supervisor_pre_dispatch_reconciliation_authorization_attempt
+    ON supervisor_pre_dispatch_reconciliation_authorization_observations(
+        attempt_id, sequence
+    );
+CREATE INDEX supervisor_pre_dispatch_reconciliation_authorization_target
+    ON supervisor_pre_dispatch_reconciliation_authorization_observations(
+        outbox_id, sequence
+    );
+CREATE TRIGGER supervisor_pre_dispatch_reconciliation_authorization_baseline_no_update
+BEFORE UPDATE ON supervisor_pre_dispatch_reconciliation_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor pre-dispatch reconciliation authorization baseline is append-only');
+END;
+CREATE TRIGGER supervisor_pre_dispatch_reconciliation_authorization_baseline_no_delete
+BEFORE DELETE ON supervisor_pre_dispatch_reconciliation_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor pre-dispatch reconciliation authorization baseline is append-only');
+END;
+CREATE TRIGGER supervisor_pre_dispatch_reconciliation_authorization_baseline_no_insert
+BEFORE INSERT ON supervisor_pre_dispatch_reconciliation_authorization_baseline BEGIN
+    SELECT RAISE(ABORT, 'supervisor pre-dispatch reconciliation authorization baseline is frozen');
+END;
+CREATE TRIGGER supervisor_pre_dispatch_reconciliation_authorization_observations_no_update
+BEFORE UPDATE ON supervisor_pre_dispatch_reconciliation_authorization_observations BEGIN
+    SELECT RAISE(ABORT, 'supervisor pre-dispatch reconciliation authorization observations are append-only');
+END;
+CREATE TRIGGER supervisor_pre_dispatch_reconciliation_authorization_observations_no_delete
+BEFORE DELETE ON supervisor_pre_dispatch_reconciliation_authorization_observations BEGIN
+    SELECT RAISE(ABORT, 'supervisor pre-dispatch reconciliation authorization observations are append-only');
+END;
+"""
+
+
 class SQLiteSupervisorStore:
     """Supervisor-specific event store sharing the existing local SQLite file."""
 
@@ -1771,6 +1919,7 @@ class SQLiteSupervisorStore:
                     8: _SCHEMA_V8,
                     9: _SCHEMA_V9,
                     10: _SCHEMA_V10,
+                    11: _SCHEMA_V11,
                 }
                 for version, script in migration_scripts.items():
                     if _sha256_text(script) != _KNOWN_STATE_MIGRATIONS[version][1]:
@@ -1808,6 +1957,11 @@ class SQLiteSupervisorStore:
                     if version == 10:
                         _verify_pre_v10_supervisor_schema(self._connection)
                         _verify_pre_v10_attempt_completion_history(
+                            self._connection
+                        )
+                    if version == 11:
+                        _verify_pre_v11_supervisor_schema(self._connection)
+                        _verify_pre_v11_pre_dispatch_reconciliation_history(
                             self._connection
                         )
                     _execute_schema_script(
@@ -2208,6 +2362,42 @@ class SQLiteSupervisorStore:
                 ).fetchall()
         return tuple(
             _attempt_completion_authorization_observation_from_row(row)
+            for row in rows
+        )
+
+    def list_pre_dispatch_reconciliation_authorization_observations(
+        self,
+        attempt_id: str | None = None,
+    ) -> tuple[SupervisorPreDispatchReconciliationAuthorizationObservation, ...]:
+        """Return non-authoritative pre-dispatch repair shadow records.
+
+        These observations bind only a completed local reconciliation of an
+        expired pre-dispatch claim. They cannot authorize or invoke a worker,
+        delivery, subprocess, task, repository operation, or network action.
+        """
+
+        if attempt_id is not None:
+            _validate_text(attempt_id, "attempt_id", maximum=256)
+        with self._lock:
+            if attempt_id is None:
+                rows = self._connection.execute(
+                    """
+                    SELECT *
+                    FROM supervisor_pre_dispatch_reconciliation_authorization_observations
+                    ORDER BY sequence
+                    """
+                ).fetchall()
+            else:
+                rows = self._connection.execute(
+                    """
+                    SELECT *
+                    FROM supervisor_pre_dispatch_reconciliation_authorization_observations
+                    WHERE attempt_id = ? ORDER BY sequence
+                    """,
+                    (attempt_id,),
+                ).fetchall()
+        return tuple(
+            _pre_dispatch_reconciliation_authorization_observation_from_row(row)
             for row in rows
         )
 
@@ -3611,6 +3801,124 @@ class SQLiteSupervisorStore:
                 "attempt completion authorization persistence is uncertain"
             )
 
+    def _append_pre_dispatch_reconciliation_authorization_observation(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        spec: FlowSpec,
+        attempt: AttemptRecord,
+        source_flow: FlowRevision,
+        source_attempt: AttemptEvent,
+        target_flow: FlowRevision,
+        target_attempt: AttemptEvent,
+        completion: CompletionIntent,
+        lease_snapshot: object,
+        reconciliation_action: str | None,
+        observed_at: float,
+        legacy_executable: bool,
+    ) -> None:
+        """Append best-effort evidence for an already-repaired pre-dispatch claim.
+
+        The caller reaches this method only after the terminal flow, attempt,
+        outbox, and lease-release writes have succeeded. The observation is
+        therefore compatibility evidence only; it cannot alter the deterministic
+        repair or activate delivery, a worker, a subprocess, or a task.
+        """
+
+        request, policy, intent = (
+            _supervisor_pre_dispatch_reconciliation_authorization_request(
+                spec=spec,
+                attempt=attempt,
+                source_flow=source_flow,
+                source_attempt=source_attempt,
+                target_flow=target_flow,
+                target_attempt=target_attempt,
+                completion=completion,
+                lease_snapshot=lease_snapshot,
+                reconciliation_action=reconciliation_action,
+                observed_at=observed_at,
+            )
+        )
+        decision = ShadowAuthorizationEvaluator().evaluate(request, policy)
+        parity = (decision.effect.value == "permit") == legacy_executable
+        payload = {
+            "mode": "shadow",
+            "boundary": _PRE_DISPATCH_RECONCILIATION_BOUNDARY,
+            "action_scope": _PRE_DISPATCH_RECONCILIATION_ACTION_SCOPE,
+            "pre_dispatch_reconciliation": intent,
+            "pre_dispatch_reconciliation_digest": canonical_digest(intent),
+            "request": request.to_canonical(),
+            "request_digest": request.digest,
+            "decision": decision.to_canonical(),
+            "decision_digest": decision.digest,
+            "legacy_executable": legacy_executable,
+            "execution_parity": parity,
+        }
+        payload_json = _bounded_json(
+            payload,
+            "pre-dispatch reconciliation authorization payload",
+        )
+        values = (
+            self._new_id("pre_dispatch_reconciliation_authorization"),
+            completion.outbox_id,
+            target_flow.event_id,
+            target_attempt.event_id,
+            source_flow.event_id,
+            source_flow.revision,
+            source_attempt.event_id,
+            attempt.attempt_id,
+            attempt.flow_id,
+            spec.request_digest,
+            attempt.input_digest,
+            intent["source"]["lease_snapshot_digest"],
+            completion.intent_digest,
+            completion.operation_digest,
+            intent["reconciliation"]["action"],
+            request.digest,
+            decision.digest,
+            decision.effect.value,
+            int(decision.derived_permission_class),
+            int(legacy_executable),
+            int(parity),
+            payload_json,
+            float(observed_at),
+        )
+        connection.execute(
+            """
+            INSERT INTO supervisor_pre_dispatch_reconciliation_authorization_observations (
+                observation_id, outbox_id, target_flow_event_id,
+                target_attempt_event_id, source_flow_event_id,
+                source_flow_revision, source_attempt_event_id, attempt_id,
+                flow_id, flow_request_digest, input_digest, lease_snapshot_digest,
+                completion_intent_digest, completion_operation_digest,
+                reconciliation_action, request_digest, decision_digest, effect,
+                derived_permission_class, legacy_executable, execution_parity,
+                payload_json, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            values,
+        )
+        row = connection.execute(
+            """
+            SELECT observation_id, outbox_id, target_flow_event_id,
+                   target_attempt_event_id, source_flow_event_id,
+                   source_flow_revision, source_attempt_event_id, attempt_id,
+                   flow_id, flow_request_digest, input_digest,
+                   lease_snapshot_digest, completion_intent_digest,
+                   completion_operation_digest, reconciliation_action,
+                   request_digest, decision_digest, effect,
+                   derived_permission_class, legacy_executable,
+                   execution_parity, payload_json, observed_at
+            FROM supervisor_pre_dispatch_reconciliation_authorization_observations
+            WHERE outbox_id = ?
+            """,
+            (completion.outbox_id,),
+        ).fetchone()
+        if row is None or tuple(row) != values:
+            raise SupervisorError(
+                "pre-dispatch reconciliation authorization persistence is uncertain"
+            )
+
     def mark_attempt_dispatching(
         self,
         claim: AttemptClaim,
@@ -4155,7 +4463,18 @@ class SQLiteSupervisorStore:
             raise StaleReconciliationPlanError("flow changed during reconciliation")
         attempt = self._attempt_in(connection, finding.attempt_id)
         attempt_event = self._current_attempt_event_in(connection, finding.attempt_id)
-        self._insert_attempt_event(
+        flow_row = connection.execute(
+            "SELECT * FROM supervisor_flows WHERE flow_id = ?",
+            (finding.flow_id,),
+        ).fetchone()
+        if flow_row is None:
+            raise SupervisorError("flow was not found")
+        lease_snapshot = _pre_dispatch_reconciliation_lease_snapshot(
+            connection,
+            attempt=attempt,
+            observed_at=timestamp,
+        )
+        completed_attempt = self._insert_attempt_event(
             connection,
             attempt_id=finding.attempt_id,
             revision=attempt_event.revision + 1,
@@ -4173,7 +4492,7 @@ class SQLiteSupervisorStore:
             reason_code=finding.reason_code,
             occurred_at=timestamp,
         )
-        self._insert_completion_intent(
+        outbox = self._insert_completion_intent(
             connection, revision, attempt_id=finding.attempt_id, occurred_at=timestamp
         )
         for key in attempt.lease_keys:
@@ -4181,6 +4500,26 @@ class SQLiteSupervisorStore:
                 "DELETE FROM leases WHERE lease_key = ? AND owner_id = ?",
                 (key, attempt.lease_owner),
             )
+        try:
+            self._append_pre_dispatch_reconciliation_authorization_observation(
+                connection,
+                spec=_flow_from_row(flow_row),
+                attempt=attempt,
+                source_flow=current,
+                source_attempt=attempt_event,
+                target_flow=revision,
+                target_attempt=completed_attempt,
+                completion=outbox,
+                lease_snapshot=lease_snapshot,
+                reconciliation_action=finding.action,
+                observed_at=timestamp,
+                legacy_executable=True,
+            )
+        except Exception:
+            # Reconciliation remains deterministic and fail-safe. This
+            # post-write compatibility shadow cannot alter a terminal local
+            # repair, deliver its outbox, or invoke a worker.
+            pass
 
     def _insert_flow_revision(
         self,
@@ -4713,6 +5052,9 @@ def _inspect_supervisor_authorization_connection(
     attempt_completion = _inspect_attempt_completion_authorization_connection(
         connection
     )
+    pre_dispatch_reconciliation = (
+        _inspect_pre_dispatch_reconciliation_authorization_connection(connection)
+    )
     findings = (
         *flow.findings,
         *bookkeeping.findings,
@@ -4722,6 +5064,7 @@ def _inspect_supervisor_authorization_connection(
         *pre_dispatch_intent.findings,
         *pre_dispatch_intent_enforcement.findings,
         *attempt_completion.findings,
+        *pre_dispatch_reconciliation.findings,
         *guard_findings,
     )
     return SupervisorAuthorizationAudit(
@@ -4735,6 +5078,7 @@ def _inspect_supervisor_authorization_connection(
             and pre_dispatch_intent.schema_present
             and pre_dispatch_intent_enforcement.schema_present
             and attempt_completion.schema_present
+            and pre_dispatch_reconciliation.schema_present
             and not guard_findings
         ),
         observation_count=(
@@ -4742,12 +5086,14 @@ def _inspect_supervisor_authorization_connection(
             + bookkeeping.observation_count
             + pre_dispatch_intent.record_count
             + attempt_completion.record_count
+            + pre_dispatch_reconciliation.record_count
         ),
         expected_observation_count=(
             flow.expected_observation_count
             + bookkeeping.expected_observation_count
             + pre_dispatch_intent.expected_record_count
             + attempt_completion.expected_record_count
+            + pre_dispatch_reconciliation.expected_record_count
         ),
         findings=findings,
         control_enforcement_record_count=control_enforcement.record_count,
@@ -4779,6 +5125,12 @@ def _inspect_supervisor_authorization_connection(
         attempt_completion_observation_count=attempt_completion.record_count,
         expected_attempt_completion_observation_count=(
             attempt_completion.expected_record_count
+        ),
+        pre_dispatch_reconciliation_observation_count=(
+            pre_dispatch_reconciliation.record_count
+        ),
+        expected_pre_dispatch_reconciliation_observation_count=(
+            pre_dispatch_reconciliation.expected_record_count
         ),
     )
 
@@ -7244,6 +7596,401 @@ def _inspect_attempt_completion_authorization_connection(
     )
 
 
+def _is_pre_dispatch_reconciliation_outbox_row(row: sqlite3.Row) -> bool:
+    """Return whether an outbox row closes an expired pre-dispatch claim."""
+
+    try:
+        return (
+            row["attempt_id"] is not None
+            and row["operation_digest"] == row["intent_digest"]
+        )
+    except (IndexError, KeyError):
+        return False
+
+
+def _structural_pre_dispatch_reconciliation_lease_snapshot(
+    attempt: AttemptRecord,
+    *,
+    observed_at: float,
+) -> tuple[dict[str, Any], ...]:
+    """Make a never-persisted expired shape for legacy lineage validation."""
+
+    timestamp = _timestamp(
+        observed_at,
+        "pre-dispatch reconciliation observation timestamp",
+    )
+    expiry = min(float(attempt.deadline_at), timestamp)
+    return tuple(
+        {
+            "lease_key_ref": canonical_digest({"lease_key": lease_key}),
+            "lease_state": "owned_expired",
+            "lease_owner_ref": canonical_digest(
+                {"lease_owner": attempt.lease_owner}
+            ),
+            "acquired_at": float(attempt.created_at),
+            "renewed_at": float(attempt.created_at),
+            "expires_at": expiry,
+        }
+        for lease_key in attempt.lease_keys
+    )
+
+
+def _pre_dispatch_reconciliation_source_from_outbox(
+    *,
+    outbox_row: sqlite3.Row,
+    flow_rows_by_id: Mapping[str, sqlite3.Row],
+    revision_rows_by_flow: Mapping[str, Sequence[sqlite3.Row]],
+    attempt_rows_by_id: Mapping[str, sqlite3.Row],
+    event_rows_by_attempt: Mapping[str, Sequence[sqlite3.Row]],
+    attempt_flow_ids: Mapping[str, str],
+) -> tuple[
+    FlowSpec,
+    AttemptRecord,
+    FlowRevision,
+    AttemptEvent,
+    FlowRevision,
+    AttemptEvent,
+    CompletionIntent,
+    str,
+]:
+    """Rebuild one expired pre-dispatch repair from immutable records."""
+
+    completion = _completion_from_row(outbox_row)
+    if (
+        type(completion.flow_id) is not str
+        or type(completion.attempt_id) is not str
+    ):
+        raise ValidationError("pre-dispatch reconciliation outbox source is invalid")
+    _validate_revision(completion.source_revision)
+    if completion.source_revision < 2:
+        raise ValidationError("pre-dispatch reconciliation source revision is invalid")
+    attempt_row = attempt_rows_by_id.get(completion.attempt_id)
+    flow_row = flow_rows_by_id.get(completion.flow_id)
+    if attempt_row is None or flow_row is None:
+        raise ValidationError("pre-dispatch reconciliation source is missing")
+    attempt = _attempt_from_row(attempt_row)
+    spec = _flow_from_row(flow_row)
+    _validate_flow_spec(spec)
+    if flow_row["request_digest"] != spec.request_digest:
+        raise ValidationError(
+            "pre-dispatch reconciliation flow request digest is invalid"
+        )
+    if attempt.flow_id != spec.flow_id:
+        raise ValidationError("pre-dispatch reconciliation attempt flow is invalid")
+    revisions = revision_rows_by_flow.get(spec.flow_id, ())
+    _verify_flow_revision_lineage(spec.flow_id, revisions, attempt_flow_ids)
+    if completion.source_revision > len(revisions):
+        raise ValidationError("pre-dispatch reconciliation target flow is missing")
+    events = _verify_attempt_claim_history(
+        attempt=attempt,
+        spec=spec,
+        revision_rows=revisions,
+        event_rows=event_rows_by_attempt.get(attempt.attempt_id, ()),
+    )
+    if len(events) < 2:
+        raise ValidationError("pre-dispatch reconciliation target event is missing")
+    source_flow = _flow_revision_from_row(
+        revisions[completion.source_revision - 2]
+    )
+    target_flow = _flow_revision_from_row(
+        revisions[completion.source_revision - 1]
+    )
+    source_attempt = events[-2]
+    target_attempt = events[-1]
+    action = (
+        "finalize_cancelled_pre_dispatch"
+        if source_flow.cancellation_requested
+        else "mark_lost_pre_dispatch"
+    )
+    _pre_dispatch_reconciliation_mapping(
+        spec=spec,
+        attempt=attempt,
+        source_flow=source_flow,
+        source_attempt=source_attempt,
+        target_flow=target_flow,
+        target_attempt=target_attempt,
+        completion=completion,
+        lease_snapshot=_structural_pre_dispatch_reconciliation_lease_snapshot(
+            attempt,
+            observed_at=target_flow.occurred_at,
+        ),
+        reconciliation_action=action,
+        observed_at=target_flow.occurred_at,
+    )
+    return (
+        spec,
+        attempt,
+        source_flow,
+        source_attempt,
+        target_flow,
+        target_attempt,
+        completion,
+        action,
+    )
+
+
+def _inspect_pre_dispatch_reconciliation_authorization_connection(
+    connection: sqlite3.Connection,
+) -> _SupervisorPreDispatchReconciliationShadowAudit:
+    """Replay post-v11 expired-claim repair shadows without repair."""
+
+    tables = _table_names(connection)
+    required = {
+        "supervisor_flows",
+        "supervisor_flow_revisions",
+        "supervisor_attempts",
+        "supervisor_attempt_events",
+        "supervisor_completion_outbox",
+        "supervisor_pre_dispatch_reconciliation_authorization_baseline",
+        "supervisor_pre_dispatch_reconciliation_authorization_observations",
+    }
+    if not required.issubset(tables):
+        return _SupervisorPreDispatchReconciliationShadowAudit(
+            False,
+            0,
+            0,
+            (
+                SupervisorAuthorizationFinding(
+                    "pre_dispatch_reconciliation_authorization_schema_missing",
+                    None,
+                    _PRE_DISPATCH_RECONCILIATION_BOUNDARY,
+                    None,
+                ),
+            ),
+        )
+    try:
+        flow_rows = connection.execute(
+            "SELECT * FROM supervisor_flows ORDER BY flow_id"
+        ).fetchall()
+        flow_rows_by_id = {row["flow_id"]: row for row in flow_rows}
+        revision_rows_by_flow: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_flow_revisions ORDER BY flow_id, revision"
+        ).fetchall():
+            revision_rows_by_flow.setdefault(row["flow_id"], []).append(row)
+        attempt_rows = connection.execute(
+            "SELECT * FROM supervisor_attempts ORDER BY flow_id, attempt_number"
+        ).fetchall()
+        attempt_rows_by_id = {row["attempt_id"]: row for row in attempt_rows}
+        attempt_flow_ids = {
+            row["attempt_id"]: row["flow_id"] for row in attempt_rows
+        }
+        event_rows_by_attempt: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_attempt_events ORDER BY attempt_id, revision"
+        ).fetchall():
+            event_rows_by_attempt.setdefault(row["attempt_id"], []).append(row)
+        outbox_rows = connection.execute(
+            """
+            SELECT * FROM supervisor_completion_outbox
+            ORDER BY flow_id, source_revision, outbox_id
+            """
+        ).fetchall()
+        outbox_rows_by_id = {row["outbox_id"]: row for row in outbox_rows}
+        baseline = {
+            row["outbox_id"]
+            for row in connection.execute(
+                """
+                SELECT outbox_id
+                FROM supervisor_pre_dispatch_reconciliation_authorization_baseline
+                """
+            ).fetchall()
+        }
+        observation_rows = connection.execute(
+            """
+            SELECT *
+            FROM supervisor_pre_dispatch_reconciliation_authorization_observations
+            ORDER BY sequence
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        return _SupervisorPreDispatchReconciliationShadowAudit(
+            False,
+            0,
+            0,
+            (
+                SupervisorAuthorizationFinding(
+                    "pre_dispatch_reconciliation_authorization_schema_unreadable",
+                    None,
+                    _PRE_DISPATCH_RECONCILIATION_BOUNDARY,
+                    None,
+                ),
+            ),
+        )
+
+    findings: list[SupervisorAuthorizationFinding] = []
+    for outbox_id in sorted(baseline):
+        row = outbox_rows_by_id.get(outbox_id)
+        try:
+            if row is None or not _is_pre_dispatch_reconciliation_outbox_row(row):
+                raise ValidationError(
+                    "pre-dispatch reconciliation baseline is invalid"
+                )
+            _pre_dispatch_reconciliation_source_from_outbox(
+                outbox_row=row,
+                flow_rows_by_id=flow_rows_by_id,
+                revision_rows_by_flow=revision_rows_by_flow,
+                attempt_rows_by_id=attempt_rows_by_id,
+                event_rows_by_attempt=event_rows_by_attempt,
+                attempt_flow_ids=attempt_flow_ids,
+            )
+        except Exception:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "pre_dispatch_reconciliation_authorization_baseline_invalid",
+                    None if row is None else _audit_flow_reference(row["flow_id"]),
+                    _PRE_DISPATCH_RECONCILIATION_BOUNDARY,
+                    None,
+                    _audit_completion_outbox_reference(outbox_id),
+                )
+            )
+
+    expected_rows = [
+        row
+        for row in outbox_rows
+        if _is_pre_dispatch_reconciliation_outbox_row(row)
+        and row["outbox_id"] not in baseline
+    ]
+    expected_ids = {row["outbox_id"] for row in expected_rows}
+    observations_by_outbox: dict[str, list[sqlite3.Row]] = {}
+    for row in observation_rows:
+        observations_by_outbox.setdefault(row["outbox_id"], []).append(row)
+
+    for outbox_row in expected_rows:
+        outbox_id = outbox_row["outbox_id"]
+        target_reference = _audit_completion_outbox_reference(outbox_id)
+        flow_reference = _audit_flow_reference(outbox_row["flow_id"])
+        matches = observations_by_outbox.get(outbox_id, [])
+        if len(matches) != 1:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    (
+                        "pre_dispatch_reconciliation_authorization_observation_missing"
+                        if not matches
+                        else "pre_dispatch_reconciliation_authorization_observation_duplicated"
+                    ),
+                    flow_reference,
+                    _PRE_DISPATCH_RECONCILIATION_BOUNDARY,
+                    None,
+                    target_reference,
+                )
+            )
+            continue
+        source: tuple[
+            FlowSpec,
+            AttemptRecord,
+            FlowRevision,
+            AttemptEvent,
+            FlowRevision,
+            AttemptEvent,
+            CompletionIntent,
+            str,
+        ] | None = None
+        try:
+            source = _pre_dispatch_reconciliation_source_from_outbox(
+                outbox_row=outbox_row,
+                flow_rows_by_id=flow_rows_by_id,
+                revision_rows_by_flow=revision_rows_by_flow,
+                attempt_rows_by_id=attempt_rows_by_id,
+                event_rows_by_attempt=event_rows_by_attempt,
+                attempt_flow_ids=attempt_flow_ids,
+            )
+        except Exception:
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "pre_dispatch_reconciliation_authorization_source_invalid",
+                    flow_reference,
+                    _PRE_DISPATCH_RECONCILIATION_BOUNDARY,
+                    None,
+                    target_reference,
+                )
+            )
+        if source is None:
+            continue
+        (
+            spec,
+            attempt,
+            source_flow,
+            source_attempt,
+            target_flow,
+            target_attempt,
+            completion,
+            action,
+        ) = source
+        try:
+            expected_values = _expected_pre_dispatch_reconciliation_observation_values(
+                matches[0],
+                spec=spec,
+                attempt=attempt,
+                source_flow=source_flow,
+                source_attempt=source_attempt,
+                target_flow=target_flow,
+                target_attempt=target_attempt,
+                completion=completion,
+            )
+        except Exception:
+            expected_values = None
+        if (
+            expected_values is None
+            or tuple(
+                matches[0][field]
+                for field in (
+                    "outbox_id",
+                    "target_flow_event_id",
+                    "target_attempt_event_id",
+                    "source_flow_event_id",
+                    "source_flow_revision",
+                    "source_attempt_event_id",
+                    "attempt_id",
+                    "flow_id",
+                    "flow_request_digest",
+                    "input_digest",
+                    "lease_snapshot_digest",
+                    "completion_intent_digest",
+                    "completion_operation_digest",
+                    "reconciliation_action",
+                    "request_digest",
+                    "decision_digest",
+                    "effect",
+                    "derived_permission_class",
+                    "legacy_executable",
+                    "execution_parity",
+                    "payload_json",
+                    "observed_at",
+                )
+            )
+            != expected_values
+        ):
+            findings.append(
+                SupervisorAuthorizationFinding(
+                    "pre_dispatch_reconciliation_authorization_observation_invalid",
+                    flow_reference,
+                    _PRE_DISPATCH_RECONCILIATION_BOUNDARY,
+                    int(matches[0]["sequence"]),
+                    target_reference,
+                )
+            )
+
+    for outbox_id, rows in observations_by_outbox.items():
+        if outbox_id not in expected_ids:
+            for row in rows:
+                findings.append(
+                    SupervisorAuthorizationFinding(
+                        "pre_dispatch_reconciliation_authorization_observation_unexpected",
+                        _audit_flow_reference(row["flow_id"]),
+                        _PRE_DISPATCH_RECONCILIATION_BOUNDARY,
+                        int(row["sequence"]),
+                        _audit_completion_outbox_reference(outbox_id),
+                    )
+                )
+    return _SupervisorPreDispatchReconciliationShadowAudit(
+        True,
+        len(observation_rows),
+        len(expected_rows),
+        tuple(findings),
+    )
+
+
 def inspect_pending_completions(
     database_path: str | Path,
 ) -> tuple[CompletionIntent, ...]:
@@ -7312,6 +8059,7 @@ def _authorization_guard_findings(
             "pre_dispatch_intent_authorization_migration_ledger_mismatch",
             "pre_dispatch_intent_enforcement_migration_ledger_mismatch",
             "attempt_completion_authorization_migration_ledger_mismatch",
+            "pre_dispatch_reconciliation_authorization_migration_ledger_mismatch",
         ):
             findings.append(
                 SupervisorAuthorizationFinding(code, None, None, None)
@@ -7468,6 +8216,22 @@ def _authorization_guard_findings(
         findings.append(
             SupervisorAuthorizationFinding(
                 "attempt_completion_authorization_migration_ledger_mismatch",
+                None,
+                None,
+                None,
+            )
+        )
+    pre_dispatch_reconciliation_migration = ledger.get(11)
+    if (
+        pre_dispatch_reconciliation_migration is None
+        or pre_dispatch_reconciliation_migration["name"]
+        != "supervisor_pre_dispatch_reconciliation_authorization_shadow"
+        or pre_dispatch_reconciliation_migration["script_sha256"]
+        != _sha256_text(_SCHEMA_V11)
+    ):
+        findings.append(
+            SupervisorAuthorizationFinding(
+                "pre_dispatch_reconciliation_authorization_migration_ledger_mismatch",
                 None,
                 None,
                 None,
@@ -8412,6 +9176,74 @@ def _verify_pre_v10_attempt_completion_history(
         ) from error
 
 
+def _verify_pre_v11_pre_dispatch_reconciliation_history(
+    connection: sqlite3.Connection,
+) -> None:
+    """Refuse to baseline malformed expired pre-dispatch repair history."""
+
+    try:
+        _verify_pre_v10_attempt_completion_history(connection)
+        foreign_key_errors = tuple(
+            row
+            for table in (
+                "supervisor_attempt_completion_authorization_baseline",
+                "supervisor_attempt_completion_authorization_observations",
+            )
+            for row in connection.execute(f'PRAGMA foreign_key_check("{table}")')
+        )
+        if foreign_key_errors:
+            raise ValidationError(
+                "supervisor attempt completion shadow has invalid references"
+            )
+        flow_rows = connection.execute(
+            "SELECT * FROM supervisor_flows ORDER BY flow_id"
+        ).fetchall()
+        flow_rows_by_id = {row["flow_id"]: row for row in flow_rows}
+        revision_rows_by_flow: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_flow_revisions ORDER BY flow_id, revision"
+        ).fetchall():
+            revision_rows_by_flow.setdefault(row["flow_id"], []).append(row)
+        attempt_rows = connection.execute(
+            "SELECT * FROM supervisor_attempts ORDER BY flow_id, attempt_number"
+        ).fetchall()
+        attempt_rows_by_id = {row["attempt_id"]: row for row in attempt_rows}
+        attempt_flow_ids = {
+            row["attempt_id"]: row["flow_id"] for row in attempt_rows
+        }
+        event_rows_by_attempt: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM supervisor_attempt_events ORDER BY attempt_id, revision"
+        ).fetchall():
+            event_rows_by_attempt.setdefault(row["attempt_id"], []).append(row)
+        for outbox_row in connection.execute(
+            """
+            SELECT * FROM supervisor_completion_outbox
+            WHERE attempt_id IS NOT NULL AND operation_digest = intent_digest
+            ORDER BY flow_id, source_revision, outbox_id
+            """
+        ).fetchall():
+            _pre_dispatch_reconciliation_source_from_outbox(
+                outbox_row=outbox_row,
+                flow_rows_by_id=flow_rows_by_id,
+                revision_rows_by_flow=revision_rows_by_flow,
+                attempt_rows_by_id=attempt_rows_by_id,
+                event_rows_by_attempt=event_rows_by_attempt,
+                attempt_flow_ids=attempt_flow_ids,
+            )
+    except (
+        ConfigurationError,
+        KeyError,
+        TypeError,
+        ValueError,
+        ValidationError,
+        sqlite3.Error,
+    ) as error:
+        raise ConfigurationError(
+            "pre-v11 supervisor pre-dispatch reconciliation history is invalid"
+        ) from error
+
+
 def _verify_attempt_claim_history(
     *,
     attempt: AttemptRecord,
@@ -8723,6 +9555,8 @@ def _expected_supervisor_schema() -> dict[
             + _SCHEMA_V9
             + "\n"
             + _SCHEMA_V10
+            + "\n"
+            + _SCHEMA_V11
         )
         objects = _schema_objects(connection)
         return {
@@ -8922,6 +9756,43 @@ def _expected_pre_v10_supervisor_schema() -> dict[
         connection.close()
 
 
+@cache
+def _expected_pre_v11_supervisor_schema() -> dict[
+    tuple[str, str], tuple[str, str, str]
+]:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.executescript(
+            _SCHEMA_V2
+            + "\n"
+            + _SCHEMA_V3
+            + "\n"
+            + _SCHEMA_V4
+            + "\n"
+            + _SCHEMA_V5
+            + "\n"
+            + _SCHEMA_V6
+            + "\n"
+            + _SCHEMA_V7
+            + "\n"
+            + _SCHEMA_V8
+            + "\n"
+            + _SCHEMA_V9
+            + "\n"
+            + _SCHEMA_V10
+        )
+        objects = _schema_objects(connection)
+        return {
+            key: value
+            for key, value in objects.items()
+            if key[1].startswith("supervisor_")
+            or value[1].startswith("supervisor_")
+        }
+    finally:
+        connection.close()
+
+
 def _verify_pre_v4_supervisor_schema(connection: sqlite3.Connection) -> None:
     objects = _schema_objects(connection)
     actual = {
@@ -9004,6 +9875,18 @@ def _verify_pre_v10_supervisor_schema(connection: sqlite3.Connection) -> None:
     }
     if actual != _expected_pre_v10_supervisor_schema():
         raise ConfigurationError("pre-v10 supervisor schema is invalid")
+
+
+def _verify_pre_v11_supervisor_schema(connection: sqlite3.Connection) -> None:
+    objects = _schema_objects(connection)
+    actual = {
+        key: value
+        for key, value in objects.items()
+        if key[1].startswith("supervisor_")
+        or value[1].startswith("supervisor_")
+    }
+    if actual != _expected_pre_v11_supervisor_schema():
+        raise ConfigurationError("pre-v11 supervisor schema is invalid")
 
 
 def _verify_supervisor_schema(connection: sqlite3.Connection) -> None:
@@ -9445,6 +10328,173 @@ def _validate_pre_dispatch_intent_lease_snapshot(
                 "expires_at": expires_at,
             }
         )
+    return tuple(normalized)
+
+
+def _pre_dispatch_reconciliation_lease_snapshot(
+    connection: sqlite3.Connection,
+    *,
+    attempt: AttemptRecord,
+    observed_at: float,
+) -> tuple[dict[str, Any], ...]:
+    """Capture redacted evidence explaining why a pre-dispatch claim expired."""
+
+    timestamp = _timestamp(
+        observed_at,
+        "pre-dispatch reconciliation observation timestamp",
+    )
+    snapshot: list[dict[str, Any]] = []
+    expected_owner_ref = canonical_digest({"lease_owner": attempt.lease_owner})
+    for lease_key in attempt.lease_keys:
+        row = connection.execute(
+            """
+            SELECT owner_id, acquired_at, renewed_at, expires_at
+            FROM leases WHERE lease_key = ?
+            """,
+            (lease_key,),
+        ).fetchone()
+        item: dict[str, Any] = {
+            "lease_key_ref": canonical_digest({"lease_key": lease_key}),
+        }
+        if row is None:
+            item["lease_state"] = "missing"
+        else:
+            owner_ref = canonical_digest({"lease_owner": row["owner_id"]})
+            item.update(
+                {
+                    "lease_state": (
+                        "owned_active"
+                        if owner_ref == expected_owner_ref
+                        and float(row["expires_at"]) > timestamp
+                        else (
+                            "owned_expired"
+                            if owner_ref == expected_owner_ref
+                            else "foreign"
+                        )
+                    ),
+                    "lease_owner_ref": owner_ref,
+                    "acquired_at": float(row["acquired_at"]),
+                    "renewed_at": float(row["renewed_at"]),
+                    "expires_at": float(row["expires_at"]),
+                }
+            )
+        snapshot.append(item)
+    return _validate_pre_dispatch_reconciliation_lease_snapshot(
+        snapshot,
+        attempt=attempt,
+        observed_at=timestamp,
+    )
+
+
+def _validate_pre_dispatch_reconciliation_lease_snapshot(
+    snapshot: object,
+    *,
+    attempt: AttemptRecord,
+    observed_at: float,
+) -> tuple[dict[str, Any], ...]:
+    """Validate redacted, possibly expired pre-dispatch lease evidence."""
+
+    timestamp = _timestamp(
+        observed_at,
+        "pre-dispatch reconciliation observation timestamp",
+    )
+    if type(snapshot) not in {list, tuple}:
+        raise ValidationError("pre-dispatch reconciliation lease snapshot is invalid")
+    expected_keys = tuple(attempt.lease_keys)
+    if len(snapshot) != len(expected_keys):
+        raise ValidationError(
+            "pre-dispatch reconciliation lease snapshot is incomplete"
+        )
+    expected_owner_ref = canonical_digest({"lease_owner": attempt.lease_owner})
+    normalized: list[dict[str, Any]] = []
+    inactive_seen = False
+    for lease_key, item in zip(expected_keys, snapshot, strict=True):
+        if type(item) is not dict:
+            raise ValidationError("pre-dispatch reconciliation lease snapshot is invalid")
+        if item.get("lease_key_ref") != canonical_digest({"lease_key": lease_key}):
+            raise ValidationError(
+                "pre-dispatch reconciliation lease snapshot does not match claim"
+            )
+        state = item.get("lease_state")
+        if state == "missing":
+            if set(item) != {"lease_key_ref", "lease_state"}:
+                raise ValidationError(
+                    "pre-dispatch reconciliation lease snapshot is invalid"
+                )
+            inactive_seen = True
+            normalized.append(
+                {
+                    "lease_key_ref": item["lease_key_ref"],
+                    "lease_state": state,
+                }
+            )
+            continue
+        if state not in {"owned_active", "owned_expired", "foreign"} or set(
+            item
+        ) != {
+            "lease_key_ref",
+            "lease_state",
+            "lease_owner_ref",
+            "acquired_at",
+            "renewed_at",
+            "expires_at",
+        }:
+            raise ValidationError("pre-dispatch reconciliation lease snapshot is invalid")
+        owner_ref = item["lease_owner_ref"]
+        if not isinstance(owner_ref, str) or len(owner_ref) != 71:
+            raise ValidationError("pre-dispatch reconciliation lease owner is invalid")
+        acquired_at = _timestamp(
+            item["acquired_at"],
+            "pre-dispatch reconciliation lease acquisition timestamp",
+        )
+        renewed_at = _timestamp(
+            item["renewed_at"],
+            "pre-dispatch reconciliation lease renewal timestamp",
+        )
+        expires_at = _timestamp(
+            item["expires_at"],
+            "pre-dispatch reconciliation lease expiry timestamp",
+        )
+        if not acquired_at <= renewed_at <= expires_at:
+            raise ValidationError("pre-dispatch reconciliation lease timing is invalid")
+        if state == "foreign":
+            if owner_ref == expected_owner_ref:
+                raise ValidationError(
+                    "pre-dispatch reconciliation foreign lease is invalid"
+                )
+            inactive_seen = True
+        else:
+            if owner_ref != expected_owner_ref:
+                raise ValidationError(
+                    "pre-dispatch reconciliation lease owner is invalid"
+                )
+            if expires_at > attempt.deadline_at:
+                raise ValidationError(
+                    "pre-dispatch reconciliation lease exceeds claim deadline"
+                )
+            if state == "owned_active":
+                if timestamp >= expires_at:
+                    raise ValidationError(
+                        "pre-dispatch reconciliation lease state is invalid"
+                    )
+            else:
+                if timestamp < expires_at:
+                    raise ValidationError(
+                        "pre-dispatch reconciliation lease state is invalid"
+                    )
+                inactive_seen = True
+        normalized.append(
+            {
+                "lease_key_ref": item["lease_key_ref"],
+                "lease_state": state,
+                "lease_owner_ref": owner_ref,
+                "acquired_at": acquired_at,
+                "renewed_at": renewed_at,
+                "expires_at": expires_at,
+            }
+        )
+    if not inactive_seen:
+        raise ValidationError("pre-dispatch reconciliation claim is still active")
     return tuple(normalized)
 
 
@@ -10279,6 +11329,513 @@ def _expected_attempt_completion_observation_values(
     )
 
 
+def _pre_dispatch_reconciliation_mapping(
+    *,
+    spec: FlowSpec,
+    attempt: AttemptRecord,
+    source_flow: FlowRevision,
+    source_attempt: AttemptEvent,
+    target_flow: FlowRevision,
+    target_attempt: AttemptEvent,
+    completion: CompletionIntent,
+    lease_snapshot: object,
+    reconciliation_action: str | None,
+    observed_at: float,
+) -> dict[str, Any]:
+    """Build redacted evidence for one expired pre-dispatch claim repair."""
+
+    _validate_flow_spec(spec)
+    for field_name in ("attempt_id", "flow_id", "run_id", "lease_owner"):
+        _validate_text(getattr(attempt, field_name), field_name, maximum=256)
+    _validate_revision(attempt.attempt_number)
+    _validate_revision(attempt.claimed_revision)
+    _validate_digest(attempt.input_digest, "attempt input digest")
+    attempt_created_at = _timestamp(attempt.created_at, "attempt claim timestamp")
+    deadline_at = _timestamp(attempt.deadline_at, "attempt deadline")
+    if (
+        attempt.flow_id != spec.flow_id
+        or not 1 <= attempt.attempt_number <= spec.max_attempts
+        or attempt.lease_keys
+        != tuple(sorted({f"flow:{spec.flow_id}", *spec.resource_keys}))
+    ):
+        raise ValidationError("pre-dispatch reconciliation source is invalid")
+    expected_deadline = min(
+        attempt_created_at + spec.attempt_timeout_seconds,
+        (
+            spec.deadline_at
+            if spec.deadline_at is not None
+            else attempt_created_at + spec.attempt_timeout_seconds
+        ),
+    )
+    if deadline_at != expected_deadline or deadline_at <= attempt_created_at:
+        raise ValidationError("pre-dispatch reconciliation deadline is invalid")
+
+    for event in (source_attempt, target_attempt):
+        _validate_text(event.event_id, "attempt event identifier", maximum=256)
+        _validate_text(event.attempt_id, "attempt identifier", maximum=256)
+        _validate_revision(event.revision)
+        _validate_reason(event.reason_code)
+        _timestamp(event.occurred_at, "attempt event timestamp")
+    for flow, description in (
+        (source_flow, "source"),
+        (target_flow, "target"),
+    ):
+        for field_name in ("event_id", "flow_id"):
+            _validate_text(
+                getattr(flow, field_name),
+                f"{description} flow {field_name}",
+                maximum=256,
+            )
+        _validate_revision(flow.revision)
+        _validate_reason(flow.reason_code)
+        _timestamp(flow.occurred_at, f"{description} flow timestamp")
+        if type(flow.cancellation_requested) is not bool:
+            raise ValidationError(
+                "pre-dispatch reconciliation cancellation source is invalid"
+            )
+    timestamp = _timestamp(
+        observed_at,
+        "pre-dispatch reconciliation observation timestamp",
+    )
+
+    for field_name in ("outbox_id", "idempotency_key", "flow_id"):
+        _validate_text(
+            getattr(completion, field_name),
+            f"completion {field_name}",
+            maximum=256,
+        )
+    _validate_revision(completion.source_revision)
+    if completion.attempt_id is None:
+        raise ValidationError("pre-dispatch reconciliation outbox is missing attempt")
+    _validate_text(completion.attempt_id, "completion attempt identifier", maximum=256)
+    for field_name in ("intent_digest", "operation_digest"):
+        _validate_digest(
+            getattr(completion, field_name),
+            f"completion {field_name}",
+        )
+    completion_created_at = _timestamp(
+        completion.created_at,
+        "completion outbox timestamp",
+    )
+    expected_action = (
+        "finalize_cancelled_pre_dispatch"
+        if source_flow.cancellation_requested
+        else "mark_lost_pre_dispatch"
+    )
+    expected_state = (
+        FlowState.CANCELLED
+        if source_flow.cancellation_requested
+        else FlowState.LOST
+    )
+    if reconciliation_action != expected_action:
+        raise ValidationError("pre-dispatch reconciliation action is invalid")
+    expected_envelope_json = _bounded_json(
+        {
+            "flow_id": target_flow.flow_id,
+            "source_revision": target_flow.revision,
+            "state": target_flow.state.value,
+            "attempt_id": attempt.attempt_id,
+            "reason_code": target_flow.reason_code,
+        },
+        "pre-dispatch reconciliation envelope",
+    )
+    if (
+        source_flow.flow_id != attempt.flow_id
+        or source_flow.state is not FlowState.RUNNING
+        or source_flow.active_attempt_id != attempt.attempt_id
+        or target_flow.flow_id != attempt.flow_id
+        or target_flow.revision != source_flow.revision + 1
+        or target_flow.state is not expected_state
+        or target_flow.cancellation_requested
+        != source_flow.cancellation_requested
+        or target_flow.active_attempt_id is not None
+        or target_flow.reason_code != "pre_dispatch_claim_expired"
+        or target_flow.reason_code != target_attempt.reason_code
+        or source_attempt.attempt_id != attempt.attempt_id
+        or source_attempt.state is not AttemptState.CREATED
+        or target_attempt.attempt_id != attempt.attempt_id
+        or target_attempt.revision != source_attempt.revision + 1
+        or target_attempt.state
+        is not _TERMINAL_ATTEMPT_FOR_FLOW[target_flow.state]
+        or target_attempt.state not in _ATTEMPT_TRANSITIONS[source_attempt.state]
+        or target_attempt.occurred_at != timestamp
+        or target_flow.occurred_at != timestamp
+        or completion_created_at != timestamp
+        or timestamp < attempt_created_at
+        or timestamp < source_flow.occurred_at
+        or timestamp < source_attempt.occurred_at
+        or completion.flow_id != target_flow.flow_id
+        or completion.source_revision != target_flow.revision
+        or completion.attempt_id != attempt.attempt_id
+        or completion.idempotency_key
+        != f"flow:{target_flow.flow_id}:revision:{target_flow.revision}"
+        or completion.envelope_json != expected_envelope_json
+        or completion.intent_digest != _sha256_text(expected_envelope_json)
+        or completion.operation_digest != completion.intent_digest
+    ):
+        raise ValidationError("pre-dispatch reconciliation source or target is invalid")
+    leases = _validate_pre_dispatch_reconciliation_lease_snapshot(
+        lease_snapshot,
+        attempt=attempt,
+        observed_at=timestamp,
+    )
+    finding = _finding(
+        "expired_pre_dispatch_claim",
+        "pre_dispatch_claim_expired",
+        attempt.flow_id,
+        attempt.attempt_id,
+        source_flow.revision,
+        expected_action,
+    )
+    attempt_id_ref = canonical_digest({"attempt_id": attempt.attempt_id})
+    return {
+        "source": {
+            "flow_id_ref": canonical_digest({"flow_id": attempt.flow_id}),
+            "flow_event_ref": canonical_digest(
+                {"flow_event_id": source_flow.event_id}
+            ),
+            "flow_revision": source_flow.revision,
+            "flow_state": source_flow.state.value,
+            "flow_reason_code": source_flow.reason_code,
+            "cancellation_requested": source_flow.cancellation_requested,
+            "active_attempt_ref": attempt_id_ref,
+            "attempt_id_ref": attempt_id_ref,
+            "run_id_ref": canonical_digest({"run_id": attempt.run_id}),
+            "attempt_event_ref": canonical_digest(
+                {"attempt_event_id": source_attempt.event_id}
+            ),
+            "attempt_revision": source_attempt.revision,
+            "attempt_state": source_attempt.state.value,
+            "attempt_reason_code": source_attempt.reason_code,
+            "attempt_occurred_at": float(source_attempt.occurred_at),
+            "flow_request_digest": spec.request_digest,
+            "input_digest": attempt.input_digest,
+            "lease_owner_ref": canonical_digest(
+                {"lease_owner": attempt.lease_owner}
+            ),
+            "lease_keys_digest": canonical_digest(
+                {"lease_keys": list(attempt.lease_keys)}
+            ),
+            "lease_snapshot": [dict(item) for item in leases],
+            "lease_snapshot_digest": canonical_digest({"leases": list(leases)}),
+            "deadline_at": float(deadline_at),
+        },
+        "target": {
+            "flow_id_ref": canonical_digest({"flow_id": target_flow.flow_id}),
+            "flow_event_ref": canonical_digest(
+                {"flow_event_id": target_flow.event_id}
+            ),
+            "flow_revision": target_flow.revision,
+            "flow_state": target_flow.state.value,
+            "flow_reason_code": target_flow.reason_code,
+            "cancellation_requested": target_flow.cancellation_requested,
+            "active_attempt_absent": True,
+            "attempt_id_ref": attempt_id_ref,
+            "attempt_event_ref": canonical_digest(
+                {"attempt_event_id": target_attempt.event_id}
+            ),
+            "attempt_revision": target_attempt.revision,
+            "attempt_state": target_attempt.state.value,
+            "attempt_reason_code": target_attempt.reason_code,
+            "attempt_occurred_at": float(target_attempt.occurred_at),
+        },
+        "completion": {
+            "outbox_ref": canonical_digest({"outbox_id": completion.outbox_id}),
+            "idempotency_key_ref": canonical_digest(
+                {"idempotency_key": completion.idempotency_key}
+            ),
+            "source_revision": completion.source_revision,
+            "state": target_flow.state.value,
+            "attempt_id_ref": attempt_id_ref,
+            "intent_digest": completion.intent_digest,
+            "operation_digest": completion.operation_digest,
+            "created_at": float(completion_created_at),
+        },
+        "reconciliation": {
+            "finding_ref": canonical_digest({"finding_id": finding.finding_id}),
+            "kind": finding.kind,
+            "reason_code": finding.reason_code,
+            "action": expected_action,
+            "expected_flow_revision": source_flow.revision,
+        },
+    }
+
+
+def _supervisor_pre_dispatch_reconciliation_authorization_request(
+    *,
+    spec: FlowSpec,
+    attempt: AttemptRecord,
+    source_flow: FlowRevision,
+    source_attempt: AttemptEvent,
+    target_flow: FlowRevision,
+    target_attempt: AttemptEvent,
+    completion: CompletionIntent,
+    lease_snapshot: object,
+    reconciliation_action: str | None,
+    observed_at: float,
+) -> tuple[AuthorizationRequest, PolicyBundle, dict[str, Any]]:
+    """Build a fixed shadow-only request for local expired-claim repair."""
+
+    intent = _pre_dispatch_reconciliation_mapping(
+        spec=spec,
+        attempt=attempt,
+        source_flow=source_flow,
+        source_attempt=source_attempt,
+        target_flow=target_flow,
+        target_attempt=target_attempt,
+        completion=completion,
+        lease_snapshot=lease_snapshot,
+        reconciliation_action=reconciliation_action,
+        observed_at=observed_at,
+    )
+    timestamp = _timestamp(
+        observed_at,
+        "pre-dispatch reconciliation observation timestamp",
+    )
+    request = AuthorizationRequest(
+        request_id=(
+            f"supervisor:{_PRE_DISPATCH_RECONCILIATION_BOUNDARY}:"
+            f"{canonical_digest({'outbox_id': completion.outbox_id})}"
+        ),
+        subject=SubjectAttributes(
+            principal_id="controller:local",
+            controller_id="agentops:local-controller",
+            role=Role.CONTROLLER,
+            role_version="1",
+            profile_id=canonical_digest({"profile_id": "controller_bookkeeping"}),
+            runner_id="local_non_ai",
+            session_id=None,
+        ),
+        action=ActionAttributes(
+            verb=ActionVerb.MODIFY,
+            operation=_PRE_DISPATCH_RECONCILIATION_OPERATION,
+            parameters_digest=canonical_digest(intent),
+            intended_effect=(
+                "append_local_pre_dispatch_reconciliation_and_outbox_only"
+            ),
+        ),
+        resource=ResourceAttributes(
+            resource_type="supervisor_attempt",
+            identifier=canonical_digest({"attempt_id": attempt.attempt_id}),
+            version=canonical_digest(
+                {
+                    "source_attempt_event_id": source_attempt.event_id,
+                    "source_attempt_revision": source_attempt.revision,
+                    "source_flow_event_id": source_flow.event_id,
+                    "source_flow_revision": source_flow.revision,
+                    "target_attempt_event_id": target_attempt.event_id,
+                    "target_flow_event_id": target_flow.event_id,
+                    "outbox_id": completion.outbox_id,
+                    "reconciliation_action": intent["reconciliation"]["action"],
+                }
+            ),
+            owner="operator:local",
+            trust_boundary="local_control_plane",
+            protected=False,
+            sensitivity=ImpactLevel.LOW,
+            content_digest=canonical_digest(
+                {
+                    "flow_request_digest": spec.request_digest,
+                    "source": intent["source"],
+                    "target": intent["target"],
+                    "completion": intent["completion"],
+                    "reconciliation": intent["reconciliation"],
+                }
+            ),
+        ),
+        environment=EnvironmentAttributes(
+            evaluated_at=timestamp,
+            isolation_state=IsolationState.VERIFIED,
+            network_state=NetworkState.DISABLED,
+            billing_route=BillingRoute.LOCAL_NON_AI,
+            capacity_state=CapacityState.NOT_APPLICABLE,
+            paid_continuation_protection=PaidContinuationProtection.NOT_APPLICABLE,
+            circuit_state=CircuitState.CLOSED,
+            flow_state=source_flow.state.value,
+        ),
+        consequences=ConsequenceVector(
+            confidentiality=ImpactLevel.LOW,
+            integrity=ImpactLevel.LOW,
+            availability=ImpactLevel.LOW,
+            reach=Reach.LOCAL,
+            destructive=False,
+            reversible=True,
+            sensitivity=ImpactLevel.LOW,
+            blast_radius=BlastRadius.SINGLE_RESOURCE,
+        ),
+    )
+    sources = {
+        "subject": EvidenceSource.CONTROLLER,
+        "action": EvidenceSource.CONTROLLER,
+        "resource": EvidenceSource.CONTROLLER,
+        "environment": EvidenceSource.CONTROLLER,
+        "consequences": EvidenceSource.CONTROLLER,
+    }
+    evidence = tuple(
+        AttributeEvidence.bind(
+            evidence_id=(
+                f"supervisor:{_PRE_DISPATCH_RECONCILIATION_BOUNDARY}:{attribute}"
+            ),
+            attribute=attribute,
+            value=request.attribute_value(attribute),
+            source=source,
+            source_id="agentops:controller",
+            observed_at=timestamp,
+            expires_at=timestamp + 60.0,
+            authenticated=True,
+        )
+        for attribute, source in sources.items()
+    )
+    request = AuthorizationRequest(
+        request.request_id,
+        request.subject,
+        request.action,
+        request.resource,
+        request.environment,
+        request.consequences,
+        evidence,
+    )
+    base = PolicyBundle.current_stage(issued_at=timestamp)
+    policy = PolicyBundle(
+        bundle_id=base.bundle_id,
+        version=base.version,
+        issued_at=base.issued_at,
+        evidence_requirements=base.evidence_requirements,
+        enabled_classes=base.enabled_classes,
+        allowed_verbs=base.allowed_verbs,
+        allowed_roles=tuple(dict.fromkeys((*base.allowed_roles, Role.CONTROLLER))),
+        allowed_operations=tuple(
+            dict.fromkeys(
+                (*base.allowed_operations, _PRE_DISPATCH_RECONCILIATION_OPERATION)
+            )
+        ),
+        allowed_resource_types=tuple(
+            dict.fromkeys((*base.allowed_resource_types, "supervisor_attempt"))
+        ),
+        allowed_trust_boundaries=tuple(
+            dict.fromkeys((*base.allowed_trust_boundaries, "local_control_plane"))
+        ),
+        allowed_flow_states=tuple(
+            dict.fromkeys((*base.allowed_flow_states, source_flow.state.value))
+        ),
+        allowed_network_states=base.allowed_network_states,
+        allowed_billing_routes=base.allowed_billing_routes,
+        approval_requirements=base.approval_requirements,
+        decision_ttl_seconds=base.decision_ttl_seconds,
+    )
+    return request, policy, intent
+
+
+def _expected_pre_dispatch_reconciliation_observation_values(
+    row: sqlite3.Row,
+    *,
+    spec: FlowSpec,
+    attempt: AttemptRecord,
+    source_flow: FlowRevision,
+    source_attempt: AttemptEvent,
+    target_flow: FlowRevision,
+    target_attempt: AttemptEvent,
+    completion: CompletionIntent,
+) -> tuple[Any, ...]:
+    """Independently rebuild one durable pre-dispatch repair shadow."""
+
+    _validate_text(
+        row["observation_id"],
+        "pre-dispatch reconciliation authorization observation identifier",
+        maximum=256,
+    )
+    payload_text = row["payload_json"]
+    if (
+        not isinstance(payload_text, str)
+        or len(payload_text.encode("utf-8")) > _MAX_JSON_BYTES
+    ):
+        raise ValidationError(
+            "pre-dispatch reconciliation authorization payload is invalid"
+        )
+    payload = parse_json_document(payload_text)
+    if type(payload) is not dict:
+        raise ValidationError(
+            "pre-dispatch reconciliation authorization payload is invalid"
+        )
+    supplied_intent = payload.get("pre_dispatch_reconciliation")
+    if type(supplied_intent) is not dict:
+        raise ValidationError(
+            "pre-dispatch reconciliation authorization intent is invalid"
+        )
+    supplied_source = supplied_intent.get("source")
+    supplied_reconciliation = supplied_intent.get("reconciliation")
+    if type(supplied_source) is not dict or type(supplied_reconciliation) is not dict:
+        raise ValidationError(
+            "pre-dispatch reconciliation authorization source is invalid"
+        )
+    lease_snapshot = supplied_source.get("lease_snapshot")
+    reconciliation_action = supplied_reconciliation.get("action")
+    request, policy, intent = (
+        _supervisor_pre_dispatch_reconciliation_authorization_request(
+            spec=spec,
+            attempt=attempt,
+            source_flow=source_flow,
+            source_attempt=source_attempt,
+            target_flow=target_flow,
+            target_attempt=target_attempt,
+            completion=completion,
+            lease_snapshot=lease_snapshot,
+            reconciliation_action=reconciliation_action,
+            observed_at=target_flow.occurred_at,
+        )
+    )
+    decision = _BUILTIN_PRE_DISPATCH_RECONCILIATION_SHADOW_EVALUATE(
+        ShadowAuthorizationEvaluator(),
+        request,
+        policy,
+    )
+    parity = decision.effect.value == "permit"
+    expected_payload = {
+        "mode": "shadow",
+        "boundary": _PRE_DISPATCH_RECONCILIATION_BOUNDARY,
+        "action_scope": _PRE_DISPATCH_RECONCILIATION_ACTION_SCOPE,
+        "pre_dispatch_reconciliation": intent,
+        "pre_dispatch_reconciliation_digest": canonical_digest(intent),
+        "request": request.to_canonical(),
+        "request_digest": request.digest,
+        "decision": decision.to_canonical(),
+        "decision_digest": decision.digest,
+        "legacy_executable": True,
+        "execution_parity": parity,
+    }
+    if payload != expected_payload:
+        raise ValidationError(
+            "pre-dispatch reconciliation authorization payload is inconsistent"
+        )
+    return (
+        completion.outbox_id,
+        target_flow.event_id,
+        target_attempt.event_id,
+        source_flow.event_id,
+        source_flow.revision,
+        source_attempt.event_id,
+        attempt.attempt_id,
+        attempt.flow_id,
+        spec.request_digest,
+        attempt.input_digest,
+        intent["source"]["lease_snapshot_digest"],
+        completion.intent_digest,
+        completion.operation_digest,
+        intent["reconciliation"]["action"],
+        request.digest,
+        decision.digest,
+        decision.effect.value,
+        int(decision.derived_permission_class),
+        1,
+        int(parity),
+        _bounded_json(
+            expected_payload,
+            "pre-dispatch reconciliation authorization audit payload",
+        ),
+        float(target_flow.occurred_at),
+    )
+
+
 def _supervisor_bookkeeping_authorization_request(
     *,
     boundary: str,
@@ -10553,6 +12110,32 @@ def _attempt_completion_authorization_observation_from_row(
     )
 
 
+def _pre_dispatch_reconciliation_authorization_observation_from_row(
+    row: sqlite3.Row,
+) -> SupervisorPreDispatchReconciliationAuthorizationObservation:
+    return SupervisorPreDispatchReconciliationAuthorizationObservation(
+        sequence=row["sequence"],
+        observation_id=row["observation_id"],
+        flow_id=row["flow_id"],
+        attempt_id=row["attempt_id"],
+        source_flow_event_id=row["source_flow_event_id"],
+        source_flow_revision=row["source_flow_revision"],
+        source_attempt_event_id=row["source_attempt_event_id"],
+        target_flow_event_id=row["target_flow_event_id"],
+        target_attempt_event_id=row["target_attempt_event_id"],
+        outbox_id=row["outbox_id"],
+        reconciliation_action=row["reconciliation_action"],
+        request_digest=row["request_digest"],
+        decision_digest=row["decision_digest"],
+        effect=row["effect"],
+        derived_permission_class=PermissionClass(row["derived_permission_class"]),
+        legacy_executable=bool(row["legacy_executable"]),
+        execution_parity=bool(row["execution_parity"]),
+        payload=json.loads(row["payload_json"]),
+        observed_at=row["observed_at"],
+    )
+
+
 def _initial_control_revision() -> SupervisorControlRevision:
     return SupervisorControlRevision(
         sequence=0,
@@ -10649,6 +12232,7 @@ __all__ = [
     "SupervisorControlRevision",
     "SupervisorBookkeepingAuthorizationObservation",
     "SupervisorAttemptCompletionAuthorizationObservation",
+    "SupervisorPreDispatchReconciliationAuthorizationObservation",
     "SupervisorPreDispatchIntentAuthorizationObservation",
     "SUPERVISOR_DISPATCH_BLOCKERS",
     "SupervisorAuthorizationObservation",
