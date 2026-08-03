@@ -230,7 +230,7 @@ def _open_named_node(
         raise
 
 
-def _open_absolute_source_root(value: Any) -> int:
+def _open_absolute_source_root(value: Any) -> tuple[int, tuple[str, ...]]:
     components, expected_signature = _absolute_path_components(value)
     try:
         descriptor = os.open("/", _directory_flags())
@@ -255,7 +255,7 @@ def _open_absolute_source_root(value: Any) -> int:
         opened_signature = _directory_signature(os.fstat(descriptor))
         if opened_signature != expected_signature:
             raise _InvalidSourceSnapshot
-        return descriptor
+        return descriptor, components
     except (OSError, _InvalidSourceSnapshot):
         try:
             os.close(descriptor)
@@ -511,10 +511,18 @@ def _capture_allowed_path(
 
 @dataclass(frozen=True, slots=True)
 class RepositoryWorkerJobTreeSourceSnapshot:
-    """Detached controller bytes plus digest-only capture metadata."""
+    """Detached controller bytes plus public digest-only capture metadata.
+
+    The root components and metadata remain process-private so a later
+    materializer can reject a target inside, above, or equal to the captured
+    source root.  They are bound into the exposed root-identity digest but are
+    never emitted by the public mapping.
+    """
 
     source_bundle: RepositoryWorkerJobTreeSourceBundle = field(repr=False)
     source_root_identity_digest: str
+    source_root_components: tuple[str, ...] = field(repr=False)
+    source_root_metadata: tuple[int, ...] = field(repr=False)
     path_policy_digest: str
     resource_limits_digest: str
     source_bundle_digest: str
@@ -542,9 +550,39 @@ class RepositoryWorkerJobTreeSourceSnapshot:
                 and type(self.source_total_bytes) is int
                 and self.source_total_bytes == self.source_bundle.source_total_bytes
             )
+            valid_private_root = (
+                type(self.source_root_components) is tuple
+                and all(
+                    type(component) is str
+                    and component
+                    and "/" not in component
+                    and component not in {".", ".."}
+                    for component in self.source_root_components
+                )
+                and type(self.source_root_metadata) is tuple
+                and len(self.source_root_metadata) == 8
+                and all(
+                    type(item) is int and item >= 0
+                    for item in self.source_root_metadata
+                )
+                and self.source_root_metadata[2] == stat.S_IFDIR
+                and self.source_root_metadata[4] > 0
+                and self.source_root_identity_digest
+                == _BUILTIN_CANONICAL_DIGEST(
+                    {
+                        "kind": REPOSITORY_WORKER_JOB_TREE_SOURCE_SNAPSHOT_KIND,
+                        "metadata": list(self.source_root_metadata),
+                        "path_components": list(self.source_root_components),
+                        "schema_version": (
+                            REPOSITORY_WORKER_JOB_TREE_SOURCE_SNAPSHOT_SCHEMA_VERSION
+                        ),
+                    }
+                )
+            )
             if (
                 not valid_digests
                 or not valid_counts
+                or not valid_private_root
                 or self.source_bundle_digest != self.source_bundle.source_bundle_digest
             ):
                 raise _InvalidSourceSnapshot
@@ -609,12 +647,15 @@ def capture_repository_worker_job_tree_source_snapshot(
             raise _InvalidSourceSnapshot
         checked_policy = _BUILTIN_PATH_POLICY_SNAPSHOT(path_policy)
         checked_limits = _BUILTIN_RESOURCE_LIMITS_SNAPSHOT(resource_limits)
-        root_descriptor = _open_absolute_source_root(source_root)
+        root_descriptor, source_root_components = _open_absolute_source_root(
+            source_root
+        )
         root_before = _directory_signature(os.fstat(root_descriptor))
         source_root_identity_digest = _BUILTIN_CANONICAL_DIGEST(
             {
                 "kind": REPOSITORY_WORKER_JOB_TREE_SOURCE_SNAPSHOT_KIND,
                 "metadata": list(root_before),
+                "path_components": list(source_root_components),
                 "schema_version": (
                     REPOSITORY_WORKER_JOB_TREE_SOURCE_SNAPSHOT_SCHEMA_VERSION
                 ),
@@ -642,6 +683,8 @@ def capture_repository_worker_job_tree_source_snapshot(
         return RepositoryWorkerJobTreeSourceSnapshot(
             source_bundle=source_bundle,
             source_root_identity_digest=source_root_identity_digest,
+            source_root_components=source_root_components,
+            source_root_metadata=root_before,
             path_policy_digest=_BUILTIN_CANONICAL_DIGEST(checked_policy),
             resource_limits_digest=_BUILTIN_CANONICAL_DIGEST(checked_limits),
             source_bundle_digest=source_bundle.source_bundle_digest,

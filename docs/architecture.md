@@ -519,6 +519,23 @@ does not materialize a job tree, and is not registration-bound or
 authoritative until the separate source-bundle contract is derived from fresh
 v4 registration evidence.
 
+[`ordomata.repository_worker_job_tree_materialization`](../src/ordomata/repository_worker_job_tree_materialization.py)
+implements the next, still library-only Class 1 copy boundary. It accepts only
+an exact detached snapshot, its matching source-bundle contract, and a
+caller-provided existing absolute target root that is empty, owner-mode `0700`,
+not itself a symlink, and neither the captured source root nor its ancestor or
+descendant. It traverses that root through held no-follow
+descriptors, creates only the detached source entries, uses private `0700`
+directories and executable files plus `0600` regular files, and verifies the
+resulting namespace, bytes, modes, identities, root binding, and absence of
+unexpected entries before issuing a digest-only receipt. On ordinary failure it
+rolls back only entries it can still prove it created; an unknown entry or
+uncertain cleanup is not deleted or reported clean. The primitive does not
+prove caller ownership of the root beyond those local checks, exclude a
+same-UID writer or mount alias, retain immutable worker input, reconcile a
+candidate, persist state, create a worker or container, or enable execution or
+dispatch.
+
 [`worker-dispatch-security-design.md`](worker-dispatch-security-design.md)
 records the proposed non-enabling VM-contained-container design, the exact
 future worker PEP binding, and the evidence and adversarial-test gates that a

@@ -174,6 +174,7 @@ class RepositoryWorkerJobTreeSourceSnapshotTests(unittest.TestCase):
         rendered = json.dumps(mapping, sort_keys=True)
         self.assertNotIn(_PRIVATE_MARKER, rendered)
         self.assertNotIn("source/main.py", rendered)
+        self.assertNotIn(str(self.root), rendered)
         self.assertEqual(self._tree_bytes(), before)
         self.assertEqual(
             [item.relative_path for item in snapshot.source_bundle.files],
@@ -458,6 +459,18 @@ class RepositoryWorkerJobTreeSourceSnapshotTests(unittest.TestCase):
         ):
             captured = self._capture()
         self.assertEqual(captured.source_file_count, 3)
+
+        private_root_snapshot = self._capture()
+        object.__setattr__(
+            private_root_snapshot,
+            "source_root_components",
+            ("unexpected-root",),
+        )
+        with self.assertRaisesRegex(
+            ValidationError,
+            "^repository worker job tree source snapshot is invalid$",
+        ):
+            private_root_snapshot.to_mapping()
 
     def test_module_has_no_process_or_network_runtime_imports(self) -> None:
         tree = ast.parse(inspect.getsource(snapshot_module))

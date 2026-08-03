@@ -1862,6 +1862,21 @@ a job tree, bind fresh registration evidence, establish containment, or permit
 materialization, worker execution, or dispatch. The separately derived
 source-bundle contract is still required to bind the snapshot to v4 evidence.
 
+`ordomata.repository_worker_job_tree_materialization` now implements the
+following library-only Class 1 copy primitive. It accepts only an exact
+snapshot/contract pair and a caller-provided, existing, empty owner-mode-0700
+absolute root outside the captured source-root hierarchy; it walks and mutates
+that root only through no-follow
+descriptors, creates no Git metadata, standardizes private directory/file
+modes, and reads back the exact detached source tree before returning a
+digest-only receipt. Known partial entries are removed on ordinary failure,
+while unknown entries, changed roots, or cleanup uncertainty fail closed and
+are never silently removed or downgraded to success. The primitive is not
+called by the supervisor and does not establish root provenance beyond its
+local checks, immutable input, same-UID/mount-alias exclusion, post-run patch
+reconciliation, containment, authorization, persistence, worker execution, or
+dispatch.
+
 The proposed [`worker-dispatch security design`](worker-dispatch-security-design.md)
 now fixes the next review target: a local VM-contained, fresh unprivileged
 container cell, an exact worker-dispatch PEP, controller-owned materialization

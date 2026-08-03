@@ -1143,6 +1143,17 @@ enablement. A real backend must land as a separately reviewed version with
 observed preflight/postflight evidence and authoritative worker-boundary
 enforcement.
 
+The first no-Git job-tree materialization slice is also implemented as the
+library-only `ordomata.repository_worker_job_tree_materialization` primitive.
+It copies only a detached snapshot matching the source-bundle contract into an
+existing empty owner-mode-0700 target root outside the captured source-root
+hierarchy through no-follow descriptors, then verifies the complete private
+tree and returns digest-only evidence. It has no
+supervisor integration and no worker, container, Git, network, or execution
+path. It does not yet prove controller custody of a target root, immutable
+handoff, lifecycle cleanup after worker use, or controller-owned patch
+reconciliation; those remain required before the Phase 3 worker boundary.
+
 The proposed [`worker-dispatch security design`](worker-dispatch-security-design.md)
 now makes the next non-enabling architecture decision explicit: a local
 VM-contained, fresh unprivileged container, controller-owned no-Git job

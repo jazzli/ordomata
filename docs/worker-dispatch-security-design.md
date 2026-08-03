@@ -154,10 +154,16 @@ separate, explicitly gated decision.
 2. **Controller materialization:** the implemented v1 source-snapshot seam now
    captures bounded allowed bytes through no-follow descriptors, and the
    source-bundle contract binds that detached input to registration policy.
-   Neither creates a tree, establishes containment, or permits execution.
-   Build the remaining no-Git, no-symlink job tree and controller-owned patch
-   reconciler. Test that the primary checkout and shared Git data remain
-   unchanged on success, failure, timeout, and crash.
+   Neither establishes containment or permits execution. The implemented v1
+   materializer now performs the narrow next local effect: it writes that
+   detached input only into an existing empty owner-mode-0700 root through
+   no-follow descriptors, rejects source-root overlap, unexpected entries, and
+   root replacement, and emits only digest/count evidence. It is still a
+   library primitive with no supervisor call path, root-provisioning proof,
+   worker handoff, immutable input claim, or patch reconciliation. Build the
+   remaining controller-owned lifecycle and no-follow patch reconciler. Test
+   that the primary checkout and shared Git data remain unchanged on success,
+   failure, timeout, and crash.
 3. **Authoritative dispatch PEP:** add append-only decision and receipt
    records, exact replay, read-only audit coverage, and cancellation/lease
    rechecks. It remains connected only to a deterministic mock cell until the
