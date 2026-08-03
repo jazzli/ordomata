@@ -9,12 +9,12 @@ Three narrow PEPs now apply only when routing selects the
 exact controller-owned built-in mock implementation for a new ordinary Class 1
 attempt: task admission, mock dispatch, and the resulting owner-private local-
 candidate publication. Admission inherits the full task consequence vector
-and precedes billing. All live, comparison, supervisor claim/dispatch,
+and precedes billing. All live, comparison, supervisor worker-dispatch,
 general-admission, and other dispatch/effect boundaries remain non-enforcing
-or disabled. Separate supervisor flow-admission and local-control PEPs mediate
-only their stated local bookkeeping writes; they neither participate in routing
-nor enable a dispatch path. Existing Class 0/1 checks remain independent
-authoritative compatibility gates.
+or disabled. Separate supervisor flow-admission, local-control, and local
+attempt-claim PEPs mediate only their stated local bookkeeping writes; they
+neither participate in routing nor enable a dispatch path. Existing Class 0/1
+checks remain independent authoritative compatibility gates.
 The dispatch policy remains limited to Class 0/1 requests for the exact
 profile-backed controller-owned `MockRunner`; new attempts reaching it still
 require the Class 1 admission permit.

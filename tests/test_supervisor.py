@@ -16,7 +16,7 @@ from ordomata.authorization import (
     ShadowAuthorizationEvaluator,
     canonical_digest,
 )
-from ordomata.errors import AuthorizationBlocked, ConfigurationError
+from ordomata.errors import AuthorizationBlocked, ConfigurationError, ValidationError
 from ordomata.models import PermissionClass
 from ordomata.state import SQLiteStateStore
 from ordomata.supervisor import (
@@ -62,7 +62,31 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         self.store = self._open_store()
 
     @staticmethod
+    def _remove_v7_schema(connection: sqlite3.Connection) -> None:
+        connection.executescript(
+            """
+            DROP TRIGGER supervisor_attempt_claim_authorization_action_receipts_no_update;
+            DROP TRIGGER supervisor_attempt_claim_authorization_action_receipts_no_delete;
+            DROP TRIGGER supervisor_attempt_claim_authorization_decisions_no_update;
+            DROP TRIGGER supervisor_attempt_claim_authorization_decisions_no_delete;
+            DROP TRIGGER supervisor_attempt_claim_authorization_baseline_no_update;
+            DROP TRIGGER supervisor_attempt_claim_authorization_baseline_no_delete;
+            DROP TRIGGER supervisor_attempt_claim_authorization_baseline_no_insert;
+            DROP TABLE supervisor_attempt_claim_authorization_action_receipts;
+            DROP TABLE supervisor_attempt_claim_authorization_decisions;
+            DROP TABLE supervisor_attempt_claim_authorization_baseline;
+            DROP TRIGGER state_schema_migrations_no_delete;
+            DELETE FROM state_schema_migrations WHERE version = 7;
+            CREATE TRIGGER state_schema_migrations_no_delete
+            BEFORE DELETE ON state_schema_migrations BEGIN
+                SELECT RAISE(ABORT, 'schema migrations are append-only');
+            END;
+            """
+        )
+
+    @staticmethod
     def _remove_v6_schema(connection: sqlite3.Connection) -> None:
+        SQLiteSupervisorStoreTests._remove_v7_schema(connection)
         connection.executescript(
             """
             DROP TRIGGER supervisor_flow_admission_authorization_action_receipts_no_update;
@@ -157,7 +181,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         values.update(changes)
         return FlowSpec(**values)
 
-    def _start_and_claim(self, spec: FlowSpec | None = None):
+    def _prepare_claim(self, spec: FlowSpec | None = None):
         selected = spec or self._flow()
         self.store.admit_flow(selected)
         control = self.store.update_control(
@@ -171,6 +195,10 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         self.assertTrue(
             self.store.acquire_foreground(owner, ttl_seconds=60.0, now=100.0)
         )
+        return selected, control, owner
+
+    def _start_and_claim(self, spec: FlowSpec | None = None):
+        selected, control, owner = self._prepare_claim(spec)
         claim = self.store.try_claim_next(
             instance_owner=owner,
             expected_control_revision=control.revision,
@@ -212,6 +240,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
                 (4, "supervisor_bookkeeping_authorization_shadow"),
                 (5, "supervisor_control_authorization_enforcement"),
                 (6, "supervisor_flow_admission_authorization_enforcement"),
+                (7, "supervisor_attempt_claim_authorization_enforcement"),
             ],
         )
         self.assertEqual(
@@ -392,7 +421,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
             value = connection.execute(
                 "SELECT parent_id FROM private_child"
             ).fetchone()[0]
-        self.assertEqual(version, 6)
+        self.assertEqual(version, 7)
         self.assertEqual(value, "private-value")
 
     def test_missing_v3_schema_is_a_finding_even_without_flows(self) -> None:
@@ -1051,6 +1080,290 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
         self.assertIn("flow_admission_authorization_decision_invalid", codes)
         self.assertIn("flow_admission_authorization_receipt_invalid", codes)
 
+    def test_attempt_claim_pep_persists_exact_decision_and_receipt(self) -> None:
+        claim = self._start_and_claim(
+            self._flow("flow-private-marker", resource_keys=("repo:private",))
+        )
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            decision = connection.execute(
+                """
+                SELECT attempt_id, flow_id, decision_event_id, request_digest,
+                       decision_digest, payload_json
+                FROM supervisor_attempt_claim_authorization_decisions
+                """
+            ).fetchone()
+            receipt = connection.execute(
+                """
+                SELECT attempt_id, flow_id, decision_event_id, receipt_digest,
+                       payload_json
+                FROM supervisor_attempt_claim_authorization_action_receipts
+                """
+            ).fetchone()
+        self.assertIsNotNone(decision)
+        self.assertIsNotNone(receipt)
+        assert decision is not None
+        assert receipt is not None
+        self.assertEqual(decision[0], claim.attempt.attempt_id)
+        self.assertEqual(decision[1], claim.flow.flow_id)
+        self.assertEqual(receipt[0], claim.attempt.attempt_id)
+        self.assertEqual(receipt[1], claim.flow.flow_id)
+        self.assertEqual(decision[2], decision[4])
+        self.assertEqual(receipt[2], decision[2])
+        serialized = json.dumps([decision[5], receipt[4]], sort_keys=True)
+        for private_value in (
+            claim.flow.flow_id,
+            claim.attempt.attempt_id,
+            claim.attempt.run_id,
+            "supervisor/instance-000000000001",
+            "attempt/",
+        ):
+            self.assertNotIn(private_value, serialized)
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean)
+        self.assertEqual(audit.attempt_claim_enforcement_record_count, 2)
+        self.assertEqual(audit.expected_attempt_claim_enforcement_record_count, 2)
+
+    def test_attempt_claim_pep_failures_roll_back_every_claim_effect(self) -> None:
+        _, control, owner = self._prepare_claim()
+        with patch.object(
+            self.store,
+            "_append_attempt_claim_authorization_receipt",
+            side_effect=RuntimeError("private receipt failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "private receipt failure"):
+                self.store.try_claim_next(
+                    instance_owner=owner,
+                    expected_control_revision=control.revision,
+                    ttl_seconds=20.0,
+                    now=100.0,
+                )
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            counts = tuple(
+                connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in (
+                    "supervisor_attempts",
+                    "supervisor_attempt_events",
+                    "supervisor_attempt_claim_authorization_decisions",
+                    "supervisor_attempt_claim_authorization_action_receipts",
+                )
+            )
+            revision_count = connection.execute(
+                "SELECT COUNT(*) FROM supervisor_flow_revisions WHERE flow_id = 'flow-one'"
+            ).fetchone()[0]
+            claim_lease_count = connection.execute(
+                "SELECT COUNT(*) FROM leases WHERE lease_key != 'supervisor:foreground'"
+            ).fetchone()[0]
+        self.assertEqual(counts, (0, 0, 0, 0))
+        self.assertEqual(revision_count, 1)
+        self.assertEqual(claim_lease_count, 0)
+
+    def test_attempt_claim_pep_requires_exact_readback_and_effect_records(self) -> None:
+        _, control, owner = self._prepare_claim()
+        with patch.object(
+            self.store,
+            "_append_attempt_claim_authorization_decision",
+            return_value={},
+        ):
+            with self.assertRaises(AuthorizationBlocked):
+                self.store.try_claim_next(
+                    instance_owner=owner,
+                    expected_control_revision=control.revision,
+                    ttl_seconds=20.0,
+                    now=100.0,
+                )
+        with patch.object(
+            self.store,
+            "_insert_attempt_event",
+            return_value=None,
+        ):
+            with self.assertRaisesRegex(
+                SupervisorError,
+                "effect persistence is uncertain",
+            ):
+                self.store.try_claim_next(
+                    instance_owner=owner,
+                    expected_control_revision=control.revision,
+                    ttl_seconds=20.0,
+                    now=100.0,
+                )
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            counts = tuple(
+                connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in (
+                    "supervisor_attempts",
+                    "supervisor_attempt_events",
+                    "supervisor_attempt_claim_authorization_decisions",
+                    "supervisor_attempt_claim_authorization_action_receipts",
+                )
+            )
+        self.assertEqual(counts, (0, 0, 0, 0))
+
+    def test_attempt_claim_pep_rebuild_rejects_a_replaced_first_pass(self) -> None:
+        _, control, owner = self._prepare_claim()
+        original = supervisor_module.evaluate_supervisor_attempt_claim_authorization
+
+        def forged_first_pass(*args, **kwargs):
+            authorization = original(*args, **kwargs)
+            forged_action = replace(
+                authorization.request.action,
+                parameters_digest=canonical_digest({"forged": True}),
+            )
+            return replace(
+                authorization,
+                request=replace(authorization.request, action=forged_action),
+            )
+
+        with patch(
+            "ordomata.supervisor.evaluate_supervisor_attempt_claim_authorization",
+            side_effect=forged_first_pass,
+        ):
+            with self.assertRaises(AuthorizationBlocked):
+                self.store.try_claim_next(
+                    instance_owner=owner,
+                    expected_control_revision=control.revision,
+                    ttl_seconds=20.0,
+                    now=100.0,
+                )
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM supervisor_attempts"
+                ).fetchone()[0],
+                0,
+            )
+
+    def test_attempt_claim_pep_audit_detects_decision_and_receipt_tampering(
+        self,
+    ) -> None:
+        self._start_and_claim()
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.executescript(
+                """
+                DROP TRIGGER supervisor_attempt_claim_authorization_decisions_no_update;
+                DROP TRIGGER supervisor_attempt_claim_authorization_action_receipts_no_update;
+                """
+            )
+            connection.execute(
+                """
+                UPDATE supervisor_attempt_claim_authorization_decisions
+                SET payload_json = '{"tampered":true}'
+                """
+            )
+            connection.execute(
+                """
+                UPDATE supervisor_attempt_claim_authorization_action_receipts
+                SET payload_json = '{"tampered":true}'
+                """
+            )
+            connection.commit()
+
+        audit = inspect_supervisor_authorization(self.database)
+        codes = {finding.code for finding in audit.findings}
+        self.assertFalse(audit.clean)
+        self.assertIn("authorization_schema_mismatch", codes)
+        self.assertIn("attempt_claim_authorization_decision_invalid", codes)
+        self.assertIn("attempt_claim_authorization_receipt_invalid", codes)
+
+    def test_v7_migration_baselines_existing_attempts_before_enforcement(self) -> None:
+        legacy = self._start_and_claim()
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v7_schema(connection)
+
+        self.store = self._open_store()
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean)
+        self.assertEqual(audit.attempt_claim_enforcement_record_count, 0)
+        self.assertEqual(audit.expected_attempt_claim_enforcement_record_count, 0)
+        current = self._flow(
+            "flow-current",
+            resource_keys=("repo:current-project",),
+        )
+        self.store.admit_flow(current)
+        current_claim = self.store.try_claim_next(
+            instance_owner="supervisor/instance-000000000001",
+            expected_control_revision=1,
+            ttl_seconds=20.0,
+            now=100.0,
+        )
+        self.assertIsNotNone(current_claim)
+        with closing(sqlite3.connect(self.database)) as connection:
+            baseline = connection.execute(
+                """
+                SELECT attempt_id
+                FROM supervisor_attempt_claim_authorization_baseline
+                """
+            ).fetchall()
+        self.assertEqual(baseline, [(legacy.attempt.attempt_id,)])
+        audit = inspect_supervisor_authorization(self.database)
+        self.assertTrue(audit.clean)
+        self.assertEqual(audit.attempt_claim_enforcement_record_count, 2)
+        self.assertEqual(audit.expected_attempt_claim_enforcement_record_count, 2)
+
+    def test_malformed_pre_v7_attempt_history_is_rejected_before_baseline(self) -> None:
+        claim = self._start_and_claim()
+        self.store.close()
+        with closing(sqlite3.connect(self.database)) as connection:
+            self._remove_v7_schema(connection)
+            connection.executescript(
+                """
+                DROP TRIGGER supervisor_attempt_events_no_delete;
+                """
+            )
+            connection.execute(
+                "DELETE FROM supervisor_attempt_events WHERE attempt_id = ?",
+                (claim.attempt.attempt_id,),
+            )
+            connection.executescript(
+                """
+                CREATE TRIGGER supervisor_attempt_events_no_delete
+                BEFORE DELETE ON supervisor_attempt_events BEGIN
+                    SELECT RAISE(ABORT, 'supervisor attempt events are append-only');
+                END;
+                """
+            )
+
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "pre-v7 supervisor attempt history is invalid",
+        ):
+            self._open_store()
+
+    def test_attempt_history_rejects_claims_beyond_the_flow_budget(self) -> None:
+        claim = self._start_and_claim(self._flow(max_attempts=1))
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.row_factory = sqlite3.Row
+            revisions = connection.execute(
+                """
+                SELECT * FROM supervisor_flow_revisions
+                WHERE flow_id = ? ORDER BY revision
+                """,
+                (claim.flow.flow_id,),
+            ).fetchall()
+            events = connection.execute(
+                """
+                SELECT * FROM supervisor_attempt_events
+                WHERE attempt_id = ? ORDER BY revision
+                """,
+                (claim.attempt.attempt_id,),
+            ).fetchall()
+
+        with self.assertRaisesRegex(
+            ValidationError,
+            "attempt number exceeds its flow budget",
+        ):
+            supervisor_module._verify_attempt_claim_history(
+                attempt=replace(claim.attempt, attempt_number=2),
+                spec=claim.flow,
+                revision_rows=revisions,
+                event_rows=events,
+            )
+
     def test_v6_migration_baselines_existing_flows_before_enforcement(self) -> None:
         legacy = self._flow("flow-legacy")
         self.store.admit_flow(legacy)
@@ -1479,7 +1792,7 @@ class SQLiteSupervisorStoreTests(unittest.TestCase):
                 """
                 INSERT INTO state_schema_migrations (
                     version, name, script_sha256, applied_at
-                ) VALUES (7, 'future_unknown', ?, 100.0)
+                ) VALUES (8, 'future_unknown', ?, 100.0)
                 """,
                 ("0" * 64,),
             )

@@ -1038,23 +1038,25 @@ additive SQLite migration, immutable flow admission, append-only optimistic
 control/flow/attempt state, sticky cancellation, fenced multi-resource claim
 library APIs, an internal local completion outbox and receipts, read-only
 status/audit, digest-bound reconciliation, operator control commands, and a
-foreground `ordomata supervise` loop. The otherwise library-only attempt-claim
-boundary and sticky cancellation append typed, non-enforcing ABAC shadow
+foreground `ordomata supervise` loop. The library-only attempt-claim boundary
+and sticky cancellation retain typed, non-enforcing compatibility-shadow
 observations with an explicit legacy-parity comparison. Flow admission retains
 its compatibility shadow but first passes an authoritative fixed Class 1 PEP
 that can authorize only the immutable local mock-flow and initial-revision
-write. Reversible operator control transitions similarly retain their
-compatibility shadow but first pass their separate authoritative fixed Class 1
-PEP. Worker dispatch is deliberately disabled until the exact worker boundary
-has authoritative ABAC coverage and verified repository containment; neither
-narrow supervisor PEP supplies it. The read-only supervisor audit independently
-recomputes the shadows, post-v5 control decision/receipt pairs, and post-v6
-flow-admission decision/receipt pairs, checking coverage, order, exact schema
-guards, and migration provenance without altering reconciliation plan digests.
-Ordinary state opens now validate the exact baseline and run history plus a
-frozen, contiguous v1-v6 migration prefix before use; creation and exact legacy
-adoption are transactional, while partial or tampered state fails closed without
-repair. This does
+write. Reversible operator control transitions and local mock attempt claims
+similarly retain their compatibility shadows but first pass their separate
+authoritative fixed Class 1 PEPs. The claim PEP covers only local attempt,
+lease, and flow-revision bookkeeping; it does not dispatch a worker. Worker
+dispatch is deliberately disabled until the exact worker boundary has
+authoritative ABAC coverage and verified repository containment; none of the
+narrow supervisor PEPs supplies it. The read-only supervisor audit independently
+recomputes the shadows, post-v5 control decision/receipt pairs, post-v6
+flow-admission decision/receipt pairs, and post-v7 attempt-claim decision/
+receipt pairs, checking coverage, order, exact schema guards, and migration
+provenance without altering reconciliation plan digests. Ordinary state opens
+now validate the exact baseline and run history plus a frozen, contiguous v1-v7
+migration prefix before use; creation and exact legacy adoption are
+transactional, while partial or tampered state fails closed without repair. This does
 not implement a repository
 worker, live model loop, subprocess execution, network access, Class 2/3
 actions, or OS scheduling, so Phase 2 is not complete.

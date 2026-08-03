@@ -1453,6 +1453,14 @@ immutable flow digest, and exact initial queued revision, persists and rereads
 its permit before either flow write, and appends and rereads its action receipt
 in the same SQLite transaction. It grants no claim, cancellation,
 worker-dispatch, task-execution, repository, network, or Class 2/3 authority.
+A third fixed Class 1 PEP now authorizes only a local deterministic-mock
+attempt claim. It binds the exact queued source and running target revisions,
+flow and attempt digests, initial attempt/flow event references, control
+revision, and digest-only controller/lease references. Its decision is
+persisted and exactly reread before any claim lease, attempt, or flow-revision
+write; its action receipt is appended and reread before commit. It grants no
+worker dispatch, task execution, cancellation, repository, network, or Class
+2/3 authority, and the foreground loop still does not invoke the claim API.
 Cancellation requests
 bind the exact source flow revision and deterministic local writes that follow,
 including whether a completion intent is appended. Cancellation is irreversible

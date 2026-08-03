@@ -41,10 +41,11 @@ Earlier design discussion selected machine-verifiable repository maintenance as 
 - No purchased-credit, subscription-overage, AI API SDK, cloud-model, or metered fallback.
 - No recurring schedule installation.
 - No supervisor worker dispatch: the implemented foreground loop is a
-  mock-only control-plane tracer and cannot claim or execute queued work. Its
-  read-only status and foreground tick retain the legacy primary blocker and
-  additionally report an ordered blocker list for both missing supervisor
-  runtime-ABAC enforcement and unproven repository-worker containment.
+  mock-only control-plane tracer and never invokes the library-only claim API
+  or executes queued work. Its read-only status and foreground tick retain the
+  legacy primary blocker and additionally report an ordered blocker list for
+  both missing supervisor runtime-ABAC enforcement and unproven
+  repository-worker containment.
 - Repository-proposal selection and binding are inert evidence only. They
   require an existing `repository-proposal-disabled` run to remain `CREATED`
   and cannot admit, claim, dispatch, or execute it.
@@ -1565,14 +1566,14 @@ effects, policy and evidence digests, obligations, continuous enforcement,
 RBAC role constraints, adapted confidentiality/integrity/availability impact
 labels, untrusted MCP claim handling, and conservatively derived Class 0-3
 summaries. There is still no general/live/comparison or supervisor
-claim/dispatch admission or shared-publication PDP, RBAC
+worker-dispatch admission or shared-publication PDP, RBAC
 separation-of-duty enforcement, approval resumption, mediated command/tool
 coverage, supervisor worker permit, or live-harness ABAC enforcement. The
 persisted enforcing decision/action-receipt chains are limited to Class 1
 admission of a new profile-backed exact built-in-mock attempt, its dispatch,
 its owner-private local-candidate publication, one immutable deterministic-mock
-supervisor flow admission, and one reversible local supervisor control
-transition. The
+supervisor flow admission, one reversible local supervisor control transition,
+and one local mock supervisor attempt claim. The
 controlled comparison path now records a
 durable Class 0 run/event stream for every started trial, including a schema-v2
 digest-only binding, bounded billing/accounting facts, runner-event ordinals,
@@ -1634,16 +1635,24 @@ conservatively derived class, legacy executability, and parity. A later
 additive migration makes each new reversible local control transition pass an
 exact fixed Class 1 PEP: its privacy-bounded decision is persisted and exactly
 reread before the control event, and its succeeded action receipt is appended
-and reread in the same transaction. The next additive migration makes each new
+and reread in the same transaction. A second fixed Class 1 PEP makes each new
 immutable deterministic-mock flow admission pass a separate exact fixed Class
 1 PEP: it binds an admission-key reference, immutable flow digest, and exact
 initial queued revision; persists and rereads its permit before the flow write;
 and appends and rereads its receipt before commit. The PEP covers only that
 local bookkeeping write, not the task, claim, cancellation, worker, repository,
-network, or Class 2/3 effect. The read-only supervisor audit verifies the
-shadow records and independently replays post-v5 control and post-v6
-flow-admission decision/receipt pairs from one consistent SQLite snapshot,
-checking coverage/order, exact append-only schema, and migration provenance.
+network, or Class 2/3 effect. A third fixed Class 1 PEP makes each new local
+mock attempt claim pass an exact permit: it binds the queued source
+and running target revisions, immutable flow and attempt inputs, initial
+attempt/flow event references, control revision, and bounded lease references;
+persists and rereads its permit before claim effects; and appends and rereads
+its receipt before commit. It authorizes only those local claim records and
+leases, never worker dispatch, task execution, cancellation, repository work,
+network access, or a Class 2/3 effect. The read-only supervisor audit verifies
+the shadow records and independently replays post-v5 control, post-v6
+flow-admission, and post-v7 attempt-claim decision/receipt pairs from one
+consistent SQLite snapshot, checking coverage/order, exact append-only schema,
+and migration provenance.
 Frozen migration baselines exclude pre-shadow flow, attempt, control-event, and
 cancellation-request identifiers so historical records are not falsely treated
 as missing evidence. Control transitions bind the previous control revision;
@@ -1656,7 +1665,7 @@ Startup verifies canonical baseline, migration-ledger, and supervisor schema
 objects, including non-prefixed triggers targeting owned tables, before use.
 Fresh baseline creation and exact pre-ledger baseline adoption are atomic; all
 schema statements and frozen migration rows commit together or not at all.
-Existing databases must carry a contiguous known v1-v6 migration prefix whose
+Existing databases must carry a contiguous known v1-v7 migration prefix whose
 identities agree with the installed supervisor tables. Baseline foreign keys,
 the atomic first `created` event, and subsequent status-transition lineage are
 also checked. Missing guards, partial schemas, ledger gaps, future versions,
