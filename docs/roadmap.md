@@ -1154,6 +1154,17 @@ path. It does not yet prove controller custody of a target root, immutable
 handoff, lifecycle cleanup after worker use, or controller-owned patch
 reconciliation; those remain required before the Phase 3 worker boundary.
 
+The separate library-only
+`ordomata.repository_worker_job_tree_reconciliation` primitive now defines the
+pure comparison half of that future reconciliation boundary. Given only an
+already detached candidate bundle and exact snapshot, contract,
+materialization-receipt, policy, and limit inputs, it derives private
+add/modify/delete operations and emits digest/count evidence. It neither reads
+a candidate tree nor proves its origin, and it performs no patch application,
+persistence, worker, container, Git, network, or execution action. A
+descriptor-safe candidate reader and the controller lifecycle/custody proof
+remain required before any worker boundary.
+
 The proposed [`worker-dispatch security design`](worker-dispatch-security-design.md)
 now makes the next non-enabling architecture decision explicit: a local
 VM-contained, fresh unprivileged container, controller-owned no-Git job

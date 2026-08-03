@@ -160,10 +160,14 @@ separate, explicitly gated decision.
    no-follow descriptors, rejects source-root overlap, unexpected entries, and
    root replacement, and emits only digest/count evidence. It is still a
    library primitive with no supervisor call path, root-provisioning proof,
-   worker handoff, immutable input claim, or patch reconciliation. Build the
-   remaining controller-owned lifecycle and no-follow patch reconciler. Test
-   that the primary checkout and shared Git data remain unchanged on success,
-   failure, timeout, and crash.
+   worker handoff, or immutable input claim. The separate pure reconciliation
+   seam now compares caller-supplied detached candidate bytes to that exact
+   snapshot/contract/receipt lineage and emits private operations plus
+   digest/count evidence. It does not read a candidate tree or establish its
+   provenance, custody, or containment. Build the remaining controller-owned
+   lifecycle and no-follow candidate-tree reader. Test that the primary
+   checkout and shared Git data remain unchanged on success, failure, timeout,
+   and crash.
 3. **Authoritative dispatch PEP:** add append-only decision and receipt
    records, exact replay, read-only audit coverage, and cancellation/lease
    rechecks. It remains connected only to a deterministic mock cell until the

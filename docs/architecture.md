@@ -536,6 +536,18 @@ same-UID writer or mount alias, retain immutable worker input, reconcile a
 candidate, persist state, create a worker or container, or enable execution or
 dispatch.
 
+[`ordomata.repository_worker_job_tree_reconciliation`](../src/ordomata/repository_worker_job_tree_reconciliation.py)
+now supplies a separate pure comparison seam. It accepts only an already
+detached bounded candidate bundle together with the exact snapshot, contract,
+materialization receipt, path policy, and resource limits; it rechecks that
+complete lineage and derives private deterministic add/modify/delete operations.
+Its public evidence contains only digest/count references. It reads no
+candidate filesystem, cannot show that supplied bytes originated in the
+materialized job tree, and does not apply or persist a patch, provision a
+worker cell, authorize work, or enable execution or dispatch. A later
+controller-owned descriptor-safe candidate-tree reader and lifecycle boundary
+must establish those missing custody properties.
+
 [`worker-dispatch-security-design.md`](worker-dispatch-security-design.md)
 records the proposed non-enabling VM-contained-container design, the exact
 future worker PEP binding, and the evidence and adversarial-test gates that a

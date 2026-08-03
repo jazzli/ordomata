@@ -1877,6 +1877,18 @@ local checks, immutable input, same-UID/mount-alias exclusion, post-run patch
 reconciliation, containment, authorization, persistence, worker execution, or
 dispatch.
 
+`ordomata.repository_worker_job_tree_reconciliation` now supplies the next
+pure, in-memory comparison seam. It accepts only a detached bounded candidate
+bundle alongside the exact snapshot/contract/materialization-receipt lineage
+and exact path-policy/resource-limit snapshots, rechecks that lineage whenever
+it renders evidence, and retains deterministic add/modify/delete operations
+only in process-private memory. Its public projection contains digest/count
+references only. It does not read a candidate directory or prove candidate
+origin, write or apply a patch, persist a record, establish cleanup or
+containment, create a worker, grant authority, or enable execution or dispatch.
+The required descriptor-safe post-worker reader and controller lifecycle
+boundary remain unimplemented.
+
 The proposed [`worker-dispatch security design`](worker-dispatch-security-design.md)
 now fixes the next review target: a local VM-contained, fresh unprivileged
 container cell, an exact worker-dispatch PEP, controller-owned materialization
