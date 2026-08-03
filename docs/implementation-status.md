@@ -1666,9 +1666,15 @@ Its failure leaves the local transition and outbox durable, and it cannot
 deliver an outbox, dispatch a worker, or execute a task. The read-only
 supervisor audit verifies the shadow records and independently replays post-v5
 control, post-v6 flow-admission, post-v7 attempt-claim, post-v9 pre-dispatch
-decision/receipt pairs, and post-v10 completion-shadow coverage from one
-consistent SQLite snapshot, checking coverage/order, exact append-only schema,
-and migration provenance.
+decision/receipt pairs, post-v10 completion-shadow coverage, and post-v11
+reconciliation-shadow coverage from one consistent SQLite snapshot, checking
+coverage/order, exact append-only schema, and migration provenance. A v11
+migration separately records post-write,
+non-authoritative evidence when previewed reconciliation closes an expired
+pre-dispatch claim as `lost` or `cancelled`. It binds the terminal
+flow/attempt/outbox records plus redacted evidence that the claim no longer
+holds every required lease; it cannot change the repair, deliver an outbox, or
+enable a worker.
 Frozen migration baselines exclude pre-shadow flow, attempt, control-event, and
 cancellation-request identifiers so historical records are not falsely treated
 as missing evidence. Control transitions bind the previous control revision;
@@ -1681,7 +1687,7 @@ Startup verifies canonical baseline, migration-ledger, and supervisor schema
 objects, including non-prefixed triggers targeting owned tables, before use.
 Fresh baseline creation and exact pre-ledger baseline adoption are atomic; all
 schema statements and frozen migration rows commit together or not at all.
-Existing databases must carry a contiguous known v1-v10 migration prefix whose
+Existing databases must carry a contiguous known v1-v11 migration prefix whose
 identities agree with the installed supervisor tables. Baseline foreign keys,
 the atomic first `created` event, and subsequent status-transition lineage are
 also checked. Missing guards, partial schemas, ledger gaps, future versions,

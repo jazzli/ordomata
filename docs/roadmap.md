@@ -1061,13 +1061,18 @@ The v10 completion shadow separately records only already-written local
 flow/attempt/outbox completion evidence, including the durable selected outcome
 and redacted lease snapshot; it cannot deliver an outbox, dispatch a worker, or
 execute a task, and its failure cannot change the completion.
+The v11 reconciliation shadow separately records only already-applied expired
+pre-dispatch claim repairs, including the terminal flow/attempt/outbox state and
+redacted inactive-lease evidence; it cannot deliver an outbox, dispatch a
+worker, or execute a task, and its failure cannot change the repair.
 The read-only supervisor audit independently recomputes the shadows, post-v5
 control decision/receipt pairs, post-v6 flow-admission decision/receipt pairs,
 post-v7 attempt-claim decision/receipt pairs, and post-v9 pre-dispatch
-decision/receipt pairs plus post-v10 completion-shadow coverage, checking
-coverage, order, exact schema guards, and migration provenance without altering
-reconciliation plan digests. Ordinary state opens now validate the exact
-baseline and run history plus a frozen, contiguous v1-v10 migration prefix
+decision/receipt pairs plus post-v10 completion-shadow and post-v11
+reconciliation-shadow coverage, checking coverage, order, exact schema guards,
+and migration provenance without altering reconciliation plan digests. Ordinary
+state opens now validate the exact baseline and run history plus a frozen,
+contiguous v1-v11 migration prefix
 before use; creation and exact legacy adoption are
 transactional, while partial or tampered state fails closed without repair. This does
 not implement a repository
